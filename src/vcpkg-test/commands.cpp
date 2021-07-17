@@ -35,6 +35,7 @@ TEST_CASE ("get_available_basic_commands works", "[commands]")
         "x-download",
         "x-init-registry",
 #if defined(_WIN32)
+        "z-applocal",
         "x-upload-metrics",
 #endif // defined(_WIN32)
         });

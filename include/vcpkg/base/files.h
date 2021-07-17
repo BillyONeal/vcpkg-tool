@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <utility>
 
 #if !defined(VCPKG_USE_STD_FILESYSTEM)
 #error The build system must set VCPKG_USE_STD_FILESYSTEM.
@@ -177,6 +178,7 @@ namespace vcpkg
         FilePointer(FilePointer&& other) noexcept : m_fs(other.m_fs) { other.m_fs = nullptr; }
 
         FilePointer& operator=(const FilePointer&) = delete;
+
         explicit operator bool() const noexcept { return m_fs != nullptr; }
 
         int seek(int offset, int origin) const noexcept { return ::fseek(m_fs, offset, origin); }
@@ -222,18 +224,33 @@ namespace vcpkg
     struct ReadFilePointer : FilePointer
     {
         ReadFilePointer() = default;
+        ReadFilePointer(ReadFilePointer&&) = default;
         explicit ReadFilePointer(const path& file_path, std::error_code& ec) noexcept;
+        ReadFilePointer& operator=(ReadFilePointer&& other) noexcept
+        {
+            ReadFilePointer fp{std::move(other)};
+            std::swap(m_fs, fp.m_fs);
+            return *this;
+        }
 
         size_t read(void* buffer, size_t element_size, size_t element_count) const noexcept
         {
             return ::fread(buffer, element_size, element_count, m_fs);
         }
+
+        int getc() const noexcept { return ::fgetc(m_fs); }
     };
 
     struct WriteFilePointer : FilePointer
     {
         WriteFilePointer() = default;
+        WriteFilePointer(WriteFilePointer&&) = default;
         explicit WriteFilePointer(const path& file_path, std::error_code& ec) noexcept;
+        WriteFilePointer& operator=(WriteFilePointer&& other) noexcept {
+            WriteFilePointer fp{std::move(other)};
+            std::swap(m_fs, fp.m_fs);
+            return *this;
+        }
 
         size_t write(const void* buffer, size_t element_size, size_t element_count) const noexcept
         {

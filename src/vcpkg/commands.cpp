@@ -2,6 +2,7 @@
 
 #include <vcpkg/build.h>
 #include <vcpkg/commands.add-version.h>
+#include <vcpkg/commands.applocal.h>
 #include <vcpkg/commands.autocomplete.h>
 #include <vcpkg/commands.buildexternal.h>
 #include <vcpkg/commands.cache.h>
@@ -47,6 +48,7 @@ namespace vcpkg::Commands
         static const InitRegistry::InitRegistryCommand init_registry{};
         static const X_Download::XDownloadCommand xdownload{};
 #if defined(_WIN32)
+        static const AppLocalCommand applocal{};
         static const UploadMetrics::UploadMetricsCommand upload_metrics{};
 #endif // defined(_WIN32)
 
@@ -58,6 +60,7 @@ namespace vcpkg::Commands
 
 #if defined(_WIN32)
             {"x-upload-metrics", &upload_metrics},
+            {"z-applocal", &applocal}
 #endif // defined(_WIN32)
         };
         return t;
