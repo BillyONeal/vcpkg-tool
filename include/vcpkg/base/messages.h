@@ -618,6 +618,7 @@ namespace vcpkg
                     (msg::path, msg::expected, msg::actual),
                     "{expected} and {actual} are architectures",
                     "{path}\n Expected: {expected}, but was {actual}");
+    DECLARE_MESSAGE(BootstrapUnavailable, (), "", "This copy of vcpkg was not built with the ability to bootstrap.");
     DECLARE_MESSAGE(BuildAlreadyInstalled,
                     (msg::spec),
                     "",
@@ -1049,8 +1050,6 @@ namespace vcpkg
                     (),
                     "This message is normally displayed only in development.",
                     "Downloading latest vcpkg-ce bundle...");
-    DECLARE_MESSAGE(DownloadingVcpkgStandaloneBundle, (msg::version), "", "Downloading standalone bundle {version}.");
-    DECLARE_MESSAGE(DownloadingVcpkgStandaloneBundleLatest, (), "", "Downloading latest standalone bundle.");
     DECLARE_MESSAGE(DownloadRootsDir,
                     (msg::env_var),
                     "",

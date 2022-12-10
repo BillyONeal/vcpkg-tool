@@ -17,6 +17,11 @@
           "type": "BOOL"
         },
         {
+          "name": "VCPKG_BUILD_BOOTSTRAP_FILES",
+          "value": "True",
+          "type": "BOOL"
+        },
+        {
           "name": "VCPKG_BUILD_TLS12_DOWNLOADER",
           "value": "True",
           "type": "BOOL"

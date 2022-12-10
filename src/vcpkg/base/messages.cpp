@@ -9,7 +9,7 @@
 
 #include <cmrc/cmrc.hpp>
 
-CMRC_DECLARE(cmakerc);
+CMRC_DECLARE(locale_resources);
 
 using namespace vcpkg;
 
@@ -238,7 +238,7 @@ namespace vcpkg::msg
     ExpectedS<Json::Object> get_message_map_from_lcid(int LCID)
     {
         threadunsafe_initialize_context();
-        auto embedded_filesystem = cmrc::cmakerc::get_filesystem();
+        auto embedded_filesystem = cmrc::locale_resources::get_filesystem();
 
         const auto maybe_locale_path = get_locale_path(LCID);
         if (const auto locale_path = maybe_locale_path.get())
@@ -460,6 +460,7 @@ namespace vcpkg
     REGISTER_MESSAGE(AvailableArchitectureTriplets);
     REGISTER_MESSAGE(AvailableHelpTopics);
     REGISTER_MESSAGE(BinarySourcesArg);
+    REGISTER_MESSAGE(BootstrapUnavailable);
     REGISTER_MESSAGE(BuildAlreadyInstalled);
     REGISTER_MESSAGE(BuildDependenciesMissing);
     REGISTER_MESSAGE(BuildingFromHead);
@@ -541,8 +542,6 @@ namespace vcpkg
     REGISTER_MESSAGE(DownloadingTool);
     REGISTER_MESSAGE(DownloadingVcpkgCeBundle);
     REGISTER_MESSAGE(DownloadingVcpkgCeBundleLatest);
-    REGISTER_MESSAGE(DownloadingVcpkgStandaloneBundle);
-    REGISTER_MESSAGE(DownloadingVcpkgStandaloneBundleLatest);
     REGISTER_MESSAGE(DownloadRootsDir);
     REGISTER_MESSAGE(DuplicateCommandOption);
     REGISTER_MESSAGE(DuplicatedKeyInObj);

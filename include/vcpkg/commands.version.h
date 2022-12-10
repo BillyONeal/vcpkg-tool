@@ -5,11 +5,11 @@
 #define STRINGIFY(...) #__VA_ARGS__
 #define MACRO_TO_STRING(X) STRINGIFY(X)
 
-#if !defined(VCPKG_VERSION)
-#error VCPKG_VERSION must be defined
+#if !defined(VCPKG_TOOL_VERSION)
+#error VCPKG_TOOL_VERSION must be defined
 #endif
 
-#define VCPKG_VERSION_AS_STRING MACRO_TO_STRING(VCPKG_VERSION)
+#define VCPKG_TOOL_VERSION_AS_STRING MACRO_TO_STRING(VCPKG_TOOL_VERSION)
 
 #if !defined(VCPKG_BASE_VERSION)
 #error VCPKG_BASE_VERSION must be defined

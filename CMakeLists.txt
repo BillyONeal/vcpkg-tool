@@ -14,11 +14,15 @@ endif()
 
 include(CMakeDependentOption)
 
-option(BUILD_TESTING "Option for enabling testing" ON)
-option(VCPKG_DEVELOPMENT_WARNINGS "Option for turning on all warnings" ON)
-option(VCPKG_WARNINGS_AS_ERRORS "Set warnings to be errors" OFF)
-option(VCPKG_BUILD_TLS12_DOWNLOADER "Enable building the tls12-downloader" OFF)
-option(VCPKG_BUILD_FUZZING "Option for enabling vcpkg-fuzz support" OFF)
+option(BUILD_TESTING "Enable testing." ON)
+option(VCPKG_DEVELOPMENT_WARNINGS "Turning on development warnings." ON)
+option(VCPKG_WARNINGS_AS_ERRORS "Set warnings to be errors." OFF)
+option(VCPKG_BUILD_TLS12_DOWNLOADER "Build the tls12-downloader." OFF)
+option(VCPKG_BUILD_FUZZING "Build vcpkg-fuzz." OFF)
+option(VCPKG_BUILD_BOOTSTRAP_FILES "Build bootstrap files into the vcpkg binary. This will cause the configure step to clone <https://github.com/microsoft/vcpkg>." OFF)
+if(NOT VCPKG_BOOTSTARP_EMBEDDED_SHA)
+    set(VCPKG_BOOTSTARP_EMBEDDED_SHA "76a79d990dcb2e30e964322cda912db3fe395c33")
+endif()
 option(VCPKG_EMBED_GIT_SHA "Option for to fill in the Git SHA version; off by default to avoid privacy concerns out of official builds" OFF)
 option(VCPKG_ADD_SOURCELINK "Option for enabling SourceLink in debug information on Windows/MSVC builds" "${VCPKG_EMBED_GIT_SHA}")
 option(VCPKG_ARTIFACTS_DEVELOPMENT "Hard code path to artifacts TypeScript. Requires node.js and global install of @microsoft/rush." OFF)
@@ -52,6 +56,154 @@ project(vcpkg
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 include(cmake/utilities.cmake)
 
+# =======================
+# === Paths detection ===
+# =======================
+
+include(GNUInstallDirs)
+
+# ====================
+# === Dependencies ===
+# ====================
+
+find_package(fmt REQUIRED)
+find_package(CMakeRC REQUIRED)
+
+if(VCPKG_BUILD_BOOTSTRAP_FILES OR VCPKG_EMBED_GIT_SHA)
+    find_package(Git REQUIRED)
+endif()
+
+# =================================
+# === Prepare Standalone Bundle ===
+# =================================
+if(VCPKG_BUILD_BOOTSTRAP_FILES)
+    set(VCPKG_REGISTRY_PATH "${CMAKE_CURRENT_BINARY_DIR}/vcpkg-repo")
+    set(VCPKG_BOOTSTRAP_PATH "${CMAKE_CURRENT_BINARY_DIR}/vcpkg-bootstrap")
+    set(UPDATE_BOOTSTRAP OFF)
+    if(EXISTS "${VCPKG_REGISTRY_PATH}")
+        # Check that the SHA matches the one we are trying to use.
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" status --porcelain=v1
+            RESULT_VARIABLE LAST_EXIT_CODE
+            WORKING_DIRECTORY "${VCPKG_REGISTRY_PATH}"
+            OUTPUT_VARIABLE VCPKG_GIT_STATUS
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+
+        if(LAST_EXIT_CODE)
+            message(FATAL_ERROR "vcpkg registry git status failed")
+        endif()
+
+        if(NOT VCPKG_GIT_STATUS STREQUAL "")
+            message(FATAL_ERROR "When building the standalone bundle, the working copy of the vcpkg-repo has edits; delete CMake cache and reconfigure.")
+        endif()
+
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+            RESULT_VARIABLE LAST_EXIT_CODE
+            WORKING_DIRECTORY "${VCPKG_REGISTRY_PATH}"
+            OUTPUT_VARIABLE VCPKG_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+
+        if(LAST_EXIT_CODE)
+            message(FATAL_ERROR "vcpkg registry git rev-parse failed")
+        endif()
+
+        if("${VCPKG_VERSION}" STREQUAL "${VCPKG_BOOTSTARP_EMBEDDED_SHA}")
+            message(STATUS "vcpkg registry was already the correct SHA")
+        else()
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" fetch https://github.com/microsoft/vcpkg master
+                WORKING_DIRECTORY "${VCPKG_REGISTRY_PATH}"
+                RESULT_VARIABLE LAST_EXIT_CODE
+            )
+
+            if(LAST_EXIT_CODE)
+                message(FATAL_ERROR "vcpkg registry git fetch failed")
+            endif()
+
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" fetch https://github.com/microsoft/vcpkg master
+                WORKING_DIRECTORY "${VCPKG_REGISTRY_PATH}"
+                RESULT_VARIABLE LAST_EXIT_CODE
+            )
+
+            if(LAST_EXIT_CODE)
+                message(FATAL_ERROR "vcpkg registry git fetch failed")
+            endif()
+
+            set(UPDATE_BOOTSTRAP ON)
+        endif()
+    else()
+        # Doesn't exist, clone it
+        execute_process(
+            COMMAND
+                "${GIT_EXECUTABLE}" -c core.autocrlf=false clone https://github.com/microsoft/vcpkg -b master "${VCPKG_REGISTRY_PATH}"
+            RESULT_VARIABLE LAST_EXIT_CODE
+        )
+
+        if(LAST_EXIT_CODE)
+            message(FATAL_ERROR "vcpkg registry git clone failed")
+        endif()
+
+        set(UPDATE_BOOTSTRAP ON)
+    endif()
+
+    if(UPDATE_BOOTSTRAP)
+        file(REMOVE_RECURSE "${VCPKG_BOOTSTRAP_PATH}")
+        file(MAKE_DIRECTORY "${VCPKG_BOOTSTRAP_PATH}")
+
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -c core.autocrlf=false checkout --detach "${VCPKG_BOOTSTARP_EMBEDDED_SHA}"
+            WORKING_DIRECTORY "${VCPKG_REGISTRY_PATH}"
+            RESULT_VARIABLE LAST_EXIT_CODE
+        )
+
+        if(LAST_EXIT_CODE)
+            message(FATAL_ERROR "vcpkg registry git checkout failed")
+        endif()
+
+        file(COPY "${VCPKG_REGISTRY_PATH}/LICENSE.txt" DESTINATION "${VCPKG_BOOTSTRAP_PATH}")
+        file(COPY "${VCPKG_REGISTRY_PATH}/triplets" DESTINATION "${VCPKG_BOOTSTRAP_PATH}")
+        file(MAKE_DIRECTORY "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/addPoshVcpkgToPowershellProfile.ps1" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/build_info.cmake" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/buildsystems" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/cmake" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/detect_compiler" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/get_cmake_vars" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/ports.cmake" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/posh-vcpkg" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/templates" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/toolchains" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/vcpkgTools.xml" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/vcpkg_completion.bash" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/vcpkg_completion.fish" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/vcpkg_completion.zsh" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/vcpkg_get_dep_info.cmake" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(COPY "${VCPKG_REGISTRY_PATH}/scripts/vcpkg_get_tags.cmake" DESTINATION "${VCPKG_BOOTSTRAP_PATH}/scripts")
+        file(WRITE "${VCPKG_BOOTSTRAP_PATH}/vcpkg-bundle.json" "{\"readonly\":false,\"usegitregistry\":true,\"embeddedsha\":\"${VCPKG_BOOTSTARP_EMBEDDED_SHA}\"}")
+        file(COPY "${CMAKE_CURRENT_LIST_DIR}/vcpkg-init/vcpkg-init" DESTINATION "${VCPKG_BOOTSTRAP_PATH}")
+        file(COPY "${CMAKE_CURRENT_LIST_DIR}/vcpkg-init/vcpkg-init.ps1" DESTINATION "${VCPKG_BOOTSTRAP_PATH}")
+        file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/vcpkg-init/vcpkg-init.ps1" DESTINATION "${VCPKG_BOOTSTRAP_PATH}" RENAME "vcpkg-init.cmd")
+    endif()
+
+    file(GLOB_RECURSE BOOTSTRAP_FILES LIST_DIRECTORIES false "${VCPKG_BOOTSTRAP_PATH}/*")
+    cmrc_add_resource_library(bootstrap-resources NAMESPACE bootstrap_resources WHENCE "${VCPKG_BOOTSTRAP_PATH}" ${BOOTSTRAP_FILES})
+    if(NOT MSVC)
+        if(VCPKG_COMPILER STREQUAL "gcc")
+            target_compile_options(bootstrap-resources PRIVATE
+                -Wno-missing-declarations
+                )
+        elseif(VCPKG_COMPILER STREQUAL "clang")
+            target_compile_options(bootstrap-resources PRIVATE
+                -Wno-missing-prototypes
+                )
+    endif()
+endif()
+endif()
+
 # =============
 # === Files ===
 # =============
@@ -79,19 +231,18 @@ file(GLOB LOCALE_RESOURCES CMAKE_CONFIGURE_DEPENDS "locales/*.json")
 vcpkg_detect_compiler()
 
 if(VCPKG_EMBED_GIT_SHA)
-    find_package(Git REQUIRED)
     execute_process(
         COMMAND "${GIT_EXECUTABLE}" status --porcelain=v1
         WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-        OUTPUT_VARIABLE VCPKG_GIT_STATUS
+        OUTPUT_VARIABLE VCPKG_TOOL_GIT_STATUS
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
 
-    if(VCPKG_GIT_STATUS STREQUAL "")
+    if(VCPKG_TOOL_GIT_STATUS STREQUAL "")
         execute_process(
             COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
             WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
-            OUTPUT_VARIABLE VCPKG_VERSION
+            OUTPUT_VARIABLE VCPKG_TOOL_VERSION
             OUTPUT_STRIP_TRAILING_WHITESPACE
         )
     else()
@@ -99,8 +250,8 @@ if(VCPKG_EMBED_GIT_SHA)
     endif()
 endif()
 
-if(NOT DEFINED VCPKG_VERSION OR VCPKG_VERSION STREQUAL "")
-    set(VCPKG_VERSION "unknownhash")
+if(NOT DEFINED VCPKG_TOOL_VERSION OR VCPKG_TOOL_VERSION STREQUAL "")
+    set(VCPKG_TOOL_VERSION "unknownhash")
 endif()
 
 if(NOT DEFINED VCPKG_BASE_VERSION OR VCPKG_BASE_VERSION STREQUAL "")
@@ -174,21 +325,8 @@ if(APPLE)
     set(CMAKE_CXX_ARCHIVE_FINISH "<CMAKE_RANLIB> -no_warning_for_no_symbols -c <TARGET>")
 endif()
 
-# =======================
-# === Paths detection ===
-# =======================
-
-include(GNUInstallDirs)
-
-# ====================
-# === Dependencies ===
-# ====================
-
-find_package(fmt REQUIRED)
-find_package(CMakeRC REQUIRED)
-
 # === Target: locale-resources ===
-cmrc_add_resource_library(locale-resources ALIAS cmakerc::locales NAMESPACE cmakerc ${LOCALE_RESOURCES})
+cmrc_add_resource_library(locale-resources NAMESPACE locale_resources ${LOCALE_RESOURCES})
 if(NOT MSVC)
     if(VCPKG_COMPILER STREQUAL "gcc")
         target_compile_options(locale-resources PRIVATE
@@ -212,7 +350,7 @@ add_library(vcpkglib OBJECT
 target_include_directories(vcpkglib PUBLIC include)
 
 target_compile_definitions(vcpkglib PUBLIC
-    VCPKG_VERSION=${VCPKG_VERSION}
+    VCPKG_TOOL_VERSION=${VCPKG_TOOL_VERSION}
     VCPKG_BASE_VERSION=${VCPKG_BASE_VERSION}
 )
 
@@ -356,11 +494,15 @@ find_package(Threads REQUIRED)
 target_link_libraries(vcpkglib
     PUBLIC
         fmt::fmt
-        cmakerc::locales
     PRIVATE
+        locale-resources
         Threads::Threads
         ${CPP_ATOMIC_LIBRARY}
 )
+if(VCPKG_BUILD_BOOTSTRAP_FILES)
+target_link_libraries(vcpkglib PRIVATE bootstrap-resources)
+target_compile_definitions(vcpkglib PRIVATE VCPKG_BUILD_BOOTSTRAP_FILES)
+endif()
 
 if(MSVC)
     get_target_property(_srcs vcpkglib SOURCES)
@@ -405,12 +547,12 @@ add_executable(vcpkg ${VCPKG_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg.man
 target_link_libraries(vcpkg PRIVATE vcpkglib)
 
 if(VCPKG_ADD_SOURCELINK)
-    if(VCPKG_VERSION STREQUAL "unknownhash")
+    if(VCPKG_TOOL_VERSION STREQUAL "unknownhash")
         message(FATAL_ERROR "Attempted to add source link information, but there was no git SHA defined. VCPKG_ADD_SOURCELINK only works if VCPKG_EMBED_GIT_SHA is set.")
     endif()
     vcpkg_target_add_sourcelink(vcpkg
         REPO "microsoft/vcpkg-tool"
-        REF "${VCPKG_VERSION}"
+        REF "${VCPKG_TOOL_VERSION}"
     )
 endif()
 if(VCPKG_PDB_SUFFIX)
