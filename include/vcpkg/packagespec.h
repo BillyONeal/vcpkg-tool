@@ -6,14 +6,11 @@
 #include <vcpkg/fwd/packagespec.h>
 
 #include <vcpkg/base/expected.h>
-#include <vcpkg/base/format.h>
-#include <vcpkg/base/json.h>
 #include <vcpkg/base/optional.h>
-#include <vcpkg/base/view.h>
+#include <vcpkg/base/span.h>
 
 #include <vcpkg/platform-expression.h>
 #include <vcpkg/triplet.h>
-#include <vcpkg/versions.h>
 
 namespace vcpkg
 {
@@ -93,6 +90,8 @@ namespace vcpkg
         std::string m_feature;
     };
 
+    std::string format_name_only_feature_spec(StringView package_name, StringView feature_name);
+
     /// In an internal feature set, "default" represents default features and missing "core" has no semantic
     struct InternalFeatureSet : std::vector<std::string>
     {
@@ -111,10 +110,11 @@ namespace vcpkg
         InternalFeatureSet features;
 
         FullPackageSpec() = default;
-        explicit FullPackageSpec(PackageSpec spec, InternalFeatureSet features)
+        FullPackageSpec(PackageSpec spec, InternalFeatureSet features)
             : package_spec(std::move(spec)), features(std::move(features))
         {
         }
+        FullPackageSpec(PackageSpec spec, View<std::string> features, ImplicitDefault id);
 
         /// Splats into individual FeatureSpec's
         void expand_fspecs_to(std::vector<FeatureSpec>& oFut) const;
@@ -126,51 +126,6 @@ namespace vcpkg
         friend bool operator!=(const FullPackageSpec& l, const FullPackageSpec& r) { return !(l == r); }
     };
 
-    struct DependencyConstraint
-    {
-        VersionConstraintKind type = VersionConstraintKind::None;
-        std::string value;
-        int port_version = 0;
-
-        friend bool operator==(const DependencyConstraint& lhs, const DependencyConstraint& rhs);
-        friend bool operator!=(const DependencyConstraint& lhs, const DependencyConstraint& rhs)
-        {
-            return !(lhs == rhs);
-        }
-
-        Optional<Version> try_get_minimum_version() const;
-    };
-
-    struct Dependency
-    {
-        std::string name;
-        std::vector<std::string> features;
-        PlatformExpression::Expr platform;
-        DependencyConstraint constraint;
-        bool host = false;
-
-        Json::Object extra_info;
-
-        /// @param id adds "default" if "core" not present.
-        FullPackageSpec to_full_spec(Triplet target, Triplet host, ImplicitDefault id) const;
-
-        friend bool operator==(const Dependency& lhs, const Dependency& rhs);
-        friend bool operator!=(const Dependency& lhs, const Dependency& rhs) { return !(lhs == rhs); }
-    };
-
-    struct DependencyOverride
-    {
-        std::string name;
-        std::string version;
-        int port_version = 0;
-        VersionScheme version_scheme = VersionScheme::String;
-
-        Json::Object extra_info;
-
-        friend bool operator==(const DependencyOverride& lhs, const DependencyOverride& rhs);
-        friend bool operator!=(const DependencyOverride& lhs, const DependencyOverride& rhs) { return !(lhs == rhs); }
-    };
-
     struct ParsedQualifiedSpecifier
     {
         std::string name;
@@ -180,14 +135,14 @@ namespace vcpkg
 
         /// @param id add "default" if "core" is not present
         /// @return nullopt on success. On failure, caller should supplement returned string with more context.
-        ExpectedS<FullPackageSpec> to_full_spec(Triplet default_triplet, ImplicitDefault id) const;
+        ExpectedL<FullPackageSpec> to_full_spec(Triplet default_triplet, ImplicitDefault id) const;
 
-        ExpectedS<PackageSpec> to_package_spec(Triplet default_triplet) const;
+        ExpectedL<PackageSpec> to_package_spec(Triplet default_triplet) const;
     };
 
     Optional<std::string> parse_feature_name(ParserBase& parser);
     Optional<std::string> parse_package_name(ParserBase& parser);
-    ExpectedS<ParsedQualifiedSpecifier> parse_qualified_specifier(StringView input);
+    ExpectedL<ParsedQualifiedSpecifier> parse_qualified_specifier(StringView input);
     Optional<ParsedQualifiedSpecifier> parse_qualified_specifier(ParserBase& parser);
 }
 

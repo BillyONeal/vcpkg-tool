@@ -3,9 +3,9 @@
 #include <vcpkg/base/fwd/system.process.h>
 
 #include <vcpkg/base/expected.h>
-#include <vcpkg/base/files.h>
+#include <vcpkg/base/path.h>
+#include <vcpkg/base/span.h>
 #include <vcpkg/base/stringview.h>
-#include <vcpkg/base/view.h>
 
 #include <functional>
 #include <string>
@@ -18,12 +18,14 @@ namespace vcpkg
     {
         CMakeVariable(const StringView varname, const char* varvalue);
         CMakeVariable(const StringView varname, const std::string& varvalue);
+        CMakeVariable(const StringView varname, StringLiteral varvalue);
         CMakeVariable(const StringView varname, const Path& varvalue);
-        CMakeVariable(std::string var);
+        CMakeVariable(const std::string& var);
 
         std::string s;
     };
 
+    std::string format_cmake_variable(StringView key, StringView value);
     void append_shell_escaped(std::string& target, StringView content);
 
     struct Command

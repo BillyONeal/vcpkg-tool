@@ -1,4 +1,5 @@
-#include <vcpkg/base/basic_checks.h>
+#include <vcpkg/base/checks.h>
+#include <vcpkg/base/files.h>
 #include <vcpkg/base/util.h>
 
 #include <vcpkg/commands.new.h>
@@ -37,7 +38,7 @@ namespace
     };
 
     const CommandStructure COMMAND_STRUCTURE = {
-        create_example_string(R"###(new --name=example --version=1.0 --version-kind=relaxed)###"),
+        [] { return create_example_string("new --name=example --version=1.0 --version-kind=relaxed"); },
         0,
         0,
         {SWITCHES, SETTINGS, {}},

@@ -7,6 +7,7 @@
 #include <vcpkg/fwd/dependencies.h>
 #include <vcpkg/fwd/portfileprovider.h>
 
+#include <vcpkg/base/cache.h>
 #include <vcpkg/base/files.h>
 #include <vcpkg/base/messages.h>
 #include <vcpkg/base/optional.h>
@@ -27,8 +28,6 @@
 
 namespace vcpkg
 {
-    DECLARE_MESSAGE(ElapsedForPackage, (msg::spec, msg::elapsed), "", "Elapsed time to handle {spec}: {elapsed}");
-
     struct IBuildLogsRecorder
     {
         virtual void record_build_result(const VcpkgPaths& paths,
@@ -65,7 +64,8 @@ namespace vcpkg
                               Triplet host_triplet);
     } // namespace vcpkg::Build
 
-    const std::string& to_string(DownloadTool tool);
+    StringLiteral to_string_view(DownloadTool tool);
+    std::string to_string(DownloadTool tool);
 
     struct BuildPackageOptions
     {
@@ -131,17 +131,14 @@ namespace vcpkg
 
     StringLiteral to_string_locale_invariant(const BuildResult build_result);
     LocalizedString to_string(const BuildResult build_result);
-    LocalizedString create_user_troubleshooting_message(const InstallPlanAction& action, const VcpkgPaths& paths);
+    LocalizedString create_user_troubleshooting_message(const InstallPlanAction& action,
+                                                        const VcpkgPaths& paths,
+                                                        const Optional<Path>& issue_body);
     inline void print_user_troubleshooting_message(const InstallPlanAction& action,
                                                    const VcpkgPaths& paths,
                                                    Optional<Path>&& issue_body)
     {
-        msg::println_error(create_user_troubleshooting_message(action, paths));
-        if (issue_body)
-        {
-            msg::println(
-                Color::warning, msgBuildTroubleshootingMessage4, msg::path = issue_body.value_or_exit(VCPKG_LINE_INFO));
-        }
+        msg::println(Color::error, create_user_troubleshooting_message(action, paths, issue_body));
     }
 
     /// <summary>
@@ -204,14 +201,14 @@ namespace vcpkg
     ExtendedBuildResult build_package(const VcpkgCmdArguments& args,
                                       const VcpkgPaths& paths,
                                       const InstallPlanAction& config,
-                                      BinaryCache& binary_cache,
                                       const IBuildLogsRecorder& build_logs_recorder,
                                       const StatusParagraphs& status_db);
 
     // could be constexpr, but we want to generate this and that's not constexpr in C++14
     extern const std::array<BuildPolicy, size_t(BuildPolicy::COUNT)> ALL_POLICIES;
 
-    const std::string& to_string(BuildPolicy policy);
+    StringLiteral to_string_view(BuildPolicy policy);
+    std::string to_string(BuildPolicy policy);
     ZStringView to_cmake_variable(BuildPolicy policy);
 
     struct BuildPolicies

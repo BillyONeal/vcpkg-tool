@@ -1,4 +1,4 @@
-#include <vcpkg/base/system_headers.h>
+#include <vcpkg/base/system-headers.h>
 
 #include <vcpkg/base/chrono.h>
 #include <vcpkg/base/files.h>
@@ -856,11 +856,11 @@ namespace
 
     void vcpkg_remove_all_directory(const Path& base, std::error_code& ec, Path& failure_point, struct stat& base_lstat)
     {
-        // ensure that the directory is writable and executable
+        // ensure that the directory is readable, writable and executable
         // NOTE: the execute bit on directories is needed to allow opening files inside of that directory
-        if ((base_lstat.st_mode & (S_IWUSR | S_IXUSR)) != (S_IWUSR | S_IXUSR))
+        if ((base_lstat.st_mode & (S_IRUSR | S_IWUSR | S_IXUSR)) != (S_IRUSR | S_IWUSR | S_IXUSR))
         {
-            if (::chmod(base.c_str(), base_lstat.st_mode | S_IWUSR | S_IXUSR) != 0)
+            if (::chmod(base.c_str(), base_lstat.st_mode | S_IRUSR | S_IWUSR | S_IXUSR) != 0)
             {
                 ec.assign(errno, std::generic_category());
                 mark_recursive_error(base, ec, failure_point);
@@ -1365,15 +1365,6 @@ namespace vcpkg
 
     FilePointer::operator bool() const noexcept { return m_fs != nullptr; }
 
-    int FilePointer::seek(long long offset, int origin) const noexcept
-    {
-#if defined(_WIN32)
-        return ::_fseeki64(m_fs, offset, origin);
-#else  // ^^^ _WIN32 / !_WIN32 vvv
-        return ::fseeko(m_fs, offset, origin);
-#endif // ^^^ !_WIN32
-    }
-
     long long FilePointer::tell() const noexcept
     {
 #if defined(_WIN32)
@@ -1391,9 +1382,17 @@ namespace vcpkg
 
     const Path& FilePointer::path() const { return m_path; }
 
-    ExpectedL<Unit> FilePointer::try_seek_to(long long offset)
+    ExpectedL<Unit> FilePointer::try_seek_to(long long offset) { return try_seek_to(offset, SEEK_SET); }
+
+    ExpectedL<Unit> FilePointer::try_seek_to(long long offset, int origin)
     {
-        if (this->seek(offset, SEEK_SET))
+#if defined(_WIN32)
+        const int result = ::_fseeki64(m_fs, offset, origin);
+#else  // ^^^ _WIN32 / !_WIN32 vvv
+        const int result = ::fseeko(m_fs, offset, origin);
+#endif // ^^^ !_WIN32
+
+        if (result)
         {
             return msg::format(msgFileSeekFailed, msg::path = m_path, msg::byte_offset = offset);
         }
@@ -1465,18 +1464,24 @@ namespace vcpkg
         return static_cast<char>(result);
     }
 
+    ExpectedL<Unit> ReadFilePointer::try_read_all_from(long long offset, void* buffer, std::uint32_t size)
+    {
+        return try_seek_to(offset).then([&](Unit) { return try_read_all(buffer, size); });
+    }
+
     WriteFilePointer::WriteFilePointer() noexcept = default;
 
     WriteFilePointer::WriteFilePointer(WriteFilePointer&&) noexcept = default;
 
-    WriteFilePointer::WriteFilePointer(const Path& file_path, std::error_code& ec) : FilePointer(file_path)
+    WriteFilePointer::WriteFilePointer(const Path& file_path, Append append, std::error_code& ec)
+        : FilePointer(file_path)
     {
 #if defined(_WIN32)
-        m_fs = ::_wfsopen(to_stdfs_path(file_path).c_str(), L"wb", _SH_DENYWR);
+        m_fs = ::_wfsopen(to_stdfs_path(file_path).c_str(), append == Append::YES ? L"ab" : L"wb", _SH_DENYWR);
         ec.assign(m_fs == nullptr ? errno : 0, std::generic_category());
         if (m_fs != nullptr) ::setvbuf(m_fs, NULL, _IONBF, 0);
 #else  // ^^^ _WIN32 / !_WIN32 vvv
-        m_fs = ::fopen(file_path.c_str(), "wb");
+        m_fs = ::fopen(file_path.c_str(), append == Append::YES ? "ab" : "wb");
         if (m_fs)
         {
             ec.clear();
@@ -1502,17 +1507,7 @@ namespace vcpkg
 
     int WriteFilePointer::put(int c) const noexcept { return ::fputc(c, m_fs); }
 
-    std::vector<std::string> Filesystem::read_lines(const Path& file_path, LineInfo li) const
-    {
-        std::error_code ec;
-        auto maybe_lines = this->read_lines(file_path, ec);
-        if (ec)
-        {
-            exit_filesystem_call_error(li, ec, __func__, {file_path});
-        }
-
-        return maybe_lines;
-    }
+    ILineReader::~ILineReader() = default;
 
     std::string Filesystem::read_contents(const Path& file_path, LineInfo li) const
     {
@@ -1524,6 +1519,18 @@ namespace vcpkg
         }
 
         return maybe_contents;
+    }
+
+    ExpectedL<FileContents> Filesystem::try_read_contents(const Path& file_path) const
+    {
+        std::error_code ec;
+        auto maybe_contents = this->read_contents(file_path, ec);
+        if (ec)
+        {
+            return format_filesystem_call_error(ec, __func__, {file_path});
+        }
+
+        return FileContents{std::move(maybe_contents), file_path.native()};
     }
 
     Path Filesystem::find_file_recursively_up(const Path& starting_dir, const Path& filename, LineInfo li) const
@@ -1882,8 +1889,11 @@ namespace vcpkg
 
         if (ec)
         {
-            Checks::exit_with_message(
-                li, "Failure to remove_all(\"%s\") due to file \"%s\": %s", base, failure_point, ec.message());
+            Checks::msg_exit_with_error(
+                li,
+                msg::format(msgFailedToDeleteDueToFile, msg::value = base, msg::path = failure_point)
+                    .append_raw(' ')
+                    .append_raw(ec.message()));
         }
     }
 
@@ -1930,8 +1940,11 @@ namespace vcpkg
 
         if (ec)
         {
-            Checks::exit_with_message(
-                li, "Failure to remove_all_inside(\"%s\") due to file \"%s\": %s", base, failure_point, ec.message());
+            Checks::msg_exit_with_error(
+                li,
+                msg::format(msgFailedToDeleteInsideDueToFile, msg::value = base, msg::path = failure_point)
+                    .append_raw(' ')
+                    .append_raw(ec.message()));
         }
     }
 
@@ -2039,16 +2052,26 @@ namespace vcpkg
         return ExpectedL<ReadFilePointer>{std::move(ret)};
     }
 
-    WriteFilePointer Filesystem::open_for_write(const Path& file_path, LineInfo li)
+    WriteFilePointer Filesystem::open_for_write(const Path& file_path, Append append, LineInfo li)
     {
         std::error_code ec;
-        auto ret = this->open_for_write(file_path, ec);
+        auto ret = this->open_for_write(file_path, append, ec);
         if (ec)
         {
             exit_filesystem_call_error(li, ec, __func__, {file_path});
         }
 
         return ret;
+    }
+
+    WriteFilePointer Filesystem::open_for_write(const Path& file_path, std::error_code& ec)
+    {
+        return open_for_write(file_path, Append::NO, ec);
+    }
+
+    WriteFilePointer Filesystem::open_for_write(const Path& file_path, LineInfo li)
+    {
+        return open_for_write(file_path, Append::NO, li);
     }
 
     struct RealFilesystem final : Filesystem
@@ -2087,14 +2110,15 @@ namespace vcpkg
 
             return output;
         }
-        virtual std::vector<std::string> read_lines(const Path& file_path, std::error_code& ec) const override
+        virtual ExpectedL<std::vector<std::string>> read_lines(const Path& file_path) const override
         {
             StatsTimer t(g_us_filesystem_stats);
+            std::error_code ec;
             ReadFilePointer file{file_path, ec};
             if (ec)
             {
-                Debug::print("Failed to open: ", file_path, '\n');
-                return std::vector<std::string>();
+                Debug::println("Failed to open: ", file_path);
+                return format_filesystem_call_error(ec, __func__, {file_path});
             }
 
             Strings::LinesCollector output;
@@ -2109,7 +2133,7 @@ namespace vcpkg
                 }
                 else if ((ec = file.error()))
                 {
-                    return std::vector<std::string>();
+                    return format_filesystem_call_error(ec, "read_lines_read", {file_path});
                 }
             } while (!file.eof());
 
@@ -2117,6 +2141,7 @@ namespace vcpkg
             if (res.size() > 0 && Strings::starts_with(res[0], "\xEF\xBB\xBF"))
             {
                 // remove byte-order mark from the beginning of the string
+                res[0].erase(0, 3);
             }
 
             return res;
@@ -2613,7 +2638,7 @@ namespace vcpkg
                                  const std::vector<std::string>& lines,
                                  std::error_code& ec) override
         {
-            vcpkg::WriteFilePointer output{file_path, ec};
+            vcpkg::WriteFilePointer output{file_path, Append::NO, ec};
             if (!ec)
             {
                 for (const auto& line : lines)
@@ -3001,6 +3026,44 @@ namespace vcpkg
                     return false;
                 }
 
+                if (options == CopyOptions::update_existing)
+                {
+                    WIN32_FILE_ATTRIBUTE_DATA attributes_destination;
+                    if (GetFileAttributesExW(wide_destination.c_str(), GetFileExInfoStandard, &attributes_destination))
+                    {
+                        WIN32_FILE_ATTRIBUTE_DATA attributes_source;
+                        if (!GetFileAttributesExW(wide_source.c_str(), GetFileExInfoStandard, &attributes_source))
+                        {
+                            ec.assign(GetLastError(), std::system_category());
+                            return false;
+                        }
+
+                        // Do not copy if destination file is equal or more recent than source file
+                        if (CompareFileTime(&attributes_destination.ftLastWriteTime,
+                                            &attributes_source.ftLastWriteTime) >= 0)
+                        {
+                            ec.clear();
+                            return false;
+                        }
+
+                        // Overwrite file because a newer version was found
+                        if (::CopyFileW(wide_source.c_str(), wide_destination.c_str(), FALSE))
+                        {
+                            ec.clear();
+                            return true;
+                        }
+                        last_error = GetLastError();
+                        ec.assign(static_cast<int>(last_error), std::system_category());
+                        return false;
+                    }
+                    else
+                    {
+                        last_error = GetLastError();
+                        ec.assign(static_cast<int>(last_error), std::system_category());
+                        return false;
+                    }
+                }
+
                 // open handles to both files in exclusive mode to implement the equivalent() check
                 FileHandle source_handle(wide_source.c_str(), FILE_READ_DATA, 0, OPEN_EXISTING, 0, ec);
                 if (ec)
@@ -3043,7 +3106,7 @@ namespace vcpkg
             }
 
             int open_options = O_WRONLY | O_CREAT;
-            if (options != CopyOptions::overwrite_existing)
+            if (options != CopyOptions::overwrite_existing && options != CopyOptions::update_existing)
             {
                 // the standard wording suggests that we should create a file through a broken symlink which would
                 // forbid use of O_EXCL. However, implementations like boost::copy_file don't do this and doing it
@@ -3082,7 +3145,13 @@ namespace vcpkg
                 return false;
             }
 
-            if (options == CopyOptions::overwrite_existing)
+            if (options == CopyOptions::update_existing && destination_stat.st_mtime >= source_stat.st_mtime)
+            {
+                ec.clear();
+                return false;
+            }
+
+            if (options == CopyOptions::overwrite_existing || options == CopyOptions::update_existing)
             {
                 destination_fd.ftruncate(0, ec);
                 if (ec) return false;
@@ -3255,7 +3324,7 @@ namespace vcpkg
         virtual void write_contents(const Path& file_path, StringView data, std::error_code& ec) override
         {
             StatsTimer t(g_us_filesystem_stats);
-            auto f = open_for_write(file_path, ec);
+            auto f = open_for_write(file_path, Append::NO, ec);
             if (!ec)
             {
                 auto count = f.write(data.data(), 1, data.size());
@@ -3521,9 +3590,9 @@ namespace vcpkg
             return ReadFilePointer{file_path, ec};
         }
 
-        virtual WriteFilePointer open_for_write(const Path& file_path, std::error_code& ec) override
+        virtual WriteFilePointer open_for_write(const Path& file_path, Append append, std::error_code& ec) override
         {
-            return WriteFilePointer{file_path, ec};
+            return WriteFilePointer{file_path, append, ec};
         }
     };
 
@@ -3543,13 +3612,17 @@ namespace vcpkg
 
     void print_paths(const std::vector<Path>& paths)
     {
-        std::string message = "\n";
+        LocalizedString ls;
+        ls.append_raw('\n');
         for (const Path& p : paths)
         {
-            Strings::append(message, "    ", p.generic_u8string(), '\n');
+            auto as_preferred = p;
+            as_preferred.make_preferred();
+            ls.append_indent().append_raw(as_preferred).append_raw('\n');
         }
-        message.push_back('\n');
-        msg::write_unlocalized_text_to_stdout(Color::none, message);
+
+        ls.append_raw('\n');
+        msg::print(ls);
     }
 
     IExclusiveFileLock::~IExclusiveFileLock() = default;
@@ -3577,8 +3650,7 @@ namespace vcpkg
         auto is_wildcard = [](char c) { return c == '?' || c == '*'; };
         if (std::any_of(first, last, is_wildcard))
         {
-            Checks::exit_with_message(
-                VCPKG_LINE_INFO, "Attempt to fix case of a path containing wildcards: %s", source);
+            Checks::msg_exit_with_error(VCPKG_LINE_INFO, msgInvalidArgumentRequiresNoWildcards, msg::path = source);
         }
 
         std::string in_progress;

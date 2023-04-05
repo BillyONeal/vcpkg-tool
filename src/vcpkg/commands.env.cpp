@@ -1,4 +1,5 @@
 #include <vcpkg/base/strings.h>
+#include <vcpkg/base/system.h>
 #include <vcpkg/base/system.process.h>
 
 #include <vcpkg/build.h>
@@ -7,6 +8,7 @@
 #include <vcpkg/help.h>
 #include <vcpkg/installedpaths.h>
 #include <vcpkg/portfileprovider.h>
+#include <vcpkg/registries.h>
 #include <vcpkg/vcpkgcmdarguments.h>
 #include <vcpkg/vcpkgpaths.h>
 
@@ -30,7 +32,10 @@ namespace vcpkg::Commands::Env
     }};
 
     const CommandStructure COMMAND_STRUCTURE = {
-        create_example_string("env <optional command> --triplet x64-windows"),
+        [] {
+            return create_example_string(
+                fmt::format("env <{}> --triplet x64-windows", msg::format(msgOptionalCommand)));
+        },
         0,
         1,
         {SWITCHES, {}},
@@ -101,14 +106,19 @@ namespace vcpkg::Commands::Env
 #if defined(_WIN32)
             env = cmd_execute_and_capture_environment(build_env_cmd, env);
 #else  // ^^^ _WIN32 / !_WIN32 vvv
-            Checks::exit_with_message(VCPKG_LINE_INFO, "Build environment commands are not supported on this platform");
+            Checks::msg_exit_with_message(VCPKG_LINE_INFO, msgEnvPlatformNotSupported);
 #endif // ^^^ !_WIN32
         }
 
+#if defined(_WIN32)
         Command cmd("cmd");
-        if (!args.command_arguments.empty())
+#else  // ^^^ _WIN32 / !_WIN32 vvv
+        Command cmd("");
+        Checks::msg_exit_with_message(VCPKG_LINE_INFO, msgEnvPlatformNotSupported);
+#endif // ^^^ !_WIN32
+        if (!options.command_arguments.empty())
         {
-            cmd.string_arg("/c").raw_arg(args.command_arguments[0]);
+            cmd.string_arg("/c").raw_arg(options.command_arguments[0]);
         }
 #ifdef _WIN32
         enter_interactive_subprocess();

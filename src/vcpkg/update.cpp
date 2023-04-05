@@ -1,9 +1,8 @@
-#include <vcpkg/base/system.print.h>
-
 #include <vcpkg/commands.h>
 #include <vcpkg/help.h>
 #include <vcpkg/paragraphs.h>
 #include <vcpkg/portfileprovider.h>
+#include <vcpkg/registries.h>
 #include <vcpkg/update.h>
 #include <vcpkg/vcpkgcmdarguments.h>
 #include <vcpkg/vcpkglib.h>
@@ -47,7 +46,7 @@ namespace vcpkg::Update
     }
 
     const CommandStructure COMMAND_STRUCTURE = {
-        create_example_string("update"),
+        [] { return create_example_string("update"); },
         0,
         0,
         {},

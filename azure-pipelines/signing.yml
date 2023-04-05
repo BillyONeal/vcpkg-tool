@@ -47,6 +47,7 @@ jobs:
     # on the value; AzureDevOps appears to repeat evaluation of variables such that crossing UTC's day start
     # would make subsequent pipeline stages use a different day producing a broken build.
     # Note that pipeline.startTime seems to refer to the start of the *job*, not the overall pipeline run.
+    timeoutInMinutes: 120
     variables:
     - ${{ if eq(parameters.VcpkgBaseVersionOverride, 'default') }}:
       - name: VCPKG_INITIAL_BASE_VERSION
@@ -61,8 +62,6 @@ jobs:
     pool:
       name: 'VSEngSS-MicroBuild2022-1ES'
     steps:
-    - task: CodeQL3000Init@0
-      displayName: 'CodeQL Initialize'
     - task: Powershell@2
       displayName: 'Lock VCPKG_BASE_VERSION'
       name: versions
@@ -79,9 +78,9 @@ jobs:
         arguments: '-Destination "$(Build.BinariesDirectory)" -VcpkgBaseVersion $(VCPKG_INITIAL_BASE_VERSION)'
     # Build and test vcpkg-artifacts
     - task: UseNode@1
-      displayName: Use Node 16 or later
+      displayName: Use Node 18 or later
       inputs:
-        version: "16.x"
+        version: "18.x"
     - script: copy azure-pipelines\.npmrc-internal ce\common\config\rush\.npmrc
       displayName: Use internal .npmrc
     - task: npmAuthenticate@0
@@ -91,24 +90,39 @@ jobs:
     - script: npm install -g @microsoft/rush
       displayName: Install Rush
       workingDirectory: ce\common\config\rush
-    - script: rush update
+    - script: |
+        set PATH=%PATH%;%APPDATA%\npm
+        rush update
       displayName: Install vcpkg-artifacts Dependencies
       workingDirectory: ce
-    - script: rush lint
+    - script: |
+        set PATH=%PATH%;%APPDATA%\npm
+        rush lint
       displayName: Check vcpkg-artifacts for Linting Errors
       workingDirectory: ce
-    - script: rush rebuild
+    - task: CodeQL3000Init@0
+      displayName: 'CodeQL Initialize'
+    - script: |
+        set PATH=%PATH%;%APPDATA%\npm
+        rush rebuild
       displayName: Build vcpkg-artifacts Packages
       workingDirectory: ce
-    - script: rush test
+    - task: CodeQL3000Finalize@0
+      displayName: 'CodeQL Finalize'
+    - script: |
+        set PATH=%PATH%;%APPDATA%\npm
+        rush test
       displayName: Run vcpkg-artifacts Tests
       workingDirectory: ce
     - script: |
+        set PATH=%PATH%;%APPDATA%\npm
         rush set-versions
         node -e "const c = require('./ce/package.json'); p = require('./assets/package.json') ; p.version = c.version; require('fs').writeFileSync('./assets/package.json', JSON.stringify(p,undefined,2)); console.log(``set asset version to `${p.version}``);"
       displayName: Set vcpkg-artifacts Package Versions
       workingDirectory: ce
-    - script: mkdir "$(Build.BinariesDirectory)\ce" && rush deploy -t "$(Build.BinariesDirectory)\ce"
+    - script: |
+        set PATH=%PATH%;%APPDATA%\npm
+        mkdir "$(Build.BinariesDirectory)\ce" && rush deploy -t "$(Build.BinariesDirectory)\ce"
       displayName: Collect vcpkg-artifacts Dependencies
       workingDirectory: ce
     - script: |
@@ -117,12 +131,7 @@ jobs:
     - task: ComponentGovernanceComponentDetection@0
       displayName: Detect Components
       inputs:
-        ignoreDirectories: ce/common/temp
-    # Inject the NOTICE file. This must run after component detection.
-    - task: msospo.ospo-extension.8d7f9abb-6896-461d-9e25-4f74ed65ddb2.notice@0
-      displayName: Generate NOTICE File
-      inputs:
-        outputfile: $(Build.BinariesDirectory)/ce/NOTICE.txt
+        sourceScanPath: "$(Build.BinariesDirectory)/ce"
     - task: MicroBuildSigningPlugin@3
       displayName: Install MicroBuild Signing
       inputs:
@@ -146,14 +155,17 @@ jobs:
         msbuildArguments: '/p:OutDir=$(Build.BinariesDirectory)\ /p:IntermediateOutputPath=$(Build.BinariesDirectory)\'
       # Note that signing must happen before packing steps because the packs contain files that are themselves signed.
     - script: |
+        copy "$(Build.SourcesDirectory)\NOTICE.txt" "$(Build.BinariesDirectory)\ce\NOTICE.txt"
+      displayName: Inject NOTICE File
+    - script: |
         copy "$(Build.BinariesDirectory)\vcpkg-init.ps1" "$(Build.BinariesDirectory)\vcpkg-init.cmd"
       displayName: 'Duplicate Install Scripts'
     - task: Powershell@2
-      displayName: 'Build vcpkg-standalone-bundle.tar.gz'
+      displayName: 'Build One-Liner vcpkg-standalone-bundle.tar.gz'
       inputs:
         pwsh: true
         filePath: vcpkg-init/mint-standalone-bundle.ps1
-        arguments: '-DestinationTarball "$(Build.BinariesDirectory)\vcpkg-standalone-bundle.tar.gz" -TempDir standalone-temp -SignedFilesRoot "$(Build.BinariesDirectory)"'
+        arguments: '-DestinationTarball "$(Build.BinariesDirectory)\vcpkg-standalone-bundle.tar.gz" -TempDir standalone-temp -SignedFilesRoot "$(Build.BinariesDirectory)" -Deployment OneLiner -VcpkgBaseVersion "$(VCPKG_INITIAL_BASE_VERSION)"'
     - script: npm pack
       displayName: Create vcpkg-artifacts Pack
       workingDirectory: $(Build.BinariesDirectory)/ce
@@ -185,14 +197,12 @@ jobs:
         PathtoPublish: '$(Build.ArtifactStagingDirectory)\staging'
         ArtifactName: 'staging'
         publishLocation: 'Container'
-    - task: CodeQL3000Finalize@0
-      displayName: 'CodeQL Finalize'
   - job: macos_build
     displayName: 'MacOS Build'
     dependsOn:
       - arch_independent
     pool:
-      vmImage: macOS-11
+      vmImage: macOS-12
     variables:
       VCPKG_STANDALONE_BUNDLE_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_STANDALONE_BUNDLE_SHA'] ]
       VCPKG_CE_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_CE_SHA'] ]
@@ -264,6 +274,7 @@ jobs:
         publishLocation: 'Container'
   - job: windows_and_sign
     displayName: 'Build Windows binaries and Sign'
+    timeoutInMinutes: 120
     dependsOn:
       - arch_independent
       - macos_build
@@ -298,6 +309,8 @@ jobs:
           cmake.exe --version
           cmake.exe -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_BUILD_TLS12_DOWNLOADER=ON -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DVCPKG_PDB_SUFFIX="-arm64" "-DVCPKG_FMT_URL=$(fmt-tarball-url)" "-DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url)" "-DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION)" "-DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA)" "-DVCPKG_CE_SHA=$(VCPKG_CE_SHA)" -B "$(Build.BinariesDirectory)\arm64"
           ninja.exe -C "$(Build.BinariesDirectory)\arm64"
+    - task: CodeQL3000Finalize@0
+      displayName: 'CodeQL Finalize'
     - task: MicroBuildSigningPlugin@3
       displayName: Install MicroBuild Signing
       inputs:
@@ -362,13 +375,15 @@ jobs:
       inputs:
         pwsh: true
         filePath: vcpkg-init/mint-standalone-bundle.ps1
-        arguments: '-DestinationDir "$(Build.ArtifactStagingDirectory)/vs-insertion/staging" -readonly -TempDir standalone-temp -SignedFilesRoot "$(Build.ArtifactStagingDirectory)\staging"'
+        arguments: '-DestinationDir "$(Build.ArtifactStagingDirectory)/vs-insertion/staging" -TempDir standalone-temp -SignedFilesRoot "$(Build.ArtifactStagingDirectory)\staging" -Deployment "VisualStudio" -VcpkgBaseVersion "$(VCPKG_BASE_VERSION)"'
     - task: CmdLine@2
       displayName: 'Arrange Drop'
       inputs:
         failOnStderr: true
         script: |
           mkdir "$(Build.ArtifactStagingDirectory)\drop"
+
+          copy "$(Build.SourcesDirectory)\NOTICE.txt" "$(Build.ArtifactStagingDirectory)\drop\NOTICE.txt"
 
           move "$(Build.ArtifactStagingDirectory)\staging\vcpkg-init" "$(Build.ArtifactStagingDirectory)\drop\vcpkg-init"
           move "$(Build.ArtifactStagingDirectory)\staging\vcpkg-init.cmd" "$(Build.ArtifactStagingDirectory)\drop\vcpkg-init.cmd"
@@ -397,6 +412,13 @@ jobs:
           move "$(Build.ArtifactStagingDirectory)\staging\macos\vcpkg" "$(Build.ArtifactStagingDirectory)\drop\vcpkg-macos"
 
           copy "$(Build.SourcesDirectory)\azure-pipelines\vs-insertion\vcpkg.nuspec" "$(Build.ArtifactStagingDirectory)\vs-insertion\staging\vcpkg.nuspec"
+    - task: AzureArtifacts.manifest-generator-task.manifest-generator-task.ManifestGeneratorTask@0
+      displayName: 'Generate SBOMs'
+      inputs:
+        BuildDropPath: '$(Build.ArtifactStagingDirectory)/drop'
+        ManifestDirPath: '$(Build.ArtifactStagingDirectory)/drop'
+        PackageName: vcpkg
+        PackageVersion: '$(VCPKG_BASE_VERSION)'
     - task: CmdLine@2
       displayName: 'Add Drop PGP Signatures (real sign only)'
       condition: and(eq(variables.SignType, 'real'), succeeded())
@@ -463,8 +485,6 @@ jobs:
         uploadRoslyn: false
         uploadTSLint: false
       condition: eq(variables['Build.SourceBranchName'], 'main')
-    - task: CodeQL3000Finalize@0
-      displayName: 'CodeQL Finalize'
     # Publish everything to a Drop
     - task: PublishBuildArtifacts@1
       displayName: 'Publish Drop'
@@ -492,9 +512,9 @@ jobs:
       # hostname and allow anything with the right key.
       # https://docs.github.com/en/github/authenticating-to-github/keeping-your-account-and-data-secure/about-githubs-ip-addresses
       # This public key should have the well-known fingerprint documented below.
-      # SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8
+      # SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s
       # https://docs.github.com/en/github/authenticating-to-github/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
-      - script: mkdir %USERPROFILE%\.ssh && echo * ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAq2A7hRGmdnm9tUDbO9IDSwBK6TbQa+PXYPCPy6rbTrTtw7PHkccKrpp0yVhp5HdEIcKr6pLlVDBfOLX9QUsyCOV0wzfjIJNlGEYsdlLJizHhbn2mUjvSAHQqZETYP81eFzLQNnPHt4EVVUh7VfDESU84KezmD5QlWpXLmvU31/yMf+Se8xhHTvKSCZIFImWwoG6mbUoWf9nzpIoaSjB+weqqUUmpaaasXVal72J+UX2B+2RPW3RcT0eOzQgqlJL3RKrTJvdsjE3JEAvGq3lGHSZXy28G3skua2SmVi/w4yCE6gbODqnTWlg7+wC604ydGXA8VJiS5ap43JXiUFFAaQ==>>%USERPROFILE%\.ssh\known_hosts
+      - script: mkdir %USERPROFILE%\.ssh && echo github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=>>%USERPROFILE%\.ssh\known_hosts
         displayName: Store GitHub Public Key
         condition: and(eq(variables.SignType, 'real'), succeeded())
       - script: git -c user.email=embeddedbot@microsoft.com -c user.name="Embedded Bot" push git@github.com:microsoft/vcpkg-tool HEAD:refs/tags/%VCPKG_BASE_VERSION%

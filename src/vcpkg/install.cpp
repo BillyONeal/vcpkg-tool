@@ -1,8 +1,10 @@
+#include <vcpkg/base/fwd/message_sinks.h>
+
 #include <vcpkg/base/files.h>
 #include <vcpkg/base/hash.h>
 #include <vcpkg/base/messages.h>
 #include <vcpkg/base/system.debug.h>
-#include <vcpkg/base/system.print.h>
+#include <vcpkg/base/system.h>
 #include <vcpkg/base/util.h>
 
 #include <vcpkg/binarycaching.h>
@@ -19,6 +21,7 @@
 #include <vcpkg/installedpaths.h>
 #include <vcpkg/metrics.h>
 #include <vcpkg/paragraphs.h>
+#include <vcpkg/portfileprovider.h>
 #include <vcpkg/remove.h>
 #include <vcpkg/tools.h>
 #include <vcpkg/vcpkglib.h>
@@ -75,7 +78,7 @@ namespace vcpkg
             const auto status = fs.symlink_status(file, ec);
             if (ec)
             {
-                print2(Color::error, "failed: ", file, ": ", ec.message(), "\n");
+                msg::println_warning(format_filesystem_call_error(ec, "symlink_status", {file}));
                 continue;
             }
 
@@ -340,7 +343,7 @@ namespace vcpkg
                 else
                     msg::println(msgBuildingPackage, msg::spec = action.displayname());
 
-                auto result = build_package(args, paths, action, binary_cache, build_logs_recorder, status_db);
+                auto result = build_package(args, paths, action, build_logs_recorder, status_db);
 
                 if (BuildResult::DOWNLOADED == result.code)
                 {
@@ -378,8 +381,11 @@ namespace vcpkg
                 case InstallResult::FILE_CONFLICTS: code = BuildResult::FILE_CONFLICTS; break;
                 default: Checks::unreachable(VCPKG_LINE_INFO);
             }
-
-            if (action.build_options.clean_packages == CleanPackages::YES)
+            if (restore != RestoreResult::restored)
+            {
+                binary_cache.push_success(action, paths.package_dir(action.spec));
+            }
+            else if (action.build_options.clean_packages == CleanPackages::YES)
             {
                 fs.remove_all(paths.package_dir(action.spec), VCPKG_LINE_INFO);
             }
@@ -404,17 +410,24 @@ namespace vcpkg
         Checks::unreachable(VCPKG_LINE_INFO);
     }
 
+    static LocalizedString format_result_row(const SpecSummary& result)
+    {
+        return LocalizedString()
+            .append_indent()
+            .append_raw(result.get_spec().to_string())
+            .append_raw(": ")
+            .append(to_string(result.build_result.value_or_exit(VCPKG_LINE_INFO).code))
+            .append_raw(": ")
+            .append_raw(result.timing.to_string());
+    }
+
     void InstallSummary::print() const
     {
         msg::println(msgResultsHeader);
 
         for (const SpecSummary& result : this->results)
         {
-            msg::println(LocalizedString().append_indent().append_fmt_raw(
-                "{}: {}: {}",
-                result.get_spec(),
-                to_string(result.build_result.value_or_exit(VCPKG_LINE_INFO).code),
-                result.timing));
+            msg::println(format_result_row(result));
         }
 
         std::map<Triplet, BuildResultCounts> summary;
@@ -440,11 +453,7 @@ namespace vcpkg
         {
             if (result.build_result.value_or_exit(VCPKG_LINE_INFO).code != BuildResult::SUCCEEDED)
             {
-                msg::println(LocalizedString().append_indent().append_fmt_raw(
-                    "{}: {}: {}",
-                    result.get_spec(),
-                    to_string(result.build_result.value_or_exit(VCPKG_LINE_INFO).code),
-                    result.timing));
+                msg::println(format_result_row(result));
             }
         }
         msg::println();
@@ -495,7 +504,7 @@ namespace vcpkg
                                    const RemovePlanAction& action)
             : current_summary(results.emplace_back(action)), build_timer()
         {
-            msg::println(Remove::msgRemovingPackage,
+            msg::println(msgRemovingPackage,
                          msg::action_index = action_index,
                          msg::count = action_count,
                          msg::spec = action.spec);
@@ -636,7 +645,7 @@ namespace vcpkg
     }
 
     const CommandStructure Install::COMMAND_STRUCTURE = {
-        create_example_string("install zlib zlib:x64-windows curl boost"),
+        [] { return create_example_string("install zlib zlib:x64-windows curl boost"); },
         0,
         SIZE_MAX,
         {INSTALL_SWITCHES, INSTALL_SETTINGS, INSTALL_MULTISETTINGS},
@@ -646,7 +655,7 @@ namespace vcpkg
     // This command structure must share "critical" values (switches, number of arguments). It exists only to provide a
     // better example string.
     const CommandStructure MANIFEST_COMMAND_STRUCTURE = {
-        create_example_string("install --triplet x64-windows"),
+        [] { return create_example_string("install --triplet x64-windows"); },
         0,
         SIZE_MAX,
         {INSTALL_SWITCHES, INSTALL_SETTINGS, INSTALL_MULTISETTINGS},
@@ -690,8 +699,12 @@ namespace vcpkg
 
     std::vector<std::string> get_cmake_add_library_names(StringView cmake_file)
     {
-        constexpr static auto is_library_name_char = [](char ch) {
-            return ch != ')' && ch != '$' && !ParserBase::is_whitespace(ch);
+        constexpr static auto is_terminating_char = [](const char ch) {
+            return ch == ')' || ParserBase::is_whitespace(ch);
+        };
+
+        constexpr static auto is_forbidden_char = [](const char ch) {
+            return ch == '$' || ch == '"' || ch == '[' || ch == '#' || ch == ';' || ch == '<';
         };
 
         const auto real_first = cmake_file.begin();
@@ -699,22 +712,42 @@ namespace vcpkg
         const auto last = cmake_file.end();
 
         std::vector<std::string> res;
-        for (;;)
+        while (first != last)
         {
-            first = find_skip_add_library(real_first, first, last);
-            if (first == last)
+            const auto start_of_library_name = find_skip_add_library(real_first, first, last);
+            const auto end_of_library_name = std::find_if(start_of_library_name, last, is_terminating_char);
+            if (end_of_library_name != start_of_library_name &&
+                std::none_of(start_of_library_name, end_of_library_name, is_forbidden_char))
             {
-                return res;
+                res.emplace_back(start_of_library_name, end_of_library_name);
             }
-            auto start_of_library_name = std::find_if_not(first, last, ParserBase::is_whitespace);
-            auto end_of_library_name = std::find_if_not(start_of_library_name, last, is_library_name_char);
-            if (end_of_library_name == start_of_library_name)
-            {
-                first = end_of_library_name;
-                continue;
-            }
-            res.emplace_back(start_of_library_name, end_of_library_name);
+
+            first = end_of_library_name;
         }
+        return res;
+    }
+
+    std::string get_cmake_find_package_name(StringView dirname, StringView filename)
+    {
+        static constexpr StringLiteral CASE_SENSITIVE_CONFIG_SUFFIX = "Config.cmake";
+        static constexpr StringLiteral CASE_INSENSITIVE_CONFIG_SUFFIX = "-config.cmake";
+
+        StringView res;
+        if (Strings::ends_with(filename, CASE_SENSITIVE_CONFIG_SUFFIX))
+        {
+            res = filename.substr(0, filename.size() - CASE_SENSITIVE_CONFIG_SUFFIX.size());
+        }
+        else if (Strings::ends_with(filename, CASE_INSENSITIVE_CONFIG_SUFFIX))
+        {
+            res = filename.substr(0, filename.size() - CASE_INSENSITIVE_CONFIG_SUFFIX.size());
+        }
+
+        if (!Strings::case_insensitive_ascii_equals(res, dirname.substr(0, res.size())))
+        {
+            res = {};
+        }
+
+        return std::string(res);
     }
 
     CMakeUsageInfo get_cmake_usage(const Filesystem& fs, const InstalledPaths& installed, const BinaryParagraph& bpgh)
@@ -737,125 +770,170 @@ namespace vcpkg
             return ret;
         }
 
-        auto files = fs.read_lines(installed.listfile_path(bpgh), ec);
-        if (!ec)
+        struct ConfigPackage
         {
-            std::unordered_map<std::string, std::string> config_files;
-            std::map<std::string, std::vector<std::string>> library_targets;
-            bool is_header_only = true;
-            std::string header_path;
+            std::string dir;
+            std::string name;
+        };
 
-            for (auto&& suffix : files)
+        auto maybe_files = fs.read_lines(installed.listfile_path(bpgh));
+        if (auto files = maybe_files.get())
+        {
+            std::vector<ConfigPackage> config_packages;
+            std::map<std::string, std::vector<std::string>> library_targets;
+            std::string header_path;
+            bool has_binaries = false;
+
+            static constexpr StringLiteral DOT_CMAKE = ".cmake";
+            static constexpr StringLiteral INCLUDE_PREFIX = "include/";
+
+            for (auto&& triplet_and_suffix : *files)
             {
-                if (Strings::contains(suffix, "/share/") && Strings::ends_with(suffix, ".cmake"))
+                if (triplet_and_suffix.empty() || triplet_and_suffix.back() == '/') continue;
+
+                const auto first_slash = triplet_and_suffix.find("/");
+                if (first_slash == std::string::npos) continue;
+
+                const auto suffix = StringView(triplet_and_suffix).substr(first_slash + 1);
+                if (suffix.empty() || suffix[0] == 'd' /*ebug*/)
                 {
-                    // CMake file is inside the share folder
-                    const auto path = installed.root() / suffix;
-                    const auto find_package_name = Path(path.parent_path()).filename().to_string();
-                    const auto contents = fs.read_contents(path, ec);
+                    continue;
+                }
+                else if (Strings::starts_with(suffix, "share/") && Strings::ends_with(suffix, DOT_CMAKE))
+                {
+                    const auto suffix_without_ending = suffix.substr(0, DOT_CMAKE.size());
+                    if (Strings::ends_with(suffix_without_ending, "/vcpkg-port-config")) continue;
+                    if (Strings::ends_with(suffix_without_ending, "/vcpkg-cmake-wrapper")) continue;
+                    if (Strings::ends_with(suffix_without_ending, /*[Vv]*/ "ersion")) continue;
+
+                    const auto filepath = installed.root() / triplet_and_suffix;
+                    const auto parent_path = Path(filepath.parent_path());
+                    if (!Strings::ends_with(parent_path.parent_path(), "/share"))
+                        continue; // Ignore nested find modules, config, or helpers
+
+                    if (Strings::contains(suffix_without_ending, "/Find")) continue;
+
+                    const auto dirname = parent_path.filename().to_string();
+                    const auto package_name = get_cmake_find_package_name(dirname, filepath.filename());
+                    if (!package_name.empty())
+                    {
+                        // This heuristics works for one package name per dir.
+                        if (!config_packages.empty() && config_packages.back().dir == dirname)
+                            config_packages.back().name.clear();
+                        else
+                            config_packages.push_back({dirname, package_name});
+                    }
+
+                    const auto contents = fs.read_contents(filepath, ec);
                     if (!ec)
                     {
                         auto targets = get_cmake_add_library_names(contents);
                         if (!targets.empty())
                         {
-                            auto& all_targets = library_targets[find_package_name];
+                            auto& all_targets = library_targets[dirname];
                             all_targets.insert(all_targets.end(),
                                                std::make_move_iterator(targets.begin()),
                                                std::make_move_iterator(targets.end()));
                         }
                     }
-
-                    auto filename = Path(suffix).filename().to_string();
-                    if (Strings::ends_with(filename, "Config.cmake"))
-                    {
-                        auto root = filename.substr(0, filename.size() - 12);
-                        if (Strings::case_insensitive_ascii_equals(root, find_package_name))
-                            config_files[find_package_name] = root;
-                    }
-                    else if (Strings::ends_with(filename, "-config.cmake"))
-                    {
-                        auto root = filename.substr(0, filename.size() - 13);
-                        if (Strings::case_insensitive_ascii_equals(root, find_package_name))
-                            config_files[find_package_name] = root;
-                    }
                 }
-                if (Strings::contains(suffix, "/lib/") || Strings::contains(suffix, "/bin/"))
+                else if (!has_binaries && Strings::starts_with(suffix, "bin/"))
                 {
-                    if (!Strings::ends_with(suffix, ".pc") && !Strings::ends_with(suffix, "/")) is_header_only = false;
+                    has_binaries = true;
                 }
-
-                if (is_header_only && header_path.empty())
+                else if (!has_binaries && Strings::starts_with(suffix, "lib/"))
                 {
-                    const auto it = suffix.find("/include/");
-                    if (it != std::string::npos && !Strings::ends_with(suffix, "/"))
-                    {
-                        header_path = suffix.substr(it + 9);
-                    }
+                    has_binaries = !Strings::ends_with(suffix, ".pc");
+                }
+                else if (header_path.empty() && Strings::starts_with(suffix, INCLUDE_PREFIX))
+                {
+                    header_path = suffix.substr(INCLUDE_PREFIX.size()).to_string();
                 }
             }
 
-            ret.header_only = is_header_only;
+            ret.header_only = !has_binaries && !header_path.empty();
 
-            if (library_targets.empty())
+            // Post-process cmake config data
+            bool has_targets_for_output = false;
+            for (auto&& package : config_packages)
             {
-                if (is_header_only && !header_path.empty())
+                const auto library_target_pair = library_targets.find(package.dir);
+                if (library_target_pair == library_targets.end()) continue;
+
+                auto& targets = library_target_pair->second;
+                if (!targets.empty())
                 {
-                    static auto cmakeify = [](std::string name) {
-                        auto n = Strings::ascii_to_uppercase(Strings::replace_all(std::move(name), "-", "_"));
-                        if (n.empty() || ParserBase::is_ascii_digit(n[0]))
-                        {
-                            n.insert(n.begin(), '_');
-                        }
-                        return n;
-                    };
+                    if (!package.name.empty()) has_targets_for_output = true;
 
-                    const auto name = cmakeify(bpgh.spec.name());
-                    auto msg = msg::format(msgHeaderOnlyUsage, msg::package_name = bpgh.spec.name()).extract_data();
-                    Strings::append(msg, "\n\n");
-                    Strings::append(msg, "    find_path(", name, "_INCLUDE_DIRS \"", header_path, "\")\n");
-                    Strings::append(msg, "    target_include_directories(main PRIVATE ${", name, "_INCLUDE_DIRS})\n\n");
-
-                    ret.message = std::move(msg);
-                }
-            }
-            else
-            {
-                auto msg = msg::format(msgCMakeTargetsUsage, msg::package_name = bpgh.spec.name()).append_raw("\n\n");
-                msg.append_indent().append(msgCMakeTargetsUsageHeuristicMessage).append_raw('\n');
-
-                for (auto&& library_target_pair : library_targets)
-                {
-                    auto config_it = config_files.find(library_target_pair.first);
-                    msg.append_indent();
-                    msg.append_fmt_raw("find_package({} CONFIG REQUIRED)",
-                                       config_it == config_files.end() ? library_target_pair.first : config_it->second);
-                    msg.append_raw('\n');
-
-                    auto& targets = library_target_pair.second;
                     Util::sort_unique_erase(targets, [](const std::string& l, const std::string& r) {
                         if (l.size() < r.size()) return true;
                         if (l.size() > r.size()) return false;
                         return l < r;
                     });
 
-                    if (targets.size() > 4)
+                    static const auto is_namespaced = [](const std::string& target) {
+                        return Strings::contains(target, "::");
+                    };
+                    if (Util::any_of(targets, is_namespaced))
                     {
-                        auto omitted = targets.size() - 4;
-                        library_target_pair.second.erase(targets.begin() + 4, targets.end());
+                        Util::erase_remove_if(targets, [](const std::string& t) { return !is_namespaced(t); });
+                    }
+                }
+                ret.cmake_targets_map[package.name] = std::move(targets);
+            }
+
+            if (has_targets_for_output)
+            {
+                auto msg = msg::format(msgCMakeTargetsUsage, msg::package_name = bpgh.spec.name()).append_raw("\n\n");
+                msg.append_indent().append(msgCMakeTargetsUsageHeuristicMessage).append_raw('\n');
+
+                for (auto&& package_targets_pair : ret.cmake_targets_map)
+                {
+                    const auto& package_name = package_targets_pair.first;
+                    if (package_name.empty()) continue;
+
+                    const auto& targets = package_targets_pair.second;
+                    if (targets.empty()) continue;
+
+                    msg.append_indent();
+                    msg.append_raw("find_package(").append_raw(package_name).append_raw(" CONFIG REQUIRED)\n");
+
+                    const auto omitted = (targets.size() > 4) ? (targets.size() - 4) : 0;
+                    if (omitted)
+                    {
                         msg.append_indent()
                             .append_raw("# ")
                             .append(msgCmakeTargetsExcluded, msg::count = omitted)
                             .append_raw('\n');
                     }
 
-                    msg.append_indent()
-                        .append_fmt_raw("target_link_libraries(main PRIVATE {})", Strings::join(" ", targets))
-                        .append_raw("\n\n");
+                    msg.append_indent();
+                    msg.append_raw("target_link_libraries(main PRIVATE ")
+                        .append_raw(Strings::join(" ", targets.begin(), targets.end() - omitted))
+                        .append_raw(")\n\n");
                 }
 
                 ret.message = msg.extract_data();
             }
-            ret.cmake_targets_map = std::move(library_targets);
+            else if (ret.header_only)
+            {
+                static auto cmakeify = [](std::string name) {
+                    auto n = Strings::ascii_to_uppercase(Strings::replace_all(std::move(name), "-", "_"));
+                    if (n.empty() || ParserBase::is_ascii_digit(n[0]))
+                    {
+                        n.insert(n.begin(), '_');
+                    }
+                    return n;
+                };
+
+                const auto name = cmakeify(bpgh.spec.name());
+                auto msg = msg::format(msgHeaderOnlyUsage, msg::package_name = bpgh.spec.name()).extract_data();
+                Strings::append(msg, "\n\n");
+                Strings::append(msg, "    find_path(", name, "_INCLUDE_DIRS \"", header_path, "\")\n");
+                Strings::append(msg, "    target_include_directories(main PRIVATE ${", name, "_INCLUDE_DIRS})\n\n");
+
+                ret.message = std::move(msg);
+            }
         }
         return ret;
     }
@@ -900,7 +978,7 @@ namespace vcpkg
         if (auto p = paths.get_manifest().get())
         {
             bool failure = false;
-            if (!args.command_arguments.empty())
+            if (!options.command_arguments.empty())
             {
                 msg::println_error(msgErrorIndividualPackagesUnsupported);
                 msg::println(Color::error, msg::msgSeeURL, msg::url = docs::manifests_url);
@@ -919,15 +997,15 @@ namespace vcpkg
             if (failure)
             {
                 msg::println(msgUsingManifestAt, msg::path = p->path);
-                print2("\n");
                 print_usage(MANIFEST_COMMAND_STRUCTURE);
                 Checks::exit_fail(VCPKG_LINE_INFO);
             }
+            print_default_triplet_warning(args, {});
         }
         else
         {
             bool failure = false;
-            if (args.command_arguments.empty())
+            if (options.command_arguments.empty())
             {
                 msg::println_error(msgErrorRequirePackagesList);
                 failure = true;
@@ -944,13 +1022,12 @@ namespace vcpkg
             }
             if (failure)
             {
-                print2("\n");
                 print_usage(COMMAND_STRUCTURE);
                 Checks::exit_fail(VCPKG_LINE_INFO);
             }
         }
 
-        BinaryCache binary_cache;
+        BinaryCache binary_cache(paths.get_filesystem());
         if (!only_downloads)
         {
             binary_cache.install_providers_for(args, paths);
@@ -996,14 +1073,13 @@ namespace vcpkg
                 Checks::exit_fail(VCPKG_LINE_INFO);
             }
 
-            auto manifest_scf = std::move(maybe_manifest_scf).value_or_exit(VCPKG_LINE_INFO);
+            auto manifest_scf = std::move(maybe_manifest_scf).value(VCPKG_LINE_INFO);
             const auto& manifest_core = *manifest_scf->core_paragraph;
             auto registry_set = paths.make_registry_set();
-            if (auto maybe_error = manifest_scf->check_against_feature_flags(
-                    manifest->path, paths.get_feature_flags(), registry_set->is_default_builtin_registry()))
-            {
-                Checks::exit_with_message(VCPKG_LINE_INFO, maybe_error.value_or_exit(VCPKG_LINE_INFO));
-            }
+            manifest_scf
+                ->check_against_feature_flags(
+                    manifest->path, paths.get_feature_flags(), registry_set->is_default_builtin_registry())
+                .value_or_exit(VCPKG_LINE_INFO);
 
             std::vector<std::string> features;
             auto manifest_feature_it = options.multisettings.find(OPTION_MANIFEST_FEATURE);
@@ -1086,10 +1162,7 @@ namespace vcpkg
                                                               unsupported_port_action)
                                     .value_or_exit(VCPKG_LINE_INFO);
 
-            for (const auto& warning : install_plan.warnings)
-            {
-                print2(Color::warning, warning, '\n');
-            }
+            install_plan.print_unsupported_warnings();
             for (InstallPlanAction& action : install_plan.install_actions)
             {
                 action.build_options = install_plan_options;
@@ -1120,10 +1193,12 @@ namespace vcpkg
         PathsPortFileProvider provider(
             fs, *registry_set, make_overlay_provider(fs, paths.original_cwd, paths.overlay_ports));
 
-        const std::vector<FullPackageSpec> specs = Util::fmap(args.command_arguments, [&](auto&& arg) {
+        const std::vector<FullPackageSpec> specs = Util::fmap(options.command_arguments, [&](auto&& arg) {
             return check_and_get_full_package_spec(
-                std::string(arg), default_triplet, COMMAND_STRUCTURE.example_text, paths);
+                std::string(arg), default_triplet, COMMAND_STRUCTURE.get_example_text(), paths);
         });
+
+        print_default_triplet_warning(args, options.command_arguments);
 
         // create the plan
         msg::println(msgComputingInstallPlan);
@@ -1133,10 +1208,7 @@ namespace vcpkg
         auto action_plan = create_feature_install_plan(
             provider, var_provider, specs, status_db, {host_triplet, unsupported_port_action});
 
-        for (const auto& warning : action_plan.warnings)
-        {
-            msg::write_unlocalized_text_to_stdout(Color::warning, warning + '\n');
-        }
+        action_plan.print_unsupported_warnings();
         for (auto&& action : action_plan.install_actions)
         {
             action.build_options = install_plan_options;

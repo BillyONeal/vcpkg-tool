@@ -67,7 +67,13 @@ namespace vcpkg
         String
     };
 
-    void to_string(std::string& out, VersionScheme scheme);
+    struct SchemedVersion
+    {
+        VersionScheme scheme;
+        Version version;
+    };
+
+    StringLiteral to_string_literal(VersionScheme scheme);
 
     struct VersionSpec
     {
@@ -163,5 +169,6 @@ namespace vcpkg
     bool try_extract_external_dot_version(ParsedExternalVersion& out, StringView version);
 }
 
+VCPKG_FORMAT_WITH_TO_STRING_LITERAL_NONMEMBER(vcpkg::VersionScheme);
 VCPKG_FORMAT_WITH_TO_STRING(vcpkg::VersionSpec);
 VCPKG_FORMAT_WITH_TO_STRING(vcpkg::Version);

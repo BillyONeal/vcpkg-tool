@@ -1,16 +1,17 @@
 #pragma once
 
+#include <vcpkg/fwd/binaryparagraph.h>
+#include <vcpkg/fwd/install.h>
 #include <vcpkg/fwd/installedpaths.h>
+#include <vcpkg/fwd/vcpkgcmdarguments.h>
 #include <vcpkg/fwd/vcpkgpaths.h>
 
 #include <vcpkg/base/chrono.h>
 #include <vcpkg/base/optional.h>
 
-#include <vcpkg/binaryparagraph.h>
 #include <vcpkg/build.h>
 #include <vcpkg/dependencies.h>
-#include <vcpkg/vcpkgcmdarguments.h>
-#include <vcpkg/vcpkgpaths.h>
+#include <vcpkg/packagespec.h>
 
 #include <chrono>
 #include <set>
@@ -19,12 +20,6 @@
 
 namespace vcpkg
 {
-    enum class KeepGoing
-    {
-        NO = 0,
-        YES
-    };
-
     struct SpecSummary
     {
         explicit SpecSummary(const InstallPlanAction& action);
@@ -71,12 +66,6 @@ namespace vcpkg
                                                     StatusParagraphs& status_db,
                                                     const CMakeVars::CMakeVarProvider& var_provider);
 
-    enum class InstallResult
-    {
-        FILE_CONFLICTS,
-        SUCCESS,
-    };
-
     void install_package_and_write_listfile(Filesystem& fs, const Path& source_dir, const InstallDir& destination_dir);
 
     void install_files_and_write_listfile(Filesystem& fs,
@@ -92,11 +81,12 @@ namespace vcpkg
     {
         std::string message;
         bool usage_file = false;
-        Optional<bool> header_only;
+        bool header_only = false;
         std::map<std::string, std::vector<std::string>> cmake_targets_map;
     };
 
     std::vector<std::string> get_cmake_add_library_names(StringView cmake_file);
+    std::string get_cmake_find_package_name(StringView dirname, StringView filename);
     CMakeUsageInfo get_cmake_usage(const Filesystem& fs, const InstalledPaths& installed, const BinaryParagraph& bpgh);
 
     namespace Install

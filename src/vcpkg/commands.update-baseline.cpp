@@ -1,8 +1,10 @@
 #include <vcpkg/base/files.h>
 #include <vcpkg/base/messages.h>
+#include <vcpkg/base/util.h>
 
 #include <vcpkg/commands.update-baseline.h>
 #include <vcpkg/configuration.h>
+#include <vcpkg/sourceparagraph.h>
 #include <vcpkg/vcpkgcmdarguments.h>
 #include <vcpkg/vcpkgpaths.h>
 
@@ -17,7 +19,7 @@ namespace vcpkg::Commands
     };
 
     static const CommandStructure COMMAND_STRUCTURE{
-        create_example_string("x-update-baseline"),
+        [] { return create_example_string("x-update-baseline"); },
         0,
         0,
         {switches},
