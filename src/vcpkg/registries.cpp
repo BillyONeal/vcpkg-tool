@@ -1634,6 +1634,66 @@ namespace vcpkg
         return result;
     }
 
+    ExpectedL<Optional<PathAndLocation>> RegistrySet::get_port(const VersionSpec& spec) const
+    {
+        auto impl = registry_for_port(spec.port_name);
+        if (!impl)
+        {
+            return Optional<PathAndLocation>();
+        }
+
+        return impl->get_port(spec);
+    }
+
+    ExpectedL<PathAndLocation> RegistrySet::get_port_required(const VersionSpec& spec) const
+    {
+        auto maybe_maybe_port = get_port(spec);
+        auto maybe_port = maybe_maybe_port.get();
+        if (!maybe_port)
+        {
+            return std::move(maybe_maybe_port).error();
+        }
+
+        auto port = maybe_port->get();
+        if (!port)
+        {
+            return msg::format_error(
+                msgVersionDatabaseEntryMissing, msg::package_name = spec.port_name, msg::version = spec.version);
+        }
+
+        return std::move(*port);
+    }
+
+    ExpectedL<Optional<View<Version>>> RegistrySet::get_all_port_versions(StringView port_name) const
+    {
+        auto impl = registry_for_port(port_name);
+        if (!impl)
+        {
+            return Optional<View<Version>>();
+        }
+
+        return impl->get_all_port_versions(port_name);
+    }
+
+    // Identical to get_all_port_versions, but nonexistent ports are translated to an error.
+    ExpectedL<View<Version>> RegistrySet::get_all_port_versions_required(StringView port_name) const
+    {
+        auto maybe_maybe_versions = get_all_port_versions(port_name);
+        auto maybe_versions = maybe_maybe_versions.get();
+        if (!maybe_versions)
+        {
+            return std::move(maybe_maybe_versions).error();
+        }
+
+        auto versions = maybe_versions->get();
+        if (!versions)
+        {
+            return msg::format_error(msgVersionDatabaseEntriesMissing, msg::package_name = port_name);
+        }
+
+        return std::move(*versions);
+    }
+
     ExpectedL<Optional<std::vector<std::pair<SchemedVersion, std::string>>>> get_builtin_versions(
         const VcpkgPaths& paths, StringView port_name)
     {

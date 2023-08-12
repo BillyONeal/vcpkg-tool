@@ -76,10 +76,68 @@ namespace vcpkg
     {
         virtual StringLiteral kind() const = 0;
 
+    private:
         // If an error occurs, the ExpectedL will be in an error state.
         // Otherwise, if the port is known, returns a pointer to RegistryEntry describing the port.
         // Otherwise, returns a nullptr unique_ptr.
         virtual ExpectedL<std::unique_ptr<RegistryEntry>> get_port_entry(StringView port_name) const = 0;
+
+    public:
+        // If there is an error, the ExpectedL will be in the error state.
+        // Otherwise, if the port is not known to the registry to which it is mapped, the Optional will be disengaged.
+        // Otherwise, the PathAndLocation denotes an on-disk location where the port directory is located.
+        ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec& spec) const
+        {
+            auto maybe_maybe_entry = get_port_entry(spec.port_name);
+            auto maybe_entry = maybe_maybe_entry.get();
+            if (!maybe_entry)
+            {
+                return std::move(maybe_maybe_entry).error();
+            }
+
+            auto entry = maybe_entry->get();
+            if (!entry)
+            {
+                return Optional<PathAndLocation>();
+            }
+
+            auto maybe_version = entry->get_version(spec.version);
+            auto version = maybe_version.get();
+            if (!version)
+            {
+                return std::move(maybe_version).error();
+            }
+
+            return Optional<PathAndLocation>(std::move(*version));
+        }
+
+        // If there is an error, the ExpectedL will be in the error state.
+        // Otherwise, if the port is not known to the registry to which it is mapped, the Optional will be disengaged.
+        // Otherwise, the known versions will be a view with lifetime matching this RegistrySet.
+        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const
+        {
+            auto maybe_maybe_entry = get_port_entry(port_name);
+            auto maybe_entry = maybe_maybe_entry.get();
+            if (!maybe_entry)
+            {
+                return std::move(maybe_maybe_entry).error();
+            }
+
+            auto entry = maybe_entry->get();
+            if (!entry)
+            {
+                return Optional<View<Version>>();
+            }
+
+            auto maybe_versions = entry->get_port_versions();
+            auto versions = maybe_versions.get();
+            if (!versions)
+            {
+                return std::move(maybe_versions).error();
+            }
+
+            return Optional<View<Version>>(std::move(*versions));
+        }
 
         // Appends the names of the known ports to the out parameter.
         // May result in duplicated port names; make sure to Util::sort_unique_erase at the end
@@ -153,6 +211,22 @@ namespace vcpkg
 
         // Returns a sorted vector of all reachable port names we can provably determine without touching the network.
         ExpectedL<std::vector<std::string>> get_all_known_reachable_port_names_no_network() const;
+
+        // If there is an error, the ExpectedL will be in the error state.
+        // Otherwise, if the port is not known to the registry to which it is mapped, the Optional will be disengaged.
+        // Otherwise, the PathAndLocation denotes an on-disk location where the port directory is located.
+        ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec& spec) const;
+
+        // Identical to get_port, but nonexistent ports are translated to an error.
+        ExpectedL<PathAndLocation> get_port_required(const VersionSpec& spec) const;
+
+        // If there is an error, the ExpectedL will be in the error state.
+        // Otherwise, if the port is not known to the registry to which it is mapped, the Optional will be disengaged.
+        // Otherwise, the known versions will be a view with lifetime matching this RegistrySet.
+        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const;
+
+        // Identical to get_all_port_versions, but nonexistent ports are translated to an error.
+        ExpectedL<View<Version>> get_all_port_versions_required(StringView port_name) const;
 
     private:
         std::unique_ptr<RegistryImplementation> default_registry_;

@@ -532,25 +532,12 @@ namespace vcpkg::Paragraphs
         std::vector<std::string> ports = registries.get_all_reachable_port_names().value_or_exit(VCPKG_LINE_INFO);
         for (const auto& port_name : ports)
         {
-            const auto impl = registries.registry_for_port(port_name);
-            if (!impl)
-            {
-                // this is a port for which no registry is set
-                // this can happen when there's no default registry,
-                // and a registry has a port definition which it doesn't own the name of.
-                continue;
-            }
-
-            auto maybe_baseline_version = impl->get_baseline_version(port_name).value_or_exit(VCPKG_LINE_INFO);
+            auto maybe_baseline_version = registries.baseline_for_port(port_name).value_or_exit(VCPKG_LINE_INFO);
             auto baseline_version = maybe_baseline_version.get();
-            if (!baseline_version) continue; // port is attributed to this registry, but it is not in the baseline
-            auto maybe_port_entry = impl->get_port_entry(port_name);
-            const auto port_entry = maybe_port_entry.get();
-            if (!port_entry) continue;  // port is attributed to this registry, but loading it failed
-            if (!*port_entry) continue; // port is attributed to this registry, but doesn't exist in this registry
-            auto maybe_port_location = (*port_entry)->get_version(*baseline_version);
+            if (!baseline_version) continue;
+            auto maybe_port_location = registries.get_port_required(VersionSpec{port_name, *baseline_version});
             const auto port_location = maybe_port_location.get();
-            if (!port_location) continue; // baseline version was not in version db (registry consistency issue)
+            if (!port_location) continue; // (registry consistency issue)
             auto maybe_spgh = try_load_port_required(fs, port_name, port_location->path);
             if (const auto spgh = maybe_spgh.get())
             {

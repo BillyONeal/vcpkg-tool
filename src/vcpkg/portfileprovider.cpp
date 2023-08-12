@@ -133,93 +133,44 @@ namespace vcpkg
             VersionedPortfileProviderImpl(const VersionedPortfileProviderImpl&) = delete;
             VersionedPortfileProviderImpl& operator=(const VersionedPortfileProviderImpl&) = delete;
 
-            const ExpectedL<std::unique_ptr<RegistryEntry>>& entry(StringView name) const
-            {
-                auto entry_it = m_entry_cache.find(name);
-                if (entry_it == m_entry_cache.end())
-                {
-                    if (auto reg = m_registry_set.registry_for_port(name))
-                    {
-                        if (auto entry = reg->get_port_entry(name))
-                        {
-                            entry_it = m_entry_cache.emplace(name.to_string(), std::move(entry)).first;
-                        }
-                        else
-                        {
-                            entry_it = m_entry_cache
-                                           .emplace(name.to_string(),
-                                                    msg::format(msgPortDoesNotExist, msg::package_name = name))
-                                           .first;
-                        }
-                    }
-                    else
-                    {
-                        entry_it = m_entry_cache
-                                       .emplace(name.to_string(),
-                                                msg::format_error(msgNoRegistryForPort, msg::package_name = name))
-                                       .first;
-                    }
-                }
-                return entry_it->second;
-            }
-
             virtual View<Version> get_port_versions(StringView port_name) const override
             {
-                return entry(port_name)
-                    .value_or_exit(VCPKG_LINE_INFO)
-                    ->get_port_versions()
-                    .value_or_exit(VCPKG_LINE_INFO);
+                return m_registry_set.get_all_port_versions_required(port_name).value_or_exit(VCPKG_LINE_INFO);
             }
 
             ExpectedL<std::unique_ptr<SourceControlFileAndLocation>> load_control_file(
                 const VersionSpec& version_spec) const
             {
-                const auto& maybe_ent = entry(version_spec.port_name);
-                if (auto ent = maybe_ent.get())
+                const auto& maybe_path = m_registry_set.get_port_required(version_spec);
+                auto path = maybe_path.get();
+                if (!path)
                 {
-                    auto maybe_path = ent->get()->get_version(version_spec.version);
-                    if (auto path = maybe_path.get())
-                    {
-                        auto maybe_control_file =
-                            Paragraphs::try_load_port_required(m_fs, version_spec.port_name, path->path);
-                        if (auto scf = maybe_control_file.get())
-                        {
-                            auto scf_vspec = scf->get()->to_version_spec();
-                            if (scf_vspec == version_spec)
-                            {
-                                return std::make_unique<SourceControlFileAndLocation>(SourceControlFileAndLocation{
-                                    std::move(*scf),
-                                    std::move(path->path),
-                                    std::move(path->location),
-                                });
-                            }
-                            else
-                            {
-                                return msg::format(msg::msgErrorMessage)
-                                    .append(msgVersionSpecMismatch,
-                                            msg::path = path->path,
-                                            msg::expected_version = version_spec,
-                                            msg::actual_version = scf_vspec);
-                            }
-                        }
-                        else
-                        {
-                            // This should change to a soft error when ParseExpected is eliminated.
-                            print_error_message(maybe_control_file.error());
-                            Checks::msg_exit_maybe_upgrade(VCPKG_LINE_INFO,
-                                                           msgFailedToLoadPort,
-                                                           msg::package_name = version_spec.port_name,
-                                                           msg::path = path->path);
-                        }
-                    }
-                    else
-                    {
-                        get_global_metrics_collector().track_define(DefineMetric::VersioningErrorVersion);
-                        return maybe_path.error();
-                    }
+                    get_global_metrics_collector().track_define(DefineMetric::VersioningErrorVersion);
+                    return maybe_path.error();
                 }
 
-                return maybe_ent.error();
+                auto maybe_control_file = Paragraphs::try_load_port_required(m_fs, version_spec.port_name, path->path);
+                auto scf = maybe_control_file.get();
+                if (!scf)
+                {
+                    return std::move(maybe_control_file).error();
+                }
+
+                auto scf_vspec = scf->get()->to_version_spec();
+                if (scf_vspec != version_spec)
+                {
+                    return msg::format(msg::msgErrorMessage)
+                        .append(msgVersionSpecMismatch,
+                                msg::path = path->path,
+                                msg::expected_version = version_spec,
+                                msg::actual_version = scf_vspec);
+                }
+
+                return std::make_unique<SourceControlFileAndLocation>(SourceControlFileAndLocation{
+                    std::move(*scf),
+                    path->path,
+                    path->location,
+                });
             }
 
             virtual ExpectedL<const SourceControlFileAndLocation&> get_control_file(
@@ -255,7 +206,6 @@ namespace vcpkg
             mutable std::
                 unordered_map<VersionSpec, ExpectedL<std::unique_ptr<SourceControlFileAndLocation>>, VersionSpecHasher>
                     m_control_cache;
-            mutable std::map<std::string, ExpectedL<std::unique_ptr<RegistryEntry>>, std::less<>> m_entry_cache;
         };
 
         struct OverlayProviderImpl : IOverlayProvider
