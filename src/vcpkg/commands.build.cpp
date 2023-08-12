@@ -1657,7 +1657,7 @@ namespace vcpkg
 
         if (const auto err = parser.error_info("PostBuildInformation"))
         {
-            print_error_message(err);
+            print_error_message(LocalizedString::from_raw(err->to_string()));
             Checks::exit_fail(VCPKG_LINE_INFO);
         }
 
