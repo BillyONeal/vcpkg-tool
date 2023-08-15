@@ -121,31 +121,46 @@ namespace vcpkg
                 }
             }
 
-            ExpectedL<Version> get_baseline_version(StringView port_name) const
+            virtual ExpectedL<const SourceControlFileAndLocation&> get_baseline_control_file(
+                StringView port_name) const override
             {
-                return m_baseline_cache.get_lazy(port_name, [this, port_name]() -> ExpectedL<Version> {
-                    auto maybe_maybe_version = m_registry_set.baseline_for_port(port_name);
-                    auto maybe_version = maybe_maybe_version.get();
-                    if (!maybe_version)
-                    {
-                        return std::move(maybe_maybe_version).error();
-                    }
+                return m_baseline_cache.get_lazy(
+                    port_name, [port_name, this]() -> ExpectedL<const SourceControlFileAndLocation&> {
+                        auto maybe_path = m_registry_set.get_baseline_port_required(port_name);
+                        const auto path = maybe_path.get();
+                        if (!path)
+                        {
+                            get_global_metrics_collector().track_define(DefineMetric::VersioningErrorVersion);
+                            return std::move(maybe_path).error();
+                        }
 
-                    auto version = maybe_version->get();
-                    if (!version)
-                    {
-                        return msg::format_error(msgPortNotInBaseline, msg::package_name = port_name);
-                    }
+                        auto maybe_control_file = Paragraphs::try_load_port_required(m_fs, port_name, path->path);
+                        auto scf = maybe_control_file.get();
+                        if (!scf)
+                        {
+                            return std::move(maybe_control_file).error();
+                        }
 
-                    return std::move(*version);
-                });
-            }
+                        auto& scfl = *scf;
+                        VersionSpec version_spec{scfl->core_paragraph->name, scfl->core_paragraph->to_version()};
 
-            virtual ExpectedL<const SourceControlFileAndLocation&> get_baseline_control_file(StringView port_name) const override
-            {
-                return get_baseline_version(port_name).then([&, this](const Version& ver) {
-                    return get_control_file(VersionSpec{port_name.to_string(), ver});
-                });
+                        auto it = m_control_cache.find(version_spec);
+                        if (it == m_control_cache.end())
+                        {
+                            it = m_control_cache
+                                     .emplace(
+                                         version_spec,
+                                         std::make_unique<SourceControlFileAndLocation>(SourceControlFileAndLocation{
+                                             std::move(*scf),
+                                             path->path,
+                                             path->location,
+                                         }))
+                                     .first;
+                        }
+
+                        return it->second.map([](const std::unique_ptr<SourceControlFileAndLocation>& result)
+                                                  -> const SourceControlFileAndLocation& { return *result; });
+                    });
             }
 
         private:
@@ -154,7 +169,7 @@ namespace vcpkg
             mutable std::
                 unordered_map<VersionSpec, ExpectedL<std::unique_ptr<SourceControlFileAndLocation>>, VersionSpecHasher>
                     m_control_cache;
-            mutable Cache<std::string, ExpectedL<Version>> m_baseline_cache;
+            Cache<std::string, ExpectedL<const SourceControlFileAndLocation&>> m_baseline_cache;
         };
 
         struct OverlayProviderImpl : IFullOverlayProvider
@@ -251,8 +266,7 @@ namespace vcpkg
                 return it->second;
             }
 
-            virtual void load_all_control_files(
-                std::map<std::string, const SourceControlFileAndLocation*>& out) const
+            virtual void load_all_control_files(std::map<std::string, const SourceControlFileAndLocation*>& out) const
             {
                 auto first = std::make_reverse_iterator(m_overlay_ports.end());
                 const auto last = std::make_reverse_iterator(m_overlay_ports.begin());
@@ -337,14 +351,14 @@ namespace vcpkg
     } // unnamed namespace
 
     std::unique_ptr<IFullVersionedPortfileProvider> make_versioned_portfile_provider(const ReadOnlyFilesystem& fs,
-                                                                                 const RegistrySet& registry_set)
+                                                                                     const RegistrySet& registry_set)
     {
         return std::make_unique<VersionedPortfileProviderImpl>(fs, registry_set);
     }
 
     std::unique_ptr<IFullOverlayProvider> make_overlay_provider(const ReadOnlyFilesystem& fs,
-                                                            const Path& original_cwd,
-                                                            View<std::string> overlay_ports)
+                                                                const Path& original_cwd,
+                                                                View<std::string> overlay_ports)
     {
         return std::make_unique<OverlayProviderImpl>(fs, original_cwd, overlay_ports);
     }

@@ -422,6 +422,8 @@ namespace
 
         ExpectedL<Optional<Version>> get_baseline_version(StringView port_name) const override;
 
+        ExpectedL<Optional<PathAndLocation>> get_baseline_port(StringView port_name) const override;
+
         ~BuiltinFilesRegistry() = default;
 
         CacheSingle<Baseline> m_baseline;
@@ -749,6 +751,25 @@ namespace
         }
 
         return scf->to_version();
+    }
+
+    ExpectedL<Optional<PathAndLocation>> BuiltinFilesRegistry::get_baseline_port(StringView port_name) const
+    {
+        auto port_directory = m_builtin_ports_directory / port_name;
+        const auto& maybe_maybe_scf = get_scf(port_name, port_directory);
+        auto maybe_scf = maybe_maybe_scf.get();
+        if (!maybe_scf)
+        {
+            return maybe_maybe_scf.error();
+        }
+
+        auto scf = maybe_scf->get();
+        if (!scf)
+        {
+            return Optional<PathAndLocation>();
+        }
+
+        return PathAndLocation{port_directory, "git+https://github.com/Microsoft/vcpkg#ports/" + port_name};
     }
 
     ExpectedL<Unit> BuiltinFilesRegistry::append_all_port_names(std::vector<std::string>& out) const
@@ -1333,6 +1354,21 @@ namespace vcpkg
         return Unit{};
     }
 
+    ExpectedL<Optional<PathAndLocation>> RegistryImplementation::get_baseline_port(StringView port_name) const
+    {
+        return get_baseline_version(port_name).then(
+            [&, this](const Optional<Version>& maybe_ver) -> ExpectedL<Optional<PathAndLocation>> {
+                if (auto ver = maybe_ver.get())
+                {
+                    return get_port(VersionSpec{port_name.to_string(), *ver});
+                }
+
+                return Optional<PathAndLocation>();
+            });
+    }
+
+    RegistryImplementation::~RegistryImplementation() = default;
+
     Registry::Registry(std::vector<std::string>&& patterns, std::unique_ptr<RegistryImplementation>&& impl)
         : patterns_(std::move(patterns)), implementation_(std::move(impl))
     {
@@ -1540,6 +1576,35 @@ namespace vcpkg
         {
             return msg::format_error(
                 msgVersionDatabaseEntryMissing, msg::package_name = spec.port_name, msg::version = spec.version);
+        }
+
+        return std::move(*port);
+    }
+
+    ExpectedL<Optional<PathAndLocation>> RegistrySet::get_baseline_port(StringView port_name) const
+    {
+        auto impl = registry_for_port(port_name);
+        if (!impl)
+        {
+            return Optional<PathAndLocation>();
+        }
+
+        return impl->get_baseline_port(port_name);
+    }
+
+    ExpectedL<PathAndLocation> RegistrySet::get_baseline_port_required(StringView port_name) const
+    {
+        auto maybe_maybe_port = get_baseline_port(port_name);
+        auto maybe_port = maybe_maybe_port.get();
+        if (!maybe_port)
+        {
+            return std::move(maybe_maybe_port).error();
+        }
+
+        auto port = maybe_port->get();
+        if (!port)
+        {
+            return msg::format_error(msgPortNotInBaseline, msg::package_name = port_name);
         }
 
         return std::move(*port);

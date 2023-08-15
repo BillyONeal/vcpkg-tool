@@ -86,7 +86,12 @@ namespace vcpkg
         // Otherwise, the Optional is disengaged.
         virtual ExpectedL<Optional<Version>> get_baseline_version(StringView port_name) const = 0;
 
-        virtual ~RegistryImplementation() = default;
+        // If an error occurs, the ExpectedL will be in an error state.
+        // Otherwise, if the port is known by this registry and in the baseline, returns the port location.
+        // Otherwise, the Optional is disengaged.
+        virtual ExpectedL<Optional<PathAndLocation>> get_baseline_port(StringView port_name) const;
+
+        virtual ~RegistryImplementation();
     };
 
     struct Registry
@@ -152,6 +157,15 @@ namespace vcpkg
 
         // Identical to get_port, but nonexistent ports are translated to an error.
         ExpectedL<PathAndLocation> get_port_required(const VersionSpec& spec) const;
+
+        // If there is an error, the ExpectedL will be in the error state.
+        // Otherwise, if the port is known to the registry to which it is mapped and is in the baseline, returns
+        // the baseline port.
+        // Otherwise, the Optional will be disengaged.
+        ExpectedL<Optional<PathAndLocation>> get_baseline_port(StringView port_name) const;
+
+        // Identical to get_baseline_port, but the baseline missing condition is translated to an error.
+        ExpectedL<PathAndLocation> get_baseline_port_required(StringView port_name) const;
 
     private:
         std::unique_ptr<RegistryImplementation> default_registry_;
