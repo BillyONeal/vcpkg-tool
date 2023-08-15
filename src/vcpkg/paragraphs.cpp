@@ -564,12 +564,10 @@ namespace vcpkg::Paragraphs
         {
             if (Debug::g_debugging)
             {
-                print_error_message(LocalizedString::from_raw(
-                    Strings::join("\n",
-                                  errors,
-                                  [](const std::pair<std::string, LocalizedString>& err) -> const LocalizedString& {
-                                      return err.second;
-                                  })));
+                print_error_message(LocalizedString::from_raw(Strings::join(
+                    "\n", errors, [](const std::pair<std::string, LocalizedString>& err) -> const LocalizedString& {
+                        return err.second;
+                    })));
             }
             else
             {
@@ -613,8 +611,8 @@ namespace vcpkg::Paragraphs
             else
             {
                 errors.emplace_back(std::piecewise_construct,
-                                        std::forward_as_tuple(port_name.data(), port_name.size()),
-                                        std::forward_as_tuple(std::move(maybe_spgh).error()));
+                                    std::forward_as_tuple(port_name.data(), port_name.size()),
+                                    std::forward_as_tuple(std::move(maybe_spgh).error()));
             }
         }
 

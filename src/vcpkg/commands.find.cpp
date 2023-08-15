@@ -133,7 +133,7 @@ namespace vcpkg::Commands
         auto registry_set = paths.make_registry_set();
         PathsPortFileProvider provider(fs, *registry_set, make_overlay_provider(fs, paths.original_cwd, overlay_ports));
         auto source_paragraphs =
-            Util::fmap(provider.load_all_control_files(),
+            Util::fmap(provider.load_baseline_control_files(),
                        [](auto&& port) -> const SourceControlFile* { return port->source_control_file.get(); });
 
         if (auto* filter_str = filter.get())

@@ -1159,7 +1159,6 @@ namespace vcpkg
             const bool add_builtin_ports_directory_as_overlay =
                 registry_set->is_default_builtin_registry() && !paths.use_git_default_registry();
             auto verprovider = make_versioned_portfile_provider(fs, *registry_set);
-            auto baseprovider = make_baseline_provider(*registry_set);
 
             std::vector<std::string> extended_overlay_ports;
             extended_overlay_ports.reserve(paths.overlay_ports.size() + add_builtin_ports_directory_as_overlay);
@@ -1172,7 +1171,6 @@ namespace vcpkg
             auto oprovider = make_manifest_provider(
                 fs, paths.original_cwd, extended_overlay_ports, manifest->path, std::move(manifest_scf));
             auto install_plan = create_versioned_install_plan(*verprovider,
-                                                              *baseprovider,
                                                               *oprovider,
                                                               var_provider,
                                                               dependencies,

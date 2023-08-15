@@ -1330,13 +1330,11 @@ namespace vcpkg
         struct VersionedPackageGraph
         {
             VersionedPackageGraph(const IVersionedPortfileProvider& ver_provider,
-                                  const IBaselineProvider& base_provider,
                                   const IOverlayProvider& oprovider,
                                   const CMakeVars::CMakeVarProvider& var_provider,
                                   Triplet host_triplet,
                                   const Path& packages_dir)
                 : m_ver_provider(ver_provider)
-                , m_base_provider(base_provider)
                 , m_o_provider(oprovider)
                 , m_var_provider(var_provider)
                 , m_host_triplet(host_triplet)
@@ -1353,7 +1351,6 @@ namespace vcpkg
 
         private:
             const IVersionedPortfileProvider& m_ver_provider;
-            const IBaselineProvider& m_base_provider;
             const IOverlayProvider& m_o_provider;
             const CMakeVars::CMakeVarProvider& m_var_provider;
             const Triplet m_host_triplet;
@@ -1634,9 +1631,7 @@ namespace vcpkg
                 }
                 else
                 {
-                    auto maybe_scfl = m_base_provider.get_baseline_version(spec.name()).then([&](const Version& ver) {
-                        return m_ver_provider.get_control_file({spec.name(), ver});
-                    });
+                    auto maybe_scfl = m_ver_provider.get_baseline_control_file(spec.name());
                     if (auto p_scfl = maybe_scfl.get())
                     {
                         it = m_graph.emplace(spec, PackageNodeData{}).first;
@@ -1994,7 +1989,6 @@ namespace vcpkg
     }
 
     ExpectedL<ActionPlan> create_versioned_install_plan(const IVersionedPortfileProvider& provider,
-                                                        const IBaselineProvider& bprovider,
                                                         const IOverlayProvider& oprovider,
                                                         const CMakeVars::CMakeVarProvider& var_provider,
                                                         const std::vector<Dependency>& deps,
@@ -2002,8 +1996,7 @@ namespace vcpkg
                                                         const PackageSpec& toplevel,
                                                         const CreateInstallPlanOptions& options)
     {
-        VersionedPackageGraph vpg(
-            provider, bprovider, oprovider, var_provider, options.host_triplet, options.packages_dir);
+        VersionedPackageGraph vpg(provider, oprovider, var_provider, options.host_triplet, options.packages_dir);
         for (auto&& o : overrides)
         {
             vpg.add_override(o.name, {o.version, o.port_version});

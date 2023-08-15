@@ -389,10 +389,9 @@ namespace vcpkg::Commands::CI
         const ElapsedTimer timer;
         // Install the default features for every package
         std::vector<FullPackageSpec> all_default_full_specs;
-        for (auto scfl : provider.load_all_control_files())
+        for (auto name : registry_set->get_all_reachable_port_names().value_or_exit(VCPKG_LINE_INFO))
         {
-            all_default_full_specs.emplace_back(
-                PackageSpec{scfl->source_control_file->core_paragraph->name, target_triplet},
+            all_default_full_specs.emplace_back(PackageSpec{name, target_triplet},
                 InternalFeatureSet{"core", "default"});
         }
 
