@@ -1,5 +1,4 @@
 #include <vcpkg/base/cache.h>
-#include <vcpkg/base/delayed-init.h>
 #include <vcpkg/base/files.h>
 #include <vcpkg/base/json.h>
 #include <vcpkg/base/jsonreader.h>
@@ -256,7 +255,7 @@ namespace
     private:
         const ExpectedL<LockFile::Entry>& get_lock_entry() const
         {
-            return m_lock_entry.get(
+            return m_lock_entry.get_lazy(
                 [this]() { return m_paths.get_installed_lockfile().get_or_fetch(m_paths, m_repo, m_reference); });
         }
 
@@ -296,10 +295,10 @@ namespace
         std::string m_repo;
         std::string m_reference;
         std::string m_baseline_identifier;
-        DelayedInit<ExpectedL<LockFile::Entry>> m_lock_entry;
-        DelayedInit<ExpectedL<Path>> m_stale_versions_tree;
-        DelayedInit<ExpectedL<Path>> m_versions_tree;
-        DelayedInit<ExpectedL<Baseline>> m_baseline;
+        CacheSingle<ExpectedL<LockFile::Entry>> m_lock_entry;
+        CacheSingle<ExpectedL<Path>> m_stale_versions_tree;
+        CacheSingle<ExpectedL<Path>> m_versions_tree;
+        CacheSingle<ExpectedL<Baseline>> m_baseline;
         Cache<std::string, ExpectedL<Optional<PortVersionsGitTreesStructOfArrays>>> m_stale_versions;
         Cache<std::string, ExpectedL<Optional<PortVersionsGitTreesStructOfArrays>>> m_live_versions;
 
@@ -329,7 +328,7 @@ namespace
 
         const ExpectedL<Path>& get_live_versions_tree_path() const
         {
-            return m_versions_tree.get([&, this]() -> ExpectedL<Path> {
+            return m_versions_tree.get_lazy([&, this]() -> ExpectedL<Path> {
                 auto maybe_lock_entry = get_lock_entry();
                 auto lock_entry = maybe_lock_entry.get();
                 if (!lock_entry)
@@ -355,7 +354,7 @@ namespace
                 Checks::unreachable(VCPKG_LINE_INFO, "Non-stale stale versions");
             }
 
-            const auto& maybe_stale_versions_path = m_stale_versions_tree.get(
+            const auto& maybe_stale_versions_path = m_stale_versions_tree.get_lazy(
                 [lock_entry, this]() -> ExpectedL<Path> { return get_versions_tree_from_entry(lock_entry, false); });
             auto stale_versions_path = maybe_stale_versions_path.get();
             if (!stale_versions_path)
@@ -429,7 +428,7 @@ namespace
 
         ~BuiltinFilesRegistry() = default;
 
-        DelayedInit<Baseline> m_baseline;
+        CacheSingle<Baseline> m_baseline;
 
     private:
         const ExpectedL<std::unique_ptr<SourceControlFile>>& get_scf(StringView port_name, const Path& path) const
@@ -472,7 +471,7 @@ namespace
         ~BuiltinGitRegistry() = default;
 
         std::string m_baseline_identifier;
-        DelayedInit<ExpectedL<Baseline>> m_baseline;
+        CacheSingle<ExpectedL<Baseline>> m_baseline;
 
     private:
         std::unique_ptr<BuiltinFilesRegistry> m_files_impl;
@@ -568,7 +567,7 @@ namespace
 
         Path m_path;
         std::string m_baseline_identifier;
-        DelayedInit<ExpectedL<Optional<Baseline>>> m_baseline;
+        CacheSingle<ExpectedL<Optional<Baseline>>> m_baseline;
         Cache<std::string, ExpectedL<Optional<FilesystemRegistryEntry>>> m_entries;
 
         const ExpectedL<Optional<FilesystemRegistryEntry>>& get_entry(StringView port_name) const
@@ -882,7 +881,7 @@ namespace
 
     ExpectedL<Optional<Version>> BuiltinGitRegistry::get_baseline_version(StringView port_name) const
     {
-        const auto& maybe_baseline = m_baseline.get([this]() -> ExpectedL<Baseline> {
+        const auto& maybe_baseline = m_baseline.get_lazy([this]() -> ExpectedL<Baseline> {
             auto maybe_path = git_checkout_baseline(m_paths, m_baseline_identifier);
             auto path = maybe_path.get();
             if (!path)
@@ -946,7 +945,7 @@ namespace
     // { FilesystemRegistry::RegistryImplementation
     ExpectedL<Optional<Version>> FilesystemRegistry::get_baseline_version(StringView port_name) const
     {
-        const auto& maybe_maybe_baseline = m_baseline.get([this]() -> ExpectedL<Optional<Baseline>> {
+        const auto& maybe_maybe_baseline = m_baseline.get_lazy([this]() -> ExpectedL<Optional<Baseline>> {
             auto path_to_baseline = m_path / registry_versions_dir_name / "baseline.json";
             return load_baseline_versions(m_fs, path_to_baseline, m_baseline_identifier);
         });
@@ -1091,7 +1090,7 @@ namespace
 
     ExpectedL<Optional<Version>> GitRegistry::get_baseline_version(StringView port_name) const
     {
-        const auto& maybe_baseline = m_baseline.get([this, port_name]() -> ExpectedL<Baseline> {
+        const auto& maybe_baseline = m_baseline.get_lazy([this, port_name]() -> ExpectedL<Baseline> {
             // We delay baseline validation until here to give better error messages and suggestions
             if (!is_git_commit_sha(m_baseline_identifier))
             {

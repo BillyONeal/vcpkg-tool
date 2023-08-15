@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vcpkg/base/optional.h>
+
 #include <map>
 #include <type_traits>
 #include <utility>
@@ -23,6 +25,24 @@ namespace vcpkg
         template<typename Callable, typename... Args>
         using is_callable = is_callable_impl<void, Callable, Args...>;
     }
+
+    template<class T>
+    struct CacheSingle
+    {
+        template<class F, std::enable_if_t<detail::is_callable<F>::value, int> = 0>
+        const T& get_lazy(F&& f) const
+        {
+            if (auto maybe_storage = m_storage.get())
+            {
+                return *maybe_storage;
+            }
+
+            return m_storage.emplace(std::forward<F>(f)());
+        }
+
+    private:
+        mutable Optional<T> m_storage;
+    };
 
     template<class Key, class Value, class Compare = std::less<>>
     struct Cache
