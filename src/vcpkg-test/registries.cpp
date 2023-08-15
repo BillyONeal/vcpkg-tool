@@ -19,11 +19,6 @@ namespace
             return Optional<PathAndLocation>();
         }
 
-        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView) const override
-        {
-            return Optional<View<Version>>();
-        }
-
         ExpectedL<Unit> append_all_port_names(std::vector<std::string>& port_names) const override
         {
             port_names.insert(port_names.end(), all_port_names.begin(), all_port_names.end());

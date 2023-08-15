@@ -19,12 +19,12 @@ using namespace vcpkg;
 
 namespace
 {
-    void do_print_json(std::vector<const vcpkg::SourceControlFile*> source_control_files)
+    void do_print_json(const std::map<std::string, const SourceControlFileAndLocation*>& entries)
     {
         Json::Object obj;
-        for (const SourceControlFile* scf : source_control_files)
+        for (auto&& entry : entries)
         {
-            auto& source_paragraph = scf->core_paragraph;
+            auto& source_paragraph = entry.second->source_control_file->core_paragraph;
             Json::Object& library_obj = obj.insert(source_paragraph->name, Json::Object());
             library_obj.insert("package_name", Json::Value::string(source_paragraph->name));
             library_obj.insert("version", Json::Value::string(source_paragraph->raw_version));
@@ -131,19 +131,20 @@ namespace vcpkg::Commands
     {
         auto& fs = paths.get_filesystem();
         auto registry_set = paths.make_registry_set();
-        PathsPortFileProvider provider(fs, *registry_set, make_overlay_provider(fs, paths.original_cwd, overlay_ports));
-        auto source_paragraphs =
-            Util::fmap(provider.load_baseline_control_files(),
-                       [](auto&& port) -> const SourceControlFile* { return port->source_control_file.get(); });
+        auto overlays = make_overlay_provider(fs, paths.original_cwd, overlay_ports);
+        auto versioned = make_versioned_portfile_provider(fs, *registry_set);
+        std::map<std::string, const SourceControlFileAndLocation*> source_paragraphs;
+        overlays->load_all_control_files(source_paragraphs);
+        versioned->load_baseline_control_files(source_paragraphs);
 
         if (auto* filter_str = filter.get())
         {
             const auto contained_in = [filter_str](StringView haystack) {
                 return Strings::case_insensitive_ascii_contains(haystack, *filter_str);
             };
-            for (const auto& source_control_file : source_paragraphs)
+            for (const auto& source_paragraphs_entry : source_paragraphs)
             {
-                auto&& sp = *source_control_file->core_paragraph;
+                auto&& sp = *source_paragraphs_entry.second->source_control_file->core_paragraph;
 
                 bool found_match = contained_in(sp.name);
                 if (!found_match)
@@ -156,7 +157,7 @@ namespace vcpkg::Commands
                     do_print(sp, full_description);
                 }
 
-                for (auto&& feature_paragraph : source_control_file->feature_paragraphs)
+                for (auto&& feature_paragraph : source_paragraphs_entry.second->source_control_file->feature_paragraphs)
                 {
                     bool found_match_for_feature = found_match;
                     if (!found_match_for_feature)
@@ -184,12 +185,13 @@ namespace vcpkg::Commands
             }
             else
             {
-                for (const auto& source_control_file : source_paragraphs)
+                for (const auto& source_paragraphs_entry : source_paragraphs)
                 {
-                    do_print(*source_control_file->core_paragraph, full_description);
-                    for (auto&& feature_paragraph : source_control_file->feature_paragraphs)
+                    do_print(*source_paragraphs_entry.second->source_control_file->core_paragraph, full_description);
+                    for (auto&& feature_paragraph :
+                         source_paragraphs_entry.second->source_control_file->feature_paragraphs)
                     {
-                        do_print(source_control_file->core_paragraph->name, *feature_paragraph, full_description);
+                        do_print(source_paragraphs_entry.first, *feature_paragraph, full_description);
                     }
                 }
             }

@@ -55,8 +55,6 @@ struct MockVersionedPortfileProvider : IVersionedPortfileProvider
         return get_control_file(port_name.to_string(), it->second);
     }
 
-    virtual View<vcpkg::Version> get_port_versions(StringView) const override { Checks::unreachable(VCPKG_LINE_INFO); }
-
     SourceControlFileAndLocation& emplace(std::string&& name,
                                           Version&& version,
                                           VersionScheme scheme = VersionScheme::String)
@@ -79,11 +77,6 @@ struct MockVersionedPortfileProvider : IVersionedPortfileProvider
     }
 
     mutable std::map<std::string, Version, std::less<>> baseline;
-
-    virtual void load_baseline_control_files(std::map<std::string, const SourceControlFileAndLocation*>&) const override
-    {
-        Checks::unreachable(VCPKG_LINE_INFO);
-    }
 };
 
 struct CoreDependency : Dependency

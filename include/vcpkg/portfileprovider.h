@@ -30,13 +30,16 @@ namespace vcpkg
 
     struct IVersionedPortfileProvider
     {
-        virtual View<Version> get_port_versions(StringView port_name) const = 0;
         virtual ~IVersionedPortfileProvider() = default;
 
         virtual ExpectedL<const SourceControlFileAndLocation&> get_control_file(
             const VersionSpec& version_spec) const = 0;
         virtual ExpectedL<const SourceControlFileAndLocation&> get_baseline_control_file(
             StringView port_name) const = 0;
+    };
+
+    struct IFullVersionedPortfileProvider : IVersionedPortfileProvider
+    {
         virtual void load_baseline_control_files(
             std::map<std::string, const SourceControlFileAndLocation*>& out) const = 0;
     };
@@ -59,14 +62,13 @@ namespace vcpkg
                                        const RegistrySet& registry_set,
                                        std::unique_ptr<IFullOverlayProvider>&& overlay);
         ExpectedL<const SourceControlFileAndLocation&> get_control_file(const std::string& src_name) const override;
-        std::vector<const SourceControlFileAndLocation*> load_baseline_control_files() const;
 
     private:
         std::unique_ptr<IVersionedPortfileProvider> m_versioned;
         std::unique_ptr<IFullOverlayProvider> m_overlay;
     };
 
-    std::unique_ptr<IVersionedPortfileProvider> make_versioned_portfile_provider(const ReadOnlyFilesystem& fs,
+    std::unique_ptr<IFullVersionedPortfileProvider> make_versioned_portfile_provider(const ReadOnlyFilesystem& fs,
                                                                                  const RegistrySet& registry_set);
     std::unique_ptr<IFullOverlayProvider> make_overlay_provider(const ReadOnlyFilesystem& fs,
                                                             const Path& original_cwd,

@@ -244,8 +244,6 @@ namespace
 
         ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec& spec) const override;
 
-        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const override;
-
         ExpectedL<Unit> append_all_port_names(std::vector<std::string>&) const override;
 
         ExpectedL<bool> try_append_all_port_names_no_network(std::vector<std::string>& port_names) const override;
@@ -418,8 +416,6 @@ namespace
 
         ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec& spec) const override;
 
-        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const override;
-
         ExpectedL<Unit> append_all_port_names(std::vector<std::string>&) const override;
 
         ExpectedL<bool> try_append_all_port_names_no_network(std::vector<std::string>& port_names) const override;
@@ -459,8 +455,6 @@ namespace
         StringLiteral kind() const override { return s_kind; }
 
         ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec& spec) const override;
-
-        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const override;
 
         ExpectedL<Unit> append_all_port_names(std::vector<std::string>&) const override;
 
@@ -519,11 +513,6 @@ namespace
             return msg::format_error(msgErrorRequireBaseline);
         }
 
-        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView) const override
-        {
-            return msg::format_error(msgErrorRequireBaseline);
-        }
-
         ExpectedL<Unit> append_all_port_names(std::vector<std::string>&) const override
         {
             return msg::format_error(msgErrorRequireBaseline);
@@ -553,8 +542,6 @@ namespace
         StringLiteral kind() const override { return "filesystem"; }
 
         ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec& spec) const override;
-
-        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const override;
 
         ExpectedL<Unit> append_all_port_names(std::vector<std::string>&) const override;
 
@@ -745,28 +732,6 @@ namespace
         return PathAndLocation{port_directory, "git+https://github.com/Microsoft/vcpkg#ports/" + spec.port_name};
     }
 
-    ExpectedL<Optional<View<Version>>> BuiltinFilesRegistry::get_all_port_versions(StringView port_name) const
-    {
-        auto port_directory = m_builtin_ports_directory / port_name;
-        const auto& maybe_maybe_scf = get_scf(port_name, port_directory);
-        const auto maybe_scf = maybe_maybe_scf.get();
-        if (!maybe_scf)
-        {
-            return ExpectedL<Optional<View<Version>>>{maybe_maybe_scf.error(), expected_right_tag};
-        }
-
-        auto scf = maybe_scf->get();
-        if (!scf)
-        {
-            return Optional<View<Version>>();
-        }
-
-        const auto& version = m_versions.get_lazy(
-            port_name, [&, this]() -> Optional<Version> { return scf->core_paragraph->to_version(); });
-
-        return View<Version>{&version.value_or_exit(VCPKG_LINE_INFO), 1};
-    }
-
     ExpectedL<Optional<Version>> BuiltinFilesRegistry::get_baseline_version(StringView port_name) const
     {
         // if a baseline is not specified, use the ports directory version
@@ -859,24 +824,6 @@ namespace
                     "git+https://github.com/Microsoft/vcpkg@" + *git_tree,
                 };
             });
-    }
-
-    ExpectedL<Optional<View<Version>>> BuiltinGitRegistry::get_all_port_versions(StringView port_name) const
-    {
-        const auto& maybe_maybe_versions = get_versions(port_name);
-        auto maybe_versions = maybe_maybe_versions.get();
-        if (!maybe_versions)
-        {
-            return ExpectedL<Optional<View<Version>>>{maybe_maybe_versions.error(), expected_right_tag};
-        }
-
-        auto versions = maybe_versions->get();
-        if (!versions)
-        {
-            return m_files_impl->get_all_port_versions(port_name);
-        }
-
-        return Optional<View<Version>>{versions->port_versions()};
     }
 
     ExpectedL<Optional<Version>> BuiltinGitRegistry::get_baseline_version(StringView port_name) const
@@ -999,24 +946,6 @@ namespace
         };
     }
 
-    ExpectedL<Optional<View<Version>>> FilesystemRegistry::get_all_port_versions(StringView port_name) const
-    {
-        const auto& maybe_maybe_entry = get_entry(port_name);
-        const auto maybe_entry = maybe_maybe_entry.get();
-        if (!maybe_entry)
-        {
-            return ExpectedL<Optional<View<Version>>>{maybe_maybe_entry.error(), expected_right_tag};
-        }
-
-        const auto entry = maybe_entry->get();
-        if (!entry)
-        {
-            return Optional<View<Version>>();
-        }
-
-        return View<Version>{entry->port_versions};
-    }
-
     ExpectedL<Unit> FilesystemRegistry::append_all_port_names(std::vector<std::string>& out) const
     {
         return load_all_port_names_from_registry_versions(out, m_fs, m_path / registry_versions_dir_name);
@@ -1069,23 +998,6 @@ namespace
         }
 
         return Optional<PathAndLocation>();
-    }
-
-    ExpectedL<Optional<View<Version>>> GitRegistry::get_all_port_versions(StringView port_name) const
-    {
-        const auto& maybe_maybe_live_versions = get_live_versions(port_name);
-        auto maybe_live_versions = maybe_maybe_live_versions.get();
-        if (!maybe_live_versions)
-        {
-            return ExpectedL<Optional<View<Version>>>{maybe_maybe_live_versions.error(), expected_right_tag};
-        }
-
-        if (auto live_versions = maybe_live_versions->get())
-        {
-            return View<Version>(live_versions->port_versions());
-        }
-
-        return Optional<View<Version>>();
     }
 
     ExpectedL<Optional<Version>> GitRegistry::get_baseline_version(StringView port_name) const
@@ -1631,36 +1543,6 @@ namespace vcpkg
         }
 
         return std::move(*port);
-    }
-
-    ExpectedL<Optional<View<Version>>> RegistrySet::get_all_port_versions(StringView port_name) const
-    {
-        auto impl = registry_for_port(port_name);
-        if (!impl)
-        {
-            return Optional<View<Version>>();
-        }
-
-        return impl->get_all_port_versions(port_name);
-    }
-
-    // Identical to get_all_port_versions, but nonexistent ports are translated to an error.
-    ExpectedL<View<Version>> RegistrySet::get_all_port_versions_required(StringView port_name) const
-    {
-        auto maybe_maybe_versions = get_all_port_versions(port_name);
-        auto maybe_versions = maybe_maybe_versions.get();
-        if (!maybe_versions)
-        {
-            return std::move(maybe_maybe_versions).error();
-        }
-
-        auto versions = maybe_versions->get();
-        if (!versions)
-        {
-            return msg::format_error(msgVersionDatabaseEntriesMissing, msg::package_name = port_name);
-        }
-
-        return std::move(*versions);
     }
 
     ExpectedL<Optional<std::vector<std::pair<SchemedVersion, std::string>>>> get_builtin_versions(

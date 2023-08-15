@@ -72,11 +72,6 @@ namespace vcpkg
         // Otherwise, the PathAndLocation denotes an on-disk location where the port directory is located.
         virtual ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec& spec) const = 0;
 
-        // If there is an error, the ExpectedL will be in the error state.
-        // Otherwise, if the port is not known to the registry to which it is mapped, the Optional will be disengaged.
-        // Otherwise, the known versions will be a view with lifetime matching this RegistrySet.
-        virtual ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const = 0;
-
         // Appends the names of the known ports to the out parameter.
         // May result in duplicated port names; make sure to Util::sort_unique_erase at the end
         virtual ExpectedL<Unit> append_all_port_names(std::vector<std::string>& port_names) const = 0;
@@ -157,14 +152,6 @@ namespace vcpkg
 
         // Identical to get_port, but nonexistent ports are translated to an error.
         ExpectedL<PathAndLocation> get_port_required(const VersionSpec& spec) const;
-
-        // If there is an error, the ExpectedL will be in the error state.
-        // Otherwise, if the port is not known to the registry to which it is mapped, the Optional will be disengaged.
-        // Otherwise, the known versions will be a view with lifetime matching this RegistrySet.
-        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView port_name) const;
-
-        // Identical to get_all_port_versions, but nonexistent ports are translated to an error.
-        ExpectedL<View<Version>> get_all_port_versions_required(StringView port_name) const;
 
     private:
         std::unique_ptr<RegistryImplementation> default_registry_;

@@ -48,17 +48,9 @@ namespace vcpkg
         return m_versioned->get_baseline_control_file(spec);
     }
 
-    std::vector<const SourceControlFileAndLocation*> PathsPortFileProvider::load_baseline_control_files() const
-    {
-        std::map<std::string, const SourceControlFileAndLocation*> m;
-        m_overlay->load_all_control_files(m);
-        m_versioned->load_baseline_control_files(m);
-        return Util::fmap(m, [](const auto& p) { return p.second; });
-    }
-
     namespace
     {
-        struct VersionedPortfileProviderImpl : IVersionedPortfileProvider
+        struct VersionedPortfileProviderImpl : IFullVersionedPortfileProvider
         {
             VersionedPortfileProviderImpl(const ReadOnlyFilesystem& fs, const RegistrySet& rset)
                 : m_fs(fs), m_registry_set(rset)
@@ -66,11 +58,6 @@ namespace vcpkg
             }
             VersionedPortfileProviderImpl(const VersionedPortfileProviderImpl&) = delete;
             VersionedPortfileProviderImpl& operator=(const VersionedPortfileProviderImpl&) = delete;
-
-            virtual View<Version> get_port_versions(StringView port_name) const override
-            {
-                return m_registry_set.get_all_port_versions_required(port_name).value_or_exit(VCPKG_LINE_INFO);
-            }
 
             ExpectedL<std::unique_ptr<SourceControlFileAndLocation>> load_control_file(
                 const VersionSpec& version_spec) const
@@ -349,7 +336,7 @@ namespace vcpkg
         };
     } // unnamed namespace
 
-    std::unique_ptr<IVersionedPortfileProvider> make_versioned_portfile_provider(const ReadOnlyFilesystem& fs,
+    std::unique_ptr<IFullVersionedPortfileProvider> make_versioned_portfile_provider(const ReadOnlyFilesystem& fs,
                                                                                  const RegistrySet& registry_set)
     {
         return std::make_unique<VersionedPortfileProviderImpl>(fs, registry_set);
