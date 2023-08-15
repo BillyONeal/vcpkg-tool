@@ -14,7 +14,15 @@ namespace
     {
         StringLiteral kind() const override { return "test"; }
 
-        ExpectedL<std::unique_ptr<RegistryEntry>> get_port_entry(StringView) const override { return nullptr; }
+        ExpectedL<Optional<PathAndLocation>> get_port(const VersionSpec&) const override
+        {
+            return Optional<PathAndLocation>();
+        }
+
+        ExpectedL<Optional<View<Version>>> get_all_port_versions(StringView) const override
+        {
+            return Optional<View<Version>>();
+        }
 
         ExpectedL<Unit> append_all_port_names(std::vector<std::string>& port_names) const override
         {
