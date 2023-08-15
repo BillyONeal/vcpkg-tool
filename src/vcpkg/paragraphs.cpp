@@ -558,22 +558,22 @@ namespace vcpkg::Paragraphs
         return ret;
     }
 
-    static void load_results_print_error(const LoadResults& results)
+    static void load_results_print_error(const std::vector<std::pair<std::string, LocalizedString>>& errors)
     {
-        if (!results.errors.empty())
+        if (!errors.empty())
         {
             if (Debug::g_debugging)
             {
                 print_error_message(LocalizedString::from_raw(
                     Strings::join("\n",
-                                  results.errors,
+                                  errors,
                                   [](const std::pair<std::string, LocalizedString>& err) -> const LocalizedString& {
                                       return err.second;
                                   })));
             }
             else
             {
-                for (auto&& error : results.errors)
+                for (auto&& error : errors)
                 {
                     msg::println_warning(msgErrorWhileParsing, msg::path = error.first);
                 }
@@ -587,13 +587,14 @@ namespace vcpkg::Paragraphs
                                                                       const RegistrySet& registries)
     {
         auto results = try_load_all_registry_ports(fs, registries);
-        load_results_print_error(results);
+        load_results_print_error(results.errors);
         return std::move(results.paragraphs);
     }
 
     std::vector<SourceControlFileAndLocation> load_overlay_ports(const ReadOnlyFilesystem& fs, const Path& directory)
     {
-        LoadResults ret;
+        std::vector<SourceControlFileAndLocation> paragraphs;
+        std::vector<std::pair<std::string, LocalizedString>> errors;
 
         auto port_dirs = fs.get_directories_non_recursive(directory, VCPKG_LINE_INFO);
         Util::sort(port_dirs);
@@ -607,18 +608,18 @@ namespace vcpkg::Paragraphs
             auto maybe_spgh = try_load_port_required(fs, port_name, path);
             if (const auto spgh = maybe_spgh.get())
             {
-                ret.paragraphs.push_back({std::move(*spgh), std::move(path)});
+                paragraphs.push_back({std::move(*spgh), std::move(path)});
             }
             else
             {
-                ret.errors.emplace_back(std::piecewise_construct,
+                errors.emplace_back(std::piecewise_construct,
                                         std::forward_as_tuple(port_name.data(), port_name.size()),
                                         std::forward_as_tuple(std::move(maybe_spgh).error()));
             }
         }
 
-        load_results_print_error(ret);
-        return std::move(ret.paragraphs);
+        load_results_print_error(errors);
+        return paragraphs;
     }
 
     uint64_t get_load_ports_stats() { return g_load_ports_stats.load(); }
