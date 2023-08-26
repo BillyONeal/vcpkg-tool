@@ -25,10 +25,10 @@ namespace vcpkg
         msgCmdActivateSynopsis,
         {"vcpkg activate"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         0,
         {CommonAcquireArtifactSwitches, ActivateOptions},
-        nullptr,
     };
 
     void command_activate_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

@@ -22,10 +22,10 @@ namespace vcpkg
         msgCmdFetchSynopsis,
         {"vcpkg fetch python"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         1,
         {STDERR_STATUS},
-        nullptr,
     };
 
     void command_fetch_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

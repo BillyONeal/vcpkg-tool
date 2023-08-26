@@ -31,10 +31,10 @@ namespace vcpkg
         msgCmdUseSynopsis,
         {msgCmdUseExample1, "vcpkg use cmake"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         SIZE_MAX,
         {CommonAcquireArtifactSwitches, UseOptions, UseMultiOptions},
-        nullptr,
     };
 
     void command_use_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

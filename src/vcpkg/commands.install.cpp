@@ -649,11 +649,6 @@ namespace vcpkg
         {OPTION_MANIFEST_FEATURE, msgHelpTxtOptManifestFeature},
     };
 
-    static std::vector<std::string> get_all_known_reachable_port_names_no_network(const VcpkgPaths& paths)
-    {
-        return paths.make_registry_set()->get_all_known_reachable_port_names_no_network();
-    }
-
     constexpr CommandMetadata CommandInstallMetadata{
         "install",
         msgHelpInstallCommand,
@@ -661,10 +656,10 @@ namespace vcpkg
          "vcpkg install zlib zlib:x64-windows curl boost",
          "vcpkg install --triplet x64-windows"},
         AutocompletePriority::Public,
+        AutocompleteArguments::PortSpecs,
         0,
         SIZE_MAX,
         {INSTALL_SWITCHES, INSTALL_SETTINGS, INSTALL_MULTISETTINGS},
-        &get_all_known_reachable_port_names_no_network,
     };
 
     // These command metadata must share "critical" values (switches, number of arguments). They exist only to provide
@@ -674,10 +669,10 @@ namespace vcpkg
         msgHelpInstallCommand,
         {msgCmdInstallExample1, "vcpkg install zlib zlib:x64-windows curl boost"},
         AutocompletePriority::Public,
+        AutocompleteArguments::PortSpecs,
         0,
         SIZE_MAX,
         {INSTALL_SWITCHES, INSTALL_SETTINGS, INSTALL_MULTISETTINGS},
-        &get_all_known_reachable_port_names_no_network,
     };
 
     constexpr CommandMetadata CommandInstallMetadataManifest{
@@ -687,10 +682,10 @@ namespace vcpkg
          "vcpkg install zlib zlib:x64-windows curl boost",
          "vcpkg install --triplet x64-windows"},
         AutocompletePriority::Public,
+        AutocompleteArguments::PortSpecs,
         0,
         SIZE_MAX,
         {INSTALL_SWITCHES, INSTALL_SETTINGS, INSTALL_MULTISETTINGS},
-        nullptr,
     };
 
     void install_print_usage_information(const BinaryParagraph& bpgh,

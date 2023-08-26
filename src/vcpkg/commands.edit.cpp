@@ -86,13 +86,6 @@ namespace
 
     constexpr StringLiteral OPTION_ALL = "all";
 
-    std::vector<std::string> valid_arguments(const VcpkgPaths& paths)
-    {
-        return Util::fmap(
-            paths.get_filesystem().get_directories_non_recursive(paths.builtin_ports_directory(), IgnoreErrors{}),
-            [](const Path& p) { return p.filename().to_string(); });
-    }
-
     constexpr CommandSwitch EDIT_SWITCHES[] = {
         {OPTION_BUILDTREES, msgCmdEditOptBuildTrees},
         {OPTION_ALL, msgCmdEditOptAll},
@@ -151,10 +144,10 @@ namespace vcpkg
         [] { return msg::format(msgHelpEditCommand, msg::env_var = format_environment_variable("EDITOR")); },
         {msgCmdEditExample1, "vcpkg edit zlib"},
         AutocompletePriority::Public,
+        AutocompleteArguments::BuiltinPortNames,
         1,
         SIZE_MAX,
         {EDIT_SWITCHES},
-        &valid_arguments,
     };
 
     void command_edit_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

@@ -10,10 +10,10 @@ namespace vcpkg
         msgHelpContactCommand,
         {"vcpkg contact"},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         0,
         0,
         {},
-        nullptr,
     };
 
     void command_contact_and_exit(const VcpkgCmdArguments& args, const Filesystem&)

@@ -27,10 +27,10 @@ namespace vcpkg
             "vcpkg x-update-registry microsoft",
         },
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         SIZE_MAX,
         {UpdateRegistrySwitches},
-        nullptr,
     };
 
     void command_update_registry_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

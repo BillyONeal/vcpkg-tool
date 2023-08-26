@@ -63,10 +63,10 @@ namespace vcpkg
             "vcpkg env \"ninja -C build\" --triplet x64-windows",
         },
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         1,
         {SWITCHES},
-        nullptr,
     };
 
     // This command should probably optionally take a port

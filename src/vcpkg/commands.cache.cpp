@@ -35,10 +35,10 @@ namespace vcpkg
         msgCmdCacheSynopsis,
         {msgCmdCacheExample1, "vcpkg cache png"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         1,
         {},
-        nullptr,
     };
 
     void command_cache_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

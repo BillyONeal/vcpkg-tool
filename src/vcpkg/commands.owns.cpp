@@ -37,10 +37,10 @@ namespace vcpkg
         msgHelpOwnsCommand,
         {msgCmdOwnsExample1, "vcpkg owns zlib1.dll"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         1,
         {},
-        nullptr,
     };
 
     void command_owns_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

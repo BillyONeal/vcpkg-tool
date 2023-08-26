@@ -33,10 +33,10 @@ namespace vcpkg
             "vcpkg create zlib2 http://zlib.net/zlib1211.zip zlib1211-2.zip",
         },
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         2,
         3,
         {},
-        nullptr,
     };
 
     int command_create(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

@@ -132,10 +132,10 @@ namespace vcpkg
         msgCmdPortsdiffSynopsis,
         {msgCmdPortsdiffExample1, msgCmdPortsdiffExample2},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         2,
         {},
-        nullptr,
     };
 
     void command_portsdiff_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

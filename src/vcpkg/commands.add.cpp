@@ -24,10 +24,10 @@ namespace vcpkg
         msgCmdAddSynopsis,
         {msgCmdAddExample1, "vcpkg add port png", msgCmdAddExample2, "vcpkg add artifact cmake"},
         AutocompletePriority::Public,
+        AutocompleteArguments::BuiltinPortNamesAfterPort,
         2,
         SIZE_MAX,
         {{}, CommonSelectArtifactVersionSettings},
-        nullptr,
     };
 
     void command_add_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

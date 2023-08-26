@@ -11,10 +11,10 @@ namespace vcpkg
         {/*intentionally undocumented*/},
         {},
         AutocompletePriority::Never,
+        AutocompleteArguments::None,
         0,
         SIZE_MAX,
         {},
-        nullptr,
     };
 
     void command_z_ce_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

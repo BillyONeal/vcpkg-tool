@@ -321,10 +321,10 @@ namespace vcpkg
         msgCmdCiSynopsis,
         {"vcpkg ci --triplet=x64-windows"},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         0,
         0,
         {CI_SWITCHES, CI_SETTINGS},
-        nullptr,
     };
 
     void command_ci_and_exit(const VcpkgCmdArguments& args,

@@ -620,10 +620,10 @@ namespace vcpkg
         msgCmdExportSynopsis,
         {msgCmdExportExample1, "vcpkg export zlib zlib:x64-windows boost --nuget"},
         AutocompletePriority::Public,
+        AutocompleteArguments::InstalledPortSpecs,
         0,
         SIZE_MAX,
         {EXPORT_SWITCHES, EXPORT_SETTINGS},
-        nullptr,
     };
 
     void command_export_and_exit(const VcpkgCmdArguments& args,

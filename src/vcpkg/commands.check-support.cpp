@@ -102,12 +102,12 @@ namespace vcpkg
     constexpr CommandMetadata CommandCheckSupportMetadata{
         "x-check-support",
         msgCmdCheckSupportSynopsis,
-        {msgCmdCheckSupportExample1, "vcpkg x-check-support zlib"},
+        {msgCmdCheckSupportExample1, "vcpkg x-check-support zlib:x64-windows"},
         AutocompletePriority::Public,
+        AutocompleteArguments::PortSpecs,
         1,
         SIZE_MAX,
         {CHECK_SUPPORT_SWITCHES},
-        nullptr,
     };
 
     void command_check_support_and_exit(const VcpkgCmdArguments& args,

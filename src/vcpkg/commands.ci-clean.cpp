@@ -31,10 +31,10 @@ namespace vcpkg
         msgCmdCiCleanSynopsis,
         {"vcpkg x-ci-clean"},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         0,
         0,
         {},
-        nullptr,
     };
 
     void command_ci_clean_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

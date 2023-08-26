@@ -111,13 +111,12 @@ namespace vcpkg
         MetadataMessage examples[example_max_size];
 
         AutocompletePriority autocomplete_priority;
+        AutocompleteArguments autocomplete_arguments;
 
         size_t minimum_arity;
         size_t maximum_arity;
 
         CommandOptionsStructure options;
-
-        std::vector<std::string> (*valid_arguments)(const VcpkgPaths& paths);
 
         LocalizedString get_example_text() const;
     };

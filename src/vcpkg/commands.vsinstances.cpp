@@ -12,10 +12,10 @@ namespace vcpkg
         msgCmdVSInstancesSynopsis,
         {"vcpkg x-vsinstances"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         0,
         {},
-        nullptr,
     };
 
     void command_vs_instances_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

@@ -10,6 +10,7 @@
 
 namespace vcpkg
 {
+    std::vector<std::string> command_integrate_valid_arguments();
     extern const CommandMetadata CommandIntegrateMetadata;
     void command_integrate_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths);
 

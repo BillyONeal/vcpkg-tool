@@ -14,10 +14,10 @@ namespace vcpkg
         {/*intentionally undocumented*/},
         {},
         AutocompletePriority::Never,
+        AutocompleteArguments::None,
         1,
         1,
         {},
-        nullptr,
     };
 
     void command_z_upload_metrics_and_exit(const VcpkgCmdArguments& args, const Filesystem& fs)

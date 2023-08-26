@@ -24,10 +24,10 @@ namespace vcpkg
         {/*intentionally undocumented*/},
         {},
         AutocompletePriority::Never,
+        AutocompleteArguments::None,
         2,
         2,
         {GENERATE_MESSAGE_MAP_SWITCHES},
-        nullptr,
     };
 
     std::vector<StringView> get_all_format_args(StringView fstring, LocalizedString& error)

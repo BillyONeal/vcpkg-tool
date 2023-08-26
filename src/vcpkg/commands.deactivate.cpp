@@ -11,10 +11,10 @@ namespace vcpkg
         msgCmdDeactivateSynopsis,
         {"vcpkg deactivate"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         0,
         {},
-        nullptr,
     };
 
     void command_deactivate_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

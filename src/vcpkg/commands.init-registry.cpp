@@ -10,10 +10,10 @@ namespace vcpkg
         msgCmdInitRegistrySynopsis,
         {msgCmdInitRegistryExample1, "vcpkg x-init-registry ."},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         1,
         {},
-        nullptr,
     };
 
     void command_init_registry_and_exit(const VcpkgCmdArguments& args, const Filesystem& fs)

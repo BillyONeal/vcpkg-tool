@@ -575,7 +575,7 @@ namespace vcpkg
     static constexpr StringLiteral ZSH = "zsh";
     static constexpr StringLiteral FISH = "x-fish";
 
-    static std::vector<std::string> valid_arguments(const VcpkgPaths&)
+    std::vector<std::string> command_integrate_valid_arguments()
     {
         // Note that help lists all supported args, but we only want to autocomplete the ones valid on this platform
         return
@@ -610,10 +610,10 @@ namespace vcpkg
             return LocalizedString::from_raw(std::move(table.m_str));
         }},
         AutocompletePriority::Public,
+        AutocompleteArguments::Integrate,
         1,
         1,
         {},
-        &valid_arguments,
     };
 
     void command_integrate_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

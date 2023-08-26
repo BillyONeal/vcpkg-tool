@@ -230,10 +230,10 @@ namespace vcpkg
         msgCmdCiVerifyVersionsSynopsis,
         {"vcpkg x-ci-verify-versions"},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         0,
         SIZE_MAX,
         {VERIFY_VERSIONS_SWITCHES, VERIFY_VERSIONS_SETTINGS},
-        nullptr,
     };
 
     void command_ci_verify_versions_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

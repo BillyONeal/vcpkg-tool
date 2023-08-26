@@ -115,10 +115,10 @@ namespace vcpkg
         msgHelpTopicCommand,
         {"vcpkg help topics", "vcpkg help install"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         1,
         {},
-        nullptr,
     };
 
     void help_topic_valid_triplet(const TripletDatabase& database)

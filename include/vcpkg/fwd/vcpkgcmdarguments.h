@@ -15,6 +15,16 @@ namespace vcpkg
         Never
     };
 
+    enum class AutocompleteArguments
+    {
+        None,
+        BuiltinPortNames,
+        BuiltinPortNamesAfterPort,
+        PortSpecs,
+        InstalledPortSpecs,
+        Integrate
+    };
+
     struct CommandMetadata;
     struct HelpTableFormatter;
     struct VcpkgCmdArguments;

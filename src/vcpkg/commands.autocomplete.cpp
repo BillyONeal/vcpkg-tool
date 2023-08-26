@@ -6,8 +6,10 @@
 
 #include <vcpkg/commands.autocomplete.h>
 #include <vcpkg/commands.h>
+#include <vcpkg/commands.integrate.h>
 #include <vcpkg/metrics.h>
 #include <vcpkg/paragraphs.h>
+#include <vcpkg/registries.h>
 #include <vcpkg/vcpkgcmdarguments.h>
 #include <vcpkg/vcpkglib.h>
 #include <vcpkg/vcpkgpaths.h>
@@ -31,6 +33,26 @@ namespace
         return Util::fmap(triplets,
                           [&](const TripletFile& triplet) { return fmt::format("{}:{}", port, triplet.name); });
     }
+
+    std::vector<std::string> builtin_port_names(const VcpkgPaths& paths)
+    {
+        return Util::fmap(
+            paths.get_filesystem().get_directories_non_recursive(paths.builtin_ports_directory(), IgnoreErrors{}),
+            [](const Path& p) { return p.filename().to_string(); });
+    }
+
+    std::vector<std::string> known_reachable_port_names_no_network(const VcpkgPaths& paths)
+    {
+        return paths.make_registry_set()->get_all_known_reachable_port_names_no_network();
+    }
+
+    std::vector<std::string> installed_port_specs(const VcpkgPaths& paths)
+    {
+        const StatusParagraphs status_db = database_load_check(paths.get_filesystem(), paths.installed());
+        auto installed_packages = get_installed_ports(status_db);
+
+        return Util::fmap(installed_packages, [](auto&& pgh) -> std::string { return pgh.spec().to_string(); });
+    }
 } // unnamed namespace
 
 namespace vcpkg
@@ -40,10 +62,10 @@ namespace vcpkg
         {/*Intentionally undocumented*/},
         {},
         AutocompletePriority::Never,
+        AutocompleteArguments::None,
         0,
         SIZE_MAX,
         {},
-        nullptr,
     };
 
     void command_autocomplete_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)
@@ -121,6 +143,9 @@ namespace vcpkg
             }
         }
 
+        const bool second_arg_is_port =
+            command_arguments.size() > 2 && Strings::case_insensitive_ascii_equals(command_arguments[1], "port");
+
         for (auto&& metadata : all_commands_metadata)
         {
             if (Strings::case_insensitive_ascii_equals(command_name, metadata->name))
@@ -143,18 +168,28 @@ namespace vcpkg
                     {
                         results.push_back(Strings::concat("--", s.name));
                     }
-                }
-                else
-                {
-                    if (metadata->valid_arguments != nullptr)
-                    {
-                        results = metadata->valid_arguments(paths);
-                    }
+
+                    Util::erase_remove_if(results, [&](const std::string& s) {
+                        return !Strings::case_insensitive_ascii_starts_with(s, prefix);
+                    });
+
+                    output_sorted_results_and_exit(VCPKG_LINE_INFO, std::move(results));
                 }
 
-                Util::erase_remove_if(results, [&](const std::string& s) {
-                    return !Strings::case_insensitive_ascii_starts_with(s, prefix);
-                });
+                switch (metadata->autocomplete_arguments)
+                {
+                    case AutocompleteArguments::None: Checks::exit_success(VCPKG_LINE_INFO);
+                    case AutocompleteArguments::BuiltinPortNames:
+                    default: Checks::unreachable(VCPKG_LINE_INFO);
+                }
+
+                else
+                {
+                    // if (metadata->valid_arguments != nullptr)
+                    //{
+                    //     results = metadata->valid_arguments(paths);
+                    // }
+                }
 
                 if (Strings::case_insensitive_ascii_equals(metadata->name, "install") && results.size() == 1 &&
                     !is_option)

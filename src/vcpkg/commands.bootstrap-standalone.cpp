@@ -18,10 +18,10 @@ namespace vcpkg
         msgCmdBootstrapStandaloneSynopsis,
         {"vcpkg bootstrap-standalone"},
         AutocompletePriority::Never,
+        AutocompleteArguments::None,
         0,
         0,
         {},
-        nullptr,
     };
 
     void command_bootstrap_standalone_and_exit(const VcpkgCmdArguments& args, const Filesystem& fs)

@@ -13,10 +13,10 @@ namespace vcpkg
         msgCmdHashSynopsis,
         {msgCmdHashExample1, msgCmdHashExample2, "vcpkg hash boost_1_62_0.tar.bz2"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         2,
         {},
-        nullptr,
     };
 
     void command_hash_and_exit(const VcpkgCmdArguments& args, const Filesystem& fs)

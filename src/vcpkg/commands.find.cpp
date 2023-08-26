@@ -224,10 +224,10 @@ namespace vcpkg
             "vcpkg find artifact cmake",
         },
         AutocompletePriority::Public,
+        AutocompleteArguments::None, // Note: a pattern, not a port name here
         1,
         2,
         {FindSwitches, CommonSelectArtifactVersionSettings},
-        nullptr,
     };
 
     void command_find_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

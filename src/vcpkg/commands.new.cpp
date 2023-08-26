@@ -45,10 +45,10 @@ namespace vcpkg
         msgCmdNewSynposis,
         {msgCmdNewExample1, "vcpkg new --application"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         0,
         {SWITCHES, SETTINGS},
-        nullptr,
     };
 
     ExpectedL<Json::Object> build_prototype_manifest(const std::string* name,

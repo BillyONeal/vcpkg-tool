@@ -28,10 +28,10 @@ namespace vcpkg
         {/*intentionally undocumented*/},
         {},
         AutocompletePriority::Never,
+        AutocompleteArguments::None,
         0,
         0,
         {},
-        nullptr,
     };
 
     void command_z_print_config_and_exit(const VcpkgCmdArguments& args,

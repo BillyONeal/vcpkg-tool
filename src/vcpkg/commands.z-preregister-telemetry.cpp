@@ -38,10 +38,10 @@ namespace vcpkg
         {/*intentionally undocumented*/},
         {},
         AutocompletePriority::Never,
+        AutocompleteArguments::None,
         0,
         0,
         {},
-        nullptr,
     };
 
     void command_z_preregister_telemetry_and_exit(const VcpkgCmdArguments& args, const Filesystem&)

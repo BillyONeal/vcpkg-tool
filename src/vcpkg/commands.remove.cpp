@@ -153,14 +153,6 @@ namespace
         {OPTION_DRY_RUN, msgCmdRemoveOptDryRun},
         {OPTION_OUTDATED, msgCmdRemoveOptOutdated},
     };
-
-    std::vector<std::string> valid_arguments(const VcpkgPaths& paths)
-    {
-        const StatusParagraphs status_db = database_load_check(paths.get_filesystem(), paths.installed());
-        auto installed_packages = get_installed_ports(status_db);
-
-        return Util::fmap(installed_packages, [](auto&& pgh) -> std::string { return pgh.spec().to_string(); });
-    }
 } // unnamed namespace
 
 namespace vcpkg
@@ -170,10 +162,10 @@ namespace vcpkg
         msgHelpRemoveCommand,
         {msgCmdRemoveExample1, "vcpkg remove zlib zlib:x64-windows curl boost", "vcpkg remove --outdated"},
         AutocompletePriority::Public,
+        AutocompleteArguments::InstalledPortSpecs,
         0,
         SIZE_MAX,
         {SWITCHES},
-        &valid_arguments,
     };
 
     void command_remove_and_exit(const VcpkgCmdArguments& args,

@@ -72,10 +72,10 @@ namespace vcpkg
         msgCmdBuildSynopsis,
         {msgCmdBuildExample1, "vcpkg build zlib:x64-windows"},
         AutocompletePriority::Internal,
+        AutocompleteArguments::PortSpecs,
         1,
         1,
         {},
-        nullptr,
     };
 
     void command_build_and_exit(const VcpkgCmdArguments& args,

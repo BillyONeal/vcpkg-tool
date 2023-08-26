@@ -32,10 +32,10 @@ namespace vcpkg
         msgRegeneratesArtifactRegistry,
         {"vcpkg x-regenerate"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         1,
         {command_switches},
-        nullptr,
     };
 
     void command_regenerate_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

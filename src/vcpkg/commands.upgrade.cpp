@@ -39,10 +39,10 @@ namespace vcpkg
         msgHelpUpgradeCommand,
         {"vcpkg upgrade --no-dry-run"},
         AutocompletePriority::Public,
+        AutocompleteArguments::InstalledPortSpecs,
         0,
         SIZE_MAX,
         {SWITCHES},
-        nullptr,
     };
 
     void command_upgrade_and_exit(const VcpkgCmdArguments& args,

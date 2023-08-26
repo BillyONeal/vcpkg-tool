@@ -89,7 +89,7 @@ TEST_CASE ("VcpkgCmdArguments from argument sequence with valued options", "[arg
     {
         CommandSetting settings[] = {{"a", {}}};
         CommandMetadata cmdstruct = {
-            "command", {}, {}, AutocompletePriority::Public, 0, SIZE_MAX, {{}, settings}, nullptr};
+            "command", {}, {}, AutocompletePriority::Public, AutocompleteArguments::None, 0, SIZE_MAX, {{}, settings}};
 
         std::vector<std::string> t = {"--a=b", "command", "argument"};
         auto v = VcpkgCmdArguments::create_from_arg_sequence(t.data(), t.data() + t.size());
@@ -105,8 +105,14 @@ TEST_CASE ("VcpkgCmdArguments from argument sequence with valued options", "[arg
     {
         CommandSwitch switches[] = {{"a", {}}, {"c", {}}};
         CommandSetting settings[] = {{"b", {}}, {"d", {}}};
-        CommandMetadata cmdstruct = {
-            "command", {}, {}, AutocompletePriority::Public, 0, SIZE_MAX, {switches, settings}, nullptr};
+        CommandMetadata cmdstruct = {"command",
+                                     {},
+                                     {},
+                                     AutocompletePriority::Public,
+                                     AutocompleteArguments::None,
+                                     0,
+                                     SIZE_MAX,
+                                     {switches, settings}};
 
         std::vector<std::string> t = {"--a", "--b=c"};
         auto v = VcpkgCmdArguments::create_from_arg_sequence(t.data(), t.data() + t.size());

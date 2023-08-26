@@ -92,10 +92,10 @@ namespace vcpkg
         msgListHelp,
         {"vcpkg list", msgCmdListExample2, "vcpkg list png"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         1,
         {LIST_SWITCHES},
-        nullptr,
     };
 
     void command_list_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

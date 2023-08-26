@@ -43,10 +43,10 @@ namespace vcpkg
         msgCmdDownloadSynopsis,
         {msgCmdDownloadExample1, msgCmdDownloadExample2, msgCmdDownloadExample3},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         1,
         2,
         {FETCH_SWITCHES, FETCH_SETTINGS, FETCH_MULTISETTINGS},
-        nullptr,
     };
 
     static bool is_hex(StringView sha) { return std::all_of(sha.begin(), sha.end(), ParserBase::is_hex_digit); }

@@ -34,10 +34,10 @@ namespace vcpkg
         msgPackageInfoHelp,
         {msgCmdPackageInfoExample1, "vcpkg x-package-info zlib openssl:x64-windows"},
         AutocompletePriority::Public,
+        AutocompleteArguments::PortSpecs,
         1,
         SIZE_MAX,
         {INFO_SWITCHES},
-        nullptr,
     };
 
     void command_package_info_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

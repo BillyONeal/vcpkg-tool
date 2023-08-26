@@ -562,10 +562,10 @@ namespace vcpkg
         {"vcpkg z-applocal --target-binary=\"Path/to/binary\" --installed-bin-dir=\"Path/to/installed/bin\" "
          "--tlog-file=\"Path/to/tlog.tlog\" --copied-files-log=\"Path/to/copiedFilesLog.log\""},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         0,
         0,
         {{}, SETTINGS},
-        nullptr,
     };
 
     void command_z_applocal_and_exit(const VcpkgCmdArguments& args, const Filesystem&)

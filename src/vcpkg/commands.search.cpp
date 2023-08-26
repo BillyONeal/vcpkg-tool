@@ -26,10 +26,10 @@ namespace vcpkg
         msgHelpSearchCommand,
         {msgCmdSearchExample1, "vcpkg search png"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         1,
         {SearchSwitches, {}},
-        nullptr,
     };
 
     void command_search_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

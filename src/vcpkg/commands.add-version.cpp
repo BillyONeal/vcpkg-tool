@@ -321,10 +321,10 @@ namespace vcpkg
         msgCmdAddVersionSynopsis,
         {msgCmdAddVersionExample1, "vcpkg x-add-version curl --overwrite-version"},
         AutocompletePriority::Public,
+        AutocompleteArguments::BuiltinPortNames,
         0,
         1,
         {AddVersionSwitches},
-        nullptr,
     };
 
     void command_add_version_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

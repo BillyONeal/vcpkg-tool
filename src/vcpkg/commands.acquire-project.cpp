@@ -12,10 +12,10 @@ namespace vcpkg
         msgCmdAcquireProjectSynopsis,
         {"vcpkg acquire-project"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         0,
         {CommonAcquireArtifactSwitches},
-        nullptr,
     };
 
     void command_acquire_project_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

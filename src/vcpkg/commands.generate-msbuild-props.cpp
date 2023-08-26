@@ -23,10 +23,10 @@ namespace vcpkg
         msgCmdGenerateMSBuildPropsSynopsis,
         {msgCmdGenerateMSBuildPropsExample1, msgCmdGenerateMSBuildPropsExample2},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         0,
         0,
         {CommonAcquireArtifactSwitches, GenerateMSBuildPropsOptions},
-        nullptr,
     };
 
     void command_generate_msbuild_props_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

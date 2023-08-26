@@ -50,10 +50,10 @@ namespace vcpkg
         msgCmdSetInstalledSynopsis,
         {msgCmdSetInstalledExample1, "x-set-installed zlib:x64-windows boost"},
         AutocompletePriority::Public,
+        AutocompleteArguments::PortSpecs,
         0,
         SIZE_MAX,
         {INSTALL_SWITCHES, INSTALL_SETTINGS},
-        nullptr,
     };
 
     Optional<Json::Object> create_dependency_graph_snapshot(const VcpkgCmdArguments& args,

@@ -60,10 +60,10 @@ namespace vcpkg
         msgCmdUpdateBaselineSynopsis,
         {"vcpkg x-update-baseline"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         0,
         {switches},
-        nullptr,
     };
 
     void command_update_baseline_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

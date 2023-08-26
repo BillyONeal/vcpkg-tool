@@ -246,10 +246,10 @@ namespace vcpkg
         msgHelpDependInfoCommand,
         {msgCmdDependInfoExample1, "vcpkg depend-info zlib"},
         AutocompletePriority::Public,
+        AutocompleteArguments::BuiltinPortNames,
         1,
         1,
         {DEPEND_SWITCHES, DEPEND_SETTINGS},
-        nullptr,
     };
 
     ExpectedL<DependInfoStrategy> determine_depend_info_mode(const ParsedArguments& args)

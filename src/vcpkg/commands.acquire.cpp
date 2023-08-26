@@ -23,10 +23,10 @@ namespace vcpkg
         msgCmdAcquireSynopsis,
         {msgCmdAcquireExample1, "vcpkg acquire cmake"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         1,
         SIZE_MAX,
         {CommonAcquireArtifactSwitches, {}, AcquireMultiOptions},
-        nullptr,
     };
 
     void command_acquire_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)

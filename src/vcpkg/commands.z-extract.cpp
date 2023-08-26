@@ -27,10 +27,10 @@ namespace vcpkg
         msgExtractHelp,
         {msgCmdZExtractExample1, msgCmdZExtractExample2},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         2,
         3,
         {{}, {EXTRACT_SETTINGS}},
-        nullptr,
     };
 
     ExpectedL<StripSetting> get_strip_setting(std::map<std::string, std::string, std::less<>> settings)

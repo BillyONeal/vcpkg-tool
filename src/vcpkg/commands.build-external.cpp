@@ -15,10 +15,10 @@ namespace vcpkg
         msgCmdBuildExternalSynopsis,
         {msgCmdBuildExternalExample1, msgCmdBuildExternalExample2},
         AutocompletePriority::Internal,
+        AutocompleteArguments::None,
         2,
         2,
         {},
-        nullptr,
     };
 
     void command_build_external_and_exit(const VcpkgCmdArguments& args,

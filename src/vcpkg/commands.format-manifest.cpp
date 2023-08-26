@@ -172,10 +172,10 @@ namespace vcpkg
         msgCmdFormatManifestSynopsis,
         {msgCmdFormatManifestExample1, "vcpkg format-manifest ports/zlib/vcpkg.json", "format-manifest --all"},
         AutocompletePriority::Public,
+        AutocompleteArguments::None,
         0,
         SIZE_MAX,
         {FORMAT_SWITCHES},
-        nullptr,
     };
 
     void command_format_manifest_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths)
