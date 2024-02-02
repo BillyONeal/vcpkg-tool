@@ -1138,6 +1138,7 @@ namespace vcpkg
             prohibit_backcompat_features ? BackcompatFeatures::Prohibit : BackcompatFeatures::Allow,
             print_cmake_usage,
             keep_going,
+            PrintLicenseWarning::Yes, // FIXME
         };
 
         auto var_provider_storage = CMakeVars::make_triplet_cmake_var_provider(paths);
@@ -1414,6 +1415,11 @@ namespace vcpkg
                 if (!bpgh) continue;
                 install_print_usage_information(*bpgh, printed_usages, fs, paths.installed());
             }
+        }
+
+        if (install_plan_options.print_license_warning == PrintLicenseWarning::Yes)
+        {
+            msg::println(msgPackageLicenseWarning);
         }
 
         Checks::exit_with_code(VCPKG_LINE_INFO, summary.failed());

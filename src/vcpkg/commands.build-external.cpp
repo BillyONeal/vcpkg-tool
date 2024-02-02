@@ -39,6 +39,8 @@ namespace vcpkg
             Editable::No,
             BackcompatFeatures::Allow,
             PrintUsage::Yes,
+            KeepGoing::No,
+            PrintLicenseWarning::No,
         };
 
         bool default_triplet_used = false;

@@ -347,6 +347,7 @@ namespace vcpkg
             BackcompatFeatures::Prohibit,
             PrintUsage::Yes,
             KeepGoing::Yes,
+            PrintLicenseWarning::No,
         };
 
         ExclusionsMap exclusions_map;

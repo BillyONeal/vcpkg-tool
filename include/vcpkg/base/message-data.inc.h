@@ -2193,6 +2193,11 @@ DECLARE_MESSAGE(OverwritingFile, (msg::path), "", "File {path} was already prese
 DECLARE_MESSAGE(PackageAbi, (msg::spec, msg::package_abi), "", "{spec} package ABI: {package_abi}")
 DECLARE_MESSAGE(PackageAlreadyRemoved, (msg::spec), "", "unable to remove {spec}: already removed")
 DECLARE_MESSAGE(PackageDiscoveryHeader, (), "", "Package Discovery")
+DECLARE_MESSAGE(PackageLicenseWarning,
+                (),
+                "",
+                "Installed contents are licensed to you by owners. Microsoft is not responsible for, nor does it grant "
+                "any licenses to, third-party packages.")
 DECLARE_MESSAGE(PackageManipulationHeader, (), "", "Package Manipulation")
 DECLARE_MESSAGE(PackageInfoHelp, (), "", "Display detailed information on packages")
 DECLARE_MESSAGE(PackageFailedtWhileExtracting,

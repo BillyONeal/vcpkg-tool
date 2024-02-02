@@ -77,6 +77,7 @@ namespace vcpkg
         BackcompatFeatures backcompat_features;
         PrintUsage print_usage;
         KeepGoing keep_going;
+        PrintLicenseWarning print_license_warning;
     };
 
     struct BuildResultCounts

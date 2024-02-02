@@ -271,6 +271,11 @@ namespace vcpkg
             }
         }
 
+        if (build_options.print_license_warning == PrintLicenseWarning::Yes)
+        {
+            msg::println(msgPackageLicenseWarning);
+        }
+
         Checks::exit_success(VCPKG_LINE_INFO);
     }
 
@@ -324,6 +329,7 @@ namespace vcpkg
             prohibit_backcompat_features,
             print_usage,
             keep_going,
+            PrintLicenseWarning::Yes, // FIXME
         };
 
         auto& fs = paths.get_filesystem();

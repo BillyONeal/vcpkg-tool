@@ -76,6 +76,7 @@ namespace vcpkg
             BackcompatFeatures::Allow,
             PrintUsage::Yes,
             keep_going,
+            PrintLicenseWarning::No,
         };
 
         StatusParagraphs status_db = database_load_check(paths.get_filesystem(), paths.installed());
