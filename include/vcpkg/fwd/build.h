@@ -109,6 +109,9 @@ namespace vcpkg
         SKIP_ARCHITECTURE_CHECK,
         CMAKE_HELPER_PORT,
         SKIP_ABSOLUTE_PATHS_CHECK,
+        SKIP_ALL_POST_BUILD_CHECKS,
+        SKIP_APPCONTAINER_CHECK,
+        SKIP_CRT_LINKAGE_CHECK,
         // Must be last
         COUNT,
     };

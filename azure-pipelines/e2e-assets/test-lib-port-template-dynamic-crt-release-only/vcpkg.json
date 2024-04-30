@@ -4,6 +4,9 @@
   "features": {
     "policy-skip-crt-linkage-check": {
       "description": "Turn on VCPKG_POLICY_SKIP_CRT_LINKAGE_CHECK"
+    },
+    "policy-only-release-crt": {
+      "description": "Turn on VCPKG_POLICY_ONLY_RELEASE_CRT"
     }
   }
 }

@@ -224,6 +224,9 @@ namespace vcpkg
             case BuildPolicy::SKIP_ARCHITECTURE_CHECK: return PolicySkipArchitectureCheck;
             case BuildPolicy::CMAKE_HELPER_PORT: return PolicyCMakeHelperPort;
             case BuildPolicy::SKIP_ABSOLUTE_PATHS_CHECK: return PolicySkipAbsolutePathsCheck;
+            case BuildPolicy::SKIP_ALL_POST_BUILD_CHECKS: return PolicySkipAllPostBuildChecks;
+            case BuildPolicy::SKIP_APPCONTAINER_CHECK: return PolicySkipAppcontainerCheck;
+            case BuildPolicy::SKIP_CRT_LINKAGE_CHECK: return PolicySkipCrtLinkageCheck;
             default: Checks::unreachable(VCPKG_LINE_INFO);
         }
     }
@@ -246,6 +249,9 @@ namespace vcpkg
             case BuildPolicy::SKIP_ARCHITECTURE_CHECK: return CMakeVariablePolicySkipArchitectureCheck;
             case BuildPolicy::CMAKE_HELPER_PORT: return CMakeVariablePolicyCMakeHelperPort;
             case BuildPolicy::SKIP_ABSOLUTE_PATHS_CHECK: return CMakeVariablePolicySkipAbsolutePathsCheck;
+            case BuildPolicy::SKIP_ALL_POST_BUILD_CHECKS: return CMakeVariablePolicySkipAllPostBuildChecks;
+            case BuildPolicy::SKIP_APPCONTAINER_CHECK: return CMakeVariablePolicySkipAppcontainerCheck;
+            case BuildPolicy::SKIP_CRT_LINKAGE_CHECK: return CMakeVariablePolicySkipCrtLinkageCheck;
             default: Checks::unreachable(VCPKG_LINE_INFO);
         }
     }
@@ -1723,10 +1729,10 @@ namespace vcpkg
             else if (setting == "disabled")
                 policies.emplace(policy, false);
             else
-                Checks::msg_exit_maybe_upgrade(VCPKG_LINE_INFO,
-                                               msgUnknownPolicySetting,
-                                               msg::option = setting,
-                                               msg::value = to_string_view(policy));
+                Checks::msg_exit_with_error(VCPKG_LINE_INFO,
+                                            msgUnknownPolicySetting,
+                                            msg::value = setting,
+                                            msg::cmake_var = to_cmake_variable(policy));
         }
 
         auto maybe_error = parser.error();

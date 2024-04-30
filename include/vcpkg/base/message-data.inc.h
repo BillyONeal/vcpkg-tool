@@ -127,7 +127,7 @@ DECLARE_MESSAGE(AllFormatArgsUnbalancedBraces,
                 (msg::value),
                 "example of {value} is 'foo bar {'",
                 "unbalanced brace in format string \"{value}\"")
-DECLARE_MESSAGE(AllPackagesAreUpdated, (), "", "All installed packages are up-to-date with the local portfile.")
+DECLARE_MESSAGE(AllPackagesAreUpdated, (), "", "All installed packages are up-to-date.")
 DECLARE_MESSAGE(AlreadyInstalled, (msg::spec), "", "{spec} is already installed")
 DECLARE_MESSAGE(AlreadyInstalledNotHead,
                 (msg::spec),
@@ -409,7 +409,11 @@ DECLARE_MESSAGE(
     "Include '[{package_name}] Build error' in your bug report title, the following version information in your "
     "bug description, and attach any relevant failure logs from above.")
 DECLARE_MESSAGE(BuiltInTriplets, (), "", "Built-in Triplets:")
-DECLARE_MESSAGE(BuiltWithIncorrectArchitecture, (), "", "The following files were built for an incorrect architecture:")
+DECLARE_MESSAGE(BuiltWithIncorrectArchitecture,
+                (),
+                "",
+                "The following files were built for an incorrect architecture. To suppress this message, add "
+                "set(VCPKG_POLICY_SKIP_ARCHITECTURE_CHECK enabled) to portfile.cmake.")
 DECLARE_MESSAGE(CheckedOutGitSha, (msg::commit_sha), "", "Checked out Git SHA: {commit_sha}")
 DECLARE_MESSAGE(CheckedOutObjectMissingManifest,
                 (),
@@ -1175,10 +1179,10 @@ DECLARE_MESSAGE(ExtendedDocumentationAtUrl, (msg::url), "", "Extended documentat
 DECLARE_MESSAGE(ExtractHelp, (), "", "Extracts an archive.")
 DECLARE_MESSAGE(ExtractingTool, (msg::tool_name), "", "Extracting {tool_name}...")
 DECLARE_MESSAGE(FailedPostBuildChecks,
-                (msg::count, msg::path),
+                (msg::count),
                 "",
-                "Found {count} post-build check problem(s). To submit these ports to curated catalogs, please "
-                "first correct the portfile: {path}")
+                "Found {count} post-build check problem(s). These are usually caused by bugs in portfile.cmake or the "
+                "upstream build system. Please correct these before submitting this port to the curated registry.")
 DECLARE_MESSAGE(FailedToAcquireMutant,
                 (msg::path),
                 "'mutant' is the Windows kernel object returned by CreateMutexW",
@@ -1982,10 +1986,7 @@ DECLARE_MESSAGE(LoadingDependencyInformation,
                 (msg::count),
                 "",
                 "Loading dependency information for {count} packages...")
-DECLARE_MESSAGE(LocalPortfileVersion,
-                (),
-                "",
-                "Using local portfile versions. To update the local portfiles, use `git pull`.")
+DECLARE_MESSAGE(LocalPortfileVersion, (), "", "Using local port versions. To update the local ports, use `git pull`.")
 DECLARE_MESSAGE(ManifestConflict,
                 (msg::path),
                 "",
@@ -2237,30 +2238,33 @@ DECLARE_MESSAGE(PERvaNotFound,
                 "{value:#X} is the Relative Virtual Address sought. Portable executable is a term-of-art, see "
                 "https://learn.microsoft.com/windows/win32/debug/pe-format",
                 "While parsing Portable Executable {path}, could not find RVA {value:#X}.")
-DECLARE_MESSAGE(PerformingPostBuildValidation, (), "", "-- Performing post-build validation")
+DECLARE_MESSAGE(PerformingPostBuildValidation, (), "", "Performing post-build validation")
 DECLARE_MESSAGE(PortBugBinDirExists,
                 (msg::path),
                 "",
-                "There should be no bin\\ directory in a static build, but {path} is present.")
-DECLARE_MESSAGE(PortBugDebugBinDirExists,
-                (msg::path),
-                "",
-                "There should be no debug\\bin\\ directory in a static build, but {path} is present.")
+                "There should be no ${{CURRENT_PACKAGES_DIR}}/bin directory in a static build, but {path} is present.")
+DECLARE_MESSAGE(
+    PortBugDebugBinDirExists,
+    (msg::path),
+    "",
+    "There should be no ${{CURRENT_PACKAGES_DIR}}/debug/bin directory in a static build, but {path} is present.")
 DECLARE_MESSAGE(PortBugDebugShareDir,
                 (),
                 "",
                 "/debug/share should not exist. Please reorganize any important files, then use\n"
                 "file(REMOVE_RECURSE \"${{CURRENT_PACKAGES_DIR}}/debug/share\")")
-DECLARE_MESSAGE(PortBugDllAppContainerBitNotSet,
-                (),
-                "",
-                "The App Container bit must be set for Windows Store apps. The following DLLs do not have the App "
-                "Container bit set:")
-DECLARE_MESSAGE(PortBugDllInLibDir,
-                (),
-                "",
-                "The following dlls were found in /lib or /debug/lib. Please move them to /bin or "
-                "/debug/bin, respectively.")
+DECLARE_MESSAGE(
+    PortBugDllAppContainerBitNotSet,
+    (),
+    "",
+    "The App Container bit must be set for all DLLs in Windows Store apps, but the following DLLs were not built with "
+    "it turned on. To suppress this message, add set(VCPKG_POLICY_SKIP_APPCONTAINER_CHECK enabled) to portfile.cmake.")
+DECLARE_MESSAGE(
+    PortBugDllInLibDir,
+    (),
+    "",
+    "The following dlls were found in ${{CURRENT_PACKAGES_DIR}}/lib or ${{CURRENT_PACKAGES_DIR}}/debug/lib. Please "
+    "move them to ${{CURRENT_PACKAGES_DIR}}/bin or ${{CURRENT_PACKAGES_DIR}}/debug/bin, respectively.")
 DECLARE_MESSAGE(PortBugDuplicateIncludeFiles,
                 (),
                 "",
@@ -2280,13 +2284,15 @@ DECLARE_MESSAGE(PortBugFoundEmptyDirectories,
 DECLARE_MESSAGE(PortBugFoundExeInBinDir,
                 (),
                 "",
-                "The following EXEs were found in /bin or /debug/bin. EXEs are not valid distribution targets.")
+                "The following EXEs were found in ${{CURRENT_PACKAGES_DIR}}/bin or "
+                "${{CURRENT_PACKAGES_DIR}}/debug/bin. EXEs are not valid distribution targets.")
 DECLARE_MESSAGE(PortBugFoundReleaseBinaries, (msg::count), "", "Found {count} release binaries:")
 DECLARE_MESSAGE(PortBugIncludeDirInCMakeHelperPort,
                 (),
                 "",
-                "The folder /include exists in a cmake helper port; this is incorrect, since only cmake "
-                "files should be installed")
+                "The folder ${{CURRENT_PACKAGES_DIR}}/include exists in a CMake helper port; this is incorrect, since "
+                "only CMake files should be installed. To suppress this message, remove "
+                "set(VCPKG_POLICY_CMAKE_HELPER_PORT enabled).")
 DECLARE_MESSAGE(PortBugInspectFiles, (msg::extension), "", "To inspect the {extension} files, use:")
 DECLARE_MESSAGE(
     PortBugInvalidCrtLinkage,
@@ -2310,6 +2316,13 @@ DECLARE_MESSAGE(PortBugInvalidCrtLinkageEntry,
                 (msg::path),
                 "See explanation in PortBugInvalidCrtLinkage",
                 "{path} links with:")
+DECLARE_MESSAGE(
+    PortBugInvalidCrtLinkageSuppress,
+    (),
+    "",
+    "If the triplet is intended to only use the release CRT, you should add set(VCPKG_POLICY_ONLY_RELEASE_CRT enabled) "
+    "to the triplet .cmake file. To suppress this check entirely, add set(VCPKG_POLICY_SKIP_CRT_LINKAGE_CHECK enabled) "
+    "to the triplet .cmake if this is triplet-wide, or to portfile.cmake if this is specific to a port.")
 DECLARE_MESSAGE(PortBugKernel32FromXbox,
                 (),
                 "",
@@ -2336,26 +2349,30 @@ DECLARE_MESSAGE(PortBugMisplacedPkgConfigFiles,
                 "pkgconfig directories should be one of share/pkgconfig (for header only libraries only), "
                 "lib/pkgconfig, or lib/debug/pkgconfig. The following misplaced pkgconfig files were found:")
 DECLARE_MESSAGE(PortBugMissingDebugBinaries, (), "", "Debug binaries were not found.")
-DECLARE_MESSAGE(PortBugMissingFile,
-                (msg::path),
-                "",
-                "The /{path} file does not exist. This file must exist for CMake helper ports.")
+DECLARE_MESSAGE(
+    PortBugMissingCMakeHelperPortFile,
+    (msg::path),
+    "",
+    "The ${{CURRENT_PACKAGES_DIR}}/{path} file does not exist. This file must exist for CMake helper ports. To "
+    "suppress this message, remove set(VCPKG_POLICY_CMAKE_HELPER_PORT enabled) from portfile.cmake.")
 DECLARE_MESSAGE(
     PortBugMissingProvidedUsage,
     (msg::package_name),
     "",
     "The port provided \"usage\" but forgot to install to /share/{package_name}/usage, add the following line"
-    "in the portfile:")
+    "to portfile.cmake:")
 DECLARE_MESSAGE(PortBugMissingImportedLibs,
                 (msg::path),
                 "",
-                "Import libraries were not present in {path}.\nIf this is intended, add the following line in the "
-                "portfile:\nset(VCPKG_POLICY_DLLS_WITHOUT_LIBS enabled)")
+                "Import libraries were not present in {path}.\nIf this is intended, add the following line to "
+                "portfile.cmake:\nset(VCPKG_POLICY_DLLS_WITHOUT_LIBS enabled)")
 DECLARE_MESSAGE(PortBugMissingIncludeDir,
                 (),
                 "",
-                "The folder /include is empty or not present. This indicates the library was not correctly "
-                "installed.")
+                "The folder ${{CURRENT_PACKAGES_DIR}}/include is empty or not present. This usually means that headers "
+                "are not correctly installed. If this is a CMake helper port, add set(VCPKG_POLICY_CMAKE_HELPER_PORT "
+                "enabled). If this is not a CMake helper port but this is otherwise intentional, add "
+                "set(VCPKG_POLICY_EMPTY_INCLUDE_FOLDER enabled) to suppress this message.")
 DECLARE_MESSAGE(PortBugMissingLicense,
                 (msg::package_name),
                 "",
@@ -2367,29 +2384,32 @@ DECLARE_MESSAGE(
     PortBugRemoveBinDir,
     (),
     "",
-    "If the creation of bin\\ and/or debug\\bin\\ cannot be disabled, use this in the portfile to remove them")
+    "If the creation of bin\\ and/or debug\\bin\\ cannot be disabled, add this in portfile.cmake to remove them")
 DECLARE_MESSAGE(PortBugRemoveEmptyDirectories,
                 (),
                 "",
-                "If a directory should be populated but is not, this might indicate an error in the portfile.\n"
-                "If the directories are not needed and their creation cannot be disabled, use something like this in "
-                "the portfile to remove them:")
+                "If a directory should be populated but is not, this might indicate an error in portfile.cmake.\n"
+                "If the directories are not needed and their creation cannot be disabled, add something like this to "
+                "portfile.cmake to remove them:")
 DECLARE_MESSAGE(PortBugRemoveEmptyDirs,
                 (),
                 "Only the 'empty directories left by the above renames' part should be translated",
                 "file(REMOVE_RECURSE empty directories left by the above renames)")
-DECLARE_MESSAGE(PortBugRestrictedHeaderPaths,
-                (),
-                "A list of restricted headers is printed after this message, one per line. ",
-                "The following restricted headers can prevent the core C++ runtime and other packages from "
-                "compiling correctly. In exceptional circumstances, this policy can be disabled by setting CMake "
-                "variable VCPKG_POLICY_ALLOW_RESTRICTED_HEADERS in portfile.cmake.")
+DECLARE_MESSAGE(
+    PortBugRestrictedHeaderPaths,
+    (msg::value),
+    "{value} is a comma-separated list of header files; for example, \"<windows.h>, <json.h>\". In most cases only one "
+    "entry is present so there will be no comma.",
+    "Taking the restricted header(s) {value} can prevent the core C++ runtime and other packages from compiling "
+    "correctly. These should be renamed or stored in a subdirectory instead. In exceptional circumstances, this "
+    "warning can be suppressed by adding set(VCPKG_POLICY_ALLOW_RESTRICTED_HEADERS enabled)")
+DECLARE_MESSAGE(PortBugRestrictedHeaderPathsNote, (), "", "the headers are relative to the package include directory here")
 DECLARE_MESSAGE(PortBugSetDllsWithoutExports,
                 (),
                 "'exports' means an entry in a DLL's export table. After this message, one file path per line is "
                 "printed listing each DLL with an empty export table.",
                 "DLLs without any exports are likely a bug in the build script. If this is intended, add the "
-                "following line in the portfile:\n"
+                "following line to portfile.cmake:\n"
                 "set(VCPKG_POLICY_DLLS_WITHOUT_EXPORTS enabled)\n"
                 "The following DLLs have no exports:")
 DECLARE_MESSAGE(PortDependencyConflict,
@@ -2510,6 +2530,10 @@ DECLARE_MESSAGE(SkipClearingInvalidDir,
                 (msg::path),
                 "",
                 "Skipping clearing contents of {path} because it was not a directory.")
+DECLARE_MESSAGE(SkippingPostBuildValidationDueTo,
+                (msg::cmake_var),
+                "",
+                "Skipping post-build validation due to {cmake_var}")
 DECLARE_MESSAGE(SourceFieldPortNameMismatch,
                 (msg::package_name, msg::path),
                 "{package_name} and \"{path}\" are both names of installable ports/packages. 'Source', "
@@ -2676,11 +2700,10 @@ DECLARE_MESSAGE(UnknownParameterForIntegrate,
                 "{value} would be frobinate.",
                 "Unknown parameter '{value}' for integrate.")
 DECLARE_MESSAGE(UnknownPolicySetting,
-                (msg::option, msg::value),
-                "'{value}' is the policy in question. These are unlocalized names that ports use to control post "
-                "build checks. Some examples are VCPKG_POLICY_DLLS_WITHOUT_EXPORTS, "
-                "VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES, or VCPKG_POLICY_ALLOW_OBSOLETE_MSVCRT",
-                "Unknown setting for policy '{value}': {option}")
+                (msg::value, msg::cmake_var),
+                "{value} is to what the user set the variable we don't understand. The names 'enabled' and 'disabled' "
+                "must not be localized.",
+                "Unknown setting of {cmake_var}: {value}. Valid policy values are '', 'disabled', and 'enabled'.")
 DECLARE_MESSAGE(UnknownSettingForBuildType,
                 (msg::option),
                 "",

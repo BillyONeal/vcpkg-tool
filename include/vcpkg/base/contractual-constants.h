@@ -386,7 +386,11 @@ namespace vcpkg
         "VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES";
     inline constexpr StringLiteral CMakeVariablePolicyOnlyReleaseCrt = "VCPKG_POLICY_ONLY_RELEASE_CRT";
     inline constexpr StringLiteral CMakeVariablePolicySkipAbsolutePathsCheck = "VCPKG_POLICY_SKIP_ABSOLUTE_PATHS_CHECK";
+    inline constexpr StringLiteral CMakeVariablePolicySkipAllPostBuildChecks =
+        "VCPKG_POLICY_SKIP_ALL_POST_BUILD_CHECKS";
+    inline constexpr StringLiteral CMakeVariablePolicySkipAppcontainerCheck = "VCPKG_POLICY_SKIP_APPCONTAINER_CHECK";
     inline constexpr StringLiteral CMakeVariablePolicySkipArchitectureCheck = "VCPKG_POLICY_SKIP_ARCHITECTURE_CHECK";
+    inline constexpr StringLiteral CMakeVariablePolicySkipCrtLinkageCheck = "VCPKG_POLICY_SKIP_CRT_LINKAGE_CHECK";
     inline constexpr StringLiteral CMakeVariablePolicySkipDumpbinChecks = "VCPKG_POLICY_SKIP_DUMPBIN_CHECKS";
     inline constexpr StringLiteral CMakeVariablePort = "PORT";
     inline constexpr StringLiteral CMakeVariablePortConfigs = "VCPKG_PORT_CONFIGS";
@@ -419,7 +423,10 @@ namespace vcpkg
     inline constexpr StringLiteral PolicyMismatchedNumberOfBinaries = "PolicyMismatchedNumberOfBinaries";
     inline constexpr StringLiteral PolicyOnlyReleaseCrt = "PolicyOnlyReleaseCRT";
     inline constexpr StringLiteral PolicySkipAbsolutePathsCheck = "PolicySkipAbsolutePathsCheck";
+    inline constexpr StringLiteral PolicySkipAllPostBuildChecks = "PolicySkipAllPostBuildChecks";
+    inline constexpr StringLiteral PolicySkipAppcontainerCheck = "PolicySkipAppcontainerCheck";
     inline constexpr StringLiteral PolicySkipArchitectureCheck = "PolicySkipArchitectureCheck";
+    inline constexpr StringLiteral PolicySkipCrtLinkageCheck = "PolicySkipCrtLinkageCheck";
     inline constexpr StringLiteral PolicySkipDumpbinChecks = "PolicySkipDumpbinChecks";
 
     // Environment variables are ALL_CAPS_WITH_UNDERSCORES

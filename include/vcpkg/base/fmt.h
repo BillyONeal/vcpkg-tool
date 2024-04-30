@@ -12,4 +12,5 @@ VCPKG_MSVC_WARNING(push)
 // include\fmt\format.h(1812): warning C4189: 'zero': local variable is initialized but not referenced
 VCPKG_MSVC_WARNING(disable : 6239 4189)
 #include <fmt/format.h>
+#include <fmt/compile.h>
 VCPKG_MSVC_WARNING(pop)

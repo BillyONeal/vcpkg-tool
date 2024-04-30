@@ -1161,6 +1161,46 @@ namespace vcpkg
         }
     }
 
+    void Path::make_generic()
+    {
+        char* first = m_str.data();
+        char* last = first + m_str.size();
+        char* after_root_name = const_cast<char*>(find_root_name_end(first, last));
+        char* after_root_directory = std::find_if_not(after_root_name, last, is_slash);
+#if defined(_WIN32)
+        // \\server\share must remain \\server but it can be \\server/share
+        std::replace(first, after_root_name, '/', '\\');
+#endif // _WIN32
+        char* target = after_root_name;
+        if (after_root_name != after_root_directory)
+        {
+            *target = '/';
+            ++target;
+        }
+
+        first = after_root_directory;
+        for (;;)
+        {
+            char* next_slash = std::find_if(first, last, is_slash);
+            auto length = next_slash - first;
+            if (first != target)
+            {
+                memmove(target, first, static_cast<size_t>(length));
+            }
+
+            target += length;
+            if (next_slash == last)
+            {
+                m_str.erase(target - m_str.data());
+                return;
+            }
+
+            *target = '/';
+            ++target;
+            first = std::find_if_not(next_slash + 1, last, is_slash);
+        }
+    }
+
     Path Path::lexically_normal() const
     {
         // copied from microsoft/STL, stl/inc/filesystem:lexically_normal()

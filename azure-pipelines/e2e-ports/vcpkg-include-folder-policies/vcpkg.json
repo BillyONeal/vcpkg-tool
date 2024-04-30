@@ -1,0 +1,27 @@
+{
+  "name": "vcpkg-include-folder-policies",
+  "version": "1",
+  "features": {
+    "do-install": {
+      "description": "Put a header in include"
+    },
+    "do-install-debug": {
+      "description": "Put a header in debug/include"
+    },
+    "do-install-restricted": {
+      "description": "Put a restricted header in include"
+    },
+    "do-install-vcpkg-port-config": {
+      "description": "install a share/${PORT}/vcpkg-port-config.cmake file"
+    },
+    "policy-allow-restricted-headers": {
+      "description": "Turn on VCPKG_POLICY_ALLOW_RESTRICTED_HEADERS"
+    },
+    "policy-cmake-helper-port": {
+      "description": "Turn on VCPKG_POLICY_CMAKE_HELPER_PORT"
+    },
+    "policy-empty-include-folder": {
+      "description": "Turn on VCPKG_POLICY_EMPTY_INCLUDE_FOLDER"
+    }
+  }
+}

@@ -1,4 +1,12 @@
 {
   "name": "test-dll",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "features": {
+    "policy-skip-appcontainer-check": {
+      "description": "Turn on VCPKG_POLICY_SKIP_APPCONTAINER_CHECK"
+    },
+    "policy-skip-architecture-check": {
+      "description": "Turn on VCPKG_POLICY_SKIP_ARCHITECTURE_CHECK"
+    }
+  }
 }
