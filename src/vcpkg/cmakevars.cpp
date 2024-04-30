@@ -172,14 +172,14 @@ endfunction()
             }
 
             fmt::format_to(std::back_inserter(extraction_file),
-                           "vcpkg_get_tags(\"{}\" \"{}\" \"{}\" \"{}\")\n",
+                           FMT_COMPILE("vcpkg_get_tags(\"{}\" \"{}\" \"{}\" \"{}\")\n"),
                            spec.package_spec.name(),
                            featurelist,
                            emitted_triplets[spec.package_spec.triplet()],
                            spec_abi_setting.second);
         }
 
-        auto tags_path = paths.buildtrees() / fmt::format("{}.vcpkg_tags.cmake", tag_extract_id++);
+        auto tags_path = paths.buildtrees() / fmt::format(FMT_COMPILE("{}.vcpkg_tags.cmake"), tag_extract_id++);
         fs.write_contents_and_dirs(tags_path, extraction_file, VCPKG_LINE_INFO);
         return tags_path;
     }
@@ -241,12 +241,12 @@ endfunction()
             }
 
             fmt::format_to(std::back_inserter(extraction_file),
-                           "vcpkg_get_dep_info({} {})\n",
+                           FMT_COMPILE("vcpkg_get_dep_info({} {})\n"),
                            vcpkg_get_dep_info_name,
                            emitted_triplets[spec.triplet()]);
         }
 
-        auto dep_info_path = paths.buildtrees() / fmt::format("{}.vcpkg_dep_info.cmake", dep_info_id++);
+        auto dep_info_path = paths.buildtrees() / fmt::format(FMT_COMPILE("{}.vcpkg_dep_info.cmake"), dep_info_id++);
         fs.write_contents_and_dirs(dep_info_path, extraction_file, VCPKG_LINE_INFO);
         return dep_info_path;
     }

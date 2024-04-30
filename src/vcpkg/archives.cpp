@@ -108,7 +108,7 @@ namespace
         const auto maybe_output = flatten(cmd_execute_and_capture_output(Command{seven_zip}
                                                                              .string_arg("x")
                                                                              .string_arg(archive)
-                                                                             .string_arg(fmt::format("-o{}", to_path))
+                                                                             .string_arg(fmt::format(FMT_COMPILE("-o{}"), to_path))
                                                                              .string_arg("-y")),
                                           Tools::SEVEN_ZIP);
         if (!maybe_output)

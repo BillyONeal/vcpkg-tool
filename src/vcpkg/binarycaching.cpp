@@ -2394,7 +2394,7 @@ std::string vcpkg::format_version_for_nugetref(StringView version_text, StringVi
     {
         parsed_version.normalize();
         return fmt::format(
-            "{}.{}.{}-vcpkg{}", parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
+            FMT_COMPILE("{}.{}.{}-vcpkg{}"), parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
     }
 
     if (!version_text.empty() && version_text[0] == 'v')
@@ -2405,7 +2405,7 @@ std::string vcpkg::format_version_for_nugetref(StringView version_text, StringVi
     {
         parsed_version.normalize();
         return fmt::format(
-            "{}.{}.{}-vcpkg{}", parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
+            FMT_COMPILE("{}.{}.{}-vcpkg{}"), parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
     }
 
     return Strings::concat("0.0.0-vcpkg", abi_tag);

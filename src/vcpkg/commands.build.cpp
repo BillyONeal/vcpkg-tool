@@ -565,7 +565,7 @@ namespace vcpkg
         const auto target = to_vcvarsall_target(pre_build_info.cmake_system_name);
 
         return vcpkg::Command{"cmd"}.string_arg("/d").string_arg("/c").raw_arg(
-            fmt::format(R"("{}" {} {} {} {} 2>&1 <NUL)",
+            fmt::format(FMT_COMPILE(R"("{}" {} {} {} {} 2>&1 <NUL)"),
                         toolset.vcvarsall,
                         Strings::join(" ", toolset.vcvarsall_options),
                         arch,
@@ -657,7 +657,7 @@ namespace vcpkg
             {CMakeVariableCurrentPortDir, paths.scripts / FileDetectCompiler},
             {CMakeVariableCurrentBuildtreesDir, buildpath},
             {CMakeVariableCurrentPackagesDir,
-             paths.packages() / fmt::format("{}_{}", FileDetectCompiler, triplet.canonical_name())},
+             paths.packages() / fmt::format(FMT_COMPILE("{}_{}"), FileDetectCompiler, triplet.canonical_name())},
             // The detect_compiler "port" doesn't depend on the host triplet, so always natively compile
             {CMakeVariableHostTriplet, triplet.canonical_name()},
         };
@@ -763,7 +763,7 @@ namespace vcpkg
             if (cmake_debug->is_port_affected(port_name))
             {
                 variables.emplace_back("--debugger");
-                variables.emplace_back(fmt::format("--debugger-pipe={}", cmake_debug->value));
+                variables.emplace_back(fmt::format(FMT_COMPILE("--debugger-pipe={}"), cmake_debug->value));
             }
         }
 
@@ -771,7 +771,7 @@ namespace vcpkg
         {
             if (cmake_configure_debug->is_port_affected(port_name))
             {
-                variables.emplace_back(fmt::format("-DVCPKG_CMAKE_CONFIGURE_OPTIONS=--debugger;--debugger-pipe={}",
+                variables.emplace_back(fmt::format(FMT_COMPILE("-DVCPKG_CMAKE_CONFIGURE_OPTIONS=--debugger;--debugger-pipe={}"),
                                                    cmake_configure_debug->value));
             }
         }
@@ -1176,7 +1176,7 @@ namespace vcpkg
                 Checks::msg_exit_with_message(VCPKG_LINE_INFO, msgInvalidValueHashAdditionalFiles, msg::path = file);
             }
             abi_tag_entries.emplace_back(
-                fmt::format("additional_file_{}", i),
+                fmt::format(FMT_COMPILE("additional_file_{}"), i),
                 Hash::get_file_hash(fs, file, Hash::Algorithm::Sha256).value_or_exit(VCPKG_LINE_INFO));
         }
 
@@ -1312,7 +1312,7 @@ namespace vcpkg
                     {
                         Checks::unreachable(
                             VCPKG_LINE_INFO,
-                            fmt::format("Failed to find dependency abi for {} -> {}", action.spec, pspec));
+                            fmt::format(FMT_COMPILE("Failed to find dependency abi for {} -> {}"), action.spec, pspec));
                     }
 
                     dependency_abis.emplace_back(pspec.name(), status_it->get()->package.abi);
@@ -1653,7 +1653,7 @@ namespace vcpkg
             {
                 Command gh("gh");
                 gh.string_arg("issue").string_arg("create").string_arg("-R").string_arg("microsoft/vcpkg");
-                gh.string_arg("--title").string_arg(fmt::format("[{}] Build failure on {}", spec_name, triplet_name));
+                gh.string_arg("--title").string_arg(fmt::format(FMT_COMPILE("[{}] Build failure on {}"), spec_name, triplet_name));
                 gh.string_arg("--body-file").string_arg(path);
 
                 result.append(msgBuildTroubleshootingMessageGH).append_raw('\n');

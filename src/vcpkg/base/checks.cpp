@@ -11,12 +11,12 @@ namespace
 
     LocalizedString locale_invariant_lineinfo(const LineInfo& line_info)
     {
-        return LocalizedString::from_raw(fmt::format("{}: ", line_info));
+        return LocalizedString::from_raw(fmt::format(FMT_COMPILE("{}: "), line_info));
     }
 
 }
 
-std::string vcpkg::LineInfo::to_string() const { return fmt::format("{}({})", file_name, line_number); }
+std::string vcpkg::LineInfo::to_string() const {return fmt::format(FMT_COMPILE("{}({})"), file_name, line_number); }
 
 namespace vcpkg
 {

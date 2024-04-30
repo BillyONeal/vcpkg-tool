@@ -41,7 +41,7 @@ namespace vcpkg::Unicode
 
         vcpkg::Checks::msg_exit_with_message(
             VCPKG_LINE_INFO,
-            msg::format(msgInvalidCodePoint).append_raw(fmt::format("({:x})", static_cast<uint32_t>(code_point))));
+            msg::format(msgInvalidCodePoint).append_raw(fmt::format(FMT_COMPILE("({:x})"), static_cast<uint32_t>(code_point))));
     }
 
     static utf8_errc check_trailing(unsigned char code_unit) noexcept

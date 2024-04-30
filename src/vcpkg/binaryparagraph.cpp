@@ -148,17 +148,17 @@ namespace vcpkg
     {
         if (!this->is_feature() || this->feature == FeatureNameCore)
         {
-            return fmt::format("{}:{}", this->spec.name(), this->spec.triplet());
+            return fmt::format(FMT_COMPILE("{}:{}"), this->spec.name(), this->spec.triplet());
         }
 
-        return fmt::format("{}[{}]:{}", this->spec.name(), this->feature, this->spec.triplet());
+        return fmt::format(FMT_COMPILE("{}[{}]:{}"), this->spec.name(), this->feature, this->spec.triplet());
     }
 
     std::string BinaryParagraph::dir() const { return this->spec.dir(); }
 
     std::string BinaryParagraph::fullstem() const
     {
-        return fmt::format("{}_{}_{}", this->spec.name(), this->version.text, this->spec.triplet());
+        return fmt::format(FMT_COMPILE("{}_{}_{}"), this->spec.name(), this->version.text, this->spec.triplet());
     }
 
     bool operator==(const BinaryParagraph& lhs, const BinaryParagraph& rhs)

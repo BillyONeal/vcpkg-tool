@@ -114,9 +114,9 @@ namespace vcpkg
     LocalizedString format_environment_variable(StringView variable_name)
     {
 #if defined(_WIN32)
-        return LocalizedString::from_raw(fmt::format("%{}%", variable_name));
+        return LocalizedString::from_raw(fmt::format(FMT_COMPILE("%{}%"), variable_name));
 #else  // ^^^ _WIN32 / !_WIN32 vvv
-        return LocalizedString::from_raw(fmt::format("${}", variable_name));
+        return LocalizedString::from_raw(fmt::format(FMT_COMPILE("${}"), variable_name));
 #endif // ^^^ !_WIN32
     }
 
@@ -263,7 +263,7 @@ namespace vcpkg
             }
             msg::write_unlocalized_text(
                 Color::error,
-                fmt::format("INTERNAL ERROR: failed to format default format string for index {}\nformat string: {}\n",
+                fmt::format(FMT_COMPILE("INTERNAL ERROR: failed to format default format string for index {}\nformat string: {}\n"),
                             index,
                             default_format_string));
             Checks::exit_fail(VCPKG_LINE_INFO);
@@ -476,7 +476,7 @@ namespace vcpkg::msg
     Optional<std::string> get_locale_path(int LCID)
     {
         return get_language_tag(LCID).map(
-            [](StringLiteral tag) { return fmt::format("locales/messages.{}.json", tag); });
+            [](StringLiteral tag) { return fmt::format(FMT_COMPILE("locales/messages.{}.json"), tag); });
     }
 
     // LCIDs supported by VS:

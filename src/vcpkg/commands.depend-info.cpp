@@ -99,7 +99,7 @@ namespace
                 auto match = dependencies_map.find(dependency);
                 if (match == dependencies_map.end())
                 {
-                    Checks::unreachable(VCPKG_LINE_INFO, fmt::format("Not found in dependency graph: {}", dependency));
+                    Checks::unreachable(VCPKG_LINE_INFO, fmt::format(FMT_COMPILE("Not found in dependency graph: {}"), dependency));
                 }
 
                 if (match->second.depth < new_depth)
@@ -241,7 +241,7 @@ namespace vcpkg
         {
             for (const auto& dependency : package.dependencies)
             {
-                s.append(fmt::format(" {} --> {};", package.package, dependency));
+                s.append(fmt::format(FMT_COMPILE(" {} --> {};"), package.package, dependency));
             }
         }
 
@@ -517,7 +517,7 @@ namespace vcpkg
         {
             if (strategy.show_depth)
             {
-                msg::write_unlocalized_text(Color::error, fmt::format("({})", info.depth));
+                msg::write_unlocalized_text(Color::error, fmt::format(FMT_COMPILE("({})"), info.depth));
             }
 
             auto end_of_name = info.package.find(':');

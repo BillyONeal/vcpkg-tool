@@ -77,7 +77,7 @@ namespace vcpkg
             {
                 const double percent =
                     (static_cast<double>(total_downloaded_size) / static_cast<double>(*content_length)) * 100;
-                progress_sink.print(Color::none, fmt::format("{:.2f}%\n", percent));
+                progress_sink.print(Color::none, fmt::format(FMT_COMPILE("{:.2f}%\n"), percent));
                 last_write = now;
             }
         }
@@ -604,7 +604,7 @@ namespace vcpkg
     {
         auto cmd = Command{"curl"}.string_arg("-s").string_arg("-L");
         cmd.string_arg("-H").string_arg(
-            fmt::format("User-Agent: vcpkg/{}-{} (curl)", VCPKG_BASE_VERSION_AS_STRING, VCPKG_VERSION_AS_STRING));
+            fmt::format(FMT_COMPILE("User-Agent: vcpkg/{}-{} (curl)"), VCPKG_BASE_VERSION_AS_STRING, VCPKG_VERSION_AS_STRING));
 
         for (auto&& header : headers)
         {
@@ -805,7 +805,7 @@ namespace vcpkg
             const auto maybe_parsed = try_parse_curl_progress_data(line);
             if (const auto parsed = maybe_parsed.get())
             {
-                progress_sink.print(Color::none, fmt::format("{}%\n", parsed->total_percent));
+                progress_sink.print(Color::none, fmt::format(FMT_COMPILE("{}%\n"), parsed->total_percent));
             }
             else
             {
@@ -922,7 +922,7 @@ namespace vcpkg
             {
                 if (urls.size() != 0)
                 {
-                    const auto download_path_part_path = download_path + fmt::format(".{}.part", get_process_id());
+                    const auto download_path_part_path = download_path + fmt::format(FMT_COMPILE(".{}.part"), get_process_id());
                     const auto escaped_url = Command(urls[0]).extract();
                     const auto escaped_sha512 = Command(*hash).extract();
                     const auto escaped_dpath = Command(download_path_part_path).extract();

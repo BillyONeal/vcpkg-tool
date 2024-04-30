@@ -62,7 +62,7 @@ namespace vcpkg
         LocalizedString res;
         if (!origin.empty())
         {
-            res.append_raw(fmt::format("{}:{}:{}: ", origin, location.row, location.column));
+            res.append_raw(fmt::format(FMT_COMPILE("{}:{}:{}: "), origin, location.row, location.column));
         }
 
         res.append_raw(kind == MessageKind::Warning ? WarningPrefix : ErrorPrefix);
@@ -198,7 +198,7 @@ namespace vcpkg
             auto& res = m_messages.error.emplace();
             if (auto origin = m_origin.get())
             {
-                res.append_raw(fmt::format("{}:{}:{}: ", *origin, loc.row, loc.column));
+                res.append_raw(fmt::format(FMT_COMPILE("{}:{}:{}: "), *origin, loc.row, loc.column));
             }
 
             res.append_raw(ErrorPrefix);

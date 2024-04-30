@@ -65,7 +65,7 @@ namespace vcpkg
 
     std::string BundleSettings::to_string() const
     {
-        return fmt::format("readonly={}, usegitregistry={}, embeddedsha={}, deployment={}, vsversion={}",
+        return fmt::format(FMT_COMPILE("readonly={}, usegitregistry={}, embeddedsha={}, deployment={}, vsversion={}"),
                            read_only,
                            use_git_registry,
                            embedded_git_sha.value_or("nullopt"),

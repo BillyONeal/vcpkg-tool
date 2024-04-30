@@ -50,7 +50,7 @@ namespace
     {
         const auto full_port_name = [](const Port& port) {
             return fmt::format(
-                "{}[{}]:{}", port.port_name, Strings::join(",", port.features), port.triplet.to_string());
+                FMT_COMPILE("{}[{}]:{}"), port.port_name, Strings::join(",", port.features), port.triplet.to_string());
         };
 
         if (reasons.size() == 0)

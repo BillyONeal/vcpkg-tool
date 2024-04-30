@@ -29,8 +29,7 @@ namespace
 
     std::vector<std::string> combine_port_with_triplets(StringView port, View<TripletFile> triplets)
     {
-        return Util::fmap(triplets,
-                          [&](const TripletFile& triplet) { return fmt::format("{}:{}", port, triplet.name); });
+        return Util::fmap(triplets, [&](const TripletFile& triplet) { return fmt::format(FMT_COMPILE("{}:{}"), port, triplet.name); });
     }
 } // unnamed namespace
 

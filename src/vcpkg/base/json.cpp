@@ -342,7 +342,7 @@ namespace vcpkg::Json
         if (contains(key))
         {
             Checks::unreachable(VCPKG_LINE_INFO,
-                                fmt::format("attempted to insert duplicate key {} into JSON object", key));
+                                fmt::format(FMT_COMPILE("attempted to insert duplicate key {} into JSON object"), key));
         }
 
         return underlying_.emplace_back(key.to_string(), std::move(value)).second;
@@ -352,7 +352,7 @@ namespace vcpkg::Json
         if (contains(key))
         {
             Checks::unreachable(VCPKG_LINE_INFO,
-                                fmt::format("attempted to insert duplicate key {} into JSON object", key));
+                                fmt::format(FMT_COMPILE("attempted to insert duplicate key {} into JSON object"), key));
         }
 
         return underlying_.emplace_back(key.to_string(), value).second;

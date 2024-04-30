@@ -343,7 +343,7 @@ namespace
 #elif defined(__linux__)
     Optional<ProcessStat> try_get_process_stat_by_pid(int pid)
     {
-        auto filepath = fmt::format("/proc/{}/stat", pid);
+        auto filepath = fmt::format(FMT_COMPILE("/proc/{}/stat"), pid);
         auto maybe_contents = real_filesystem.try_read_contents(filepath);
         if (auto contents = maybe_contents.get())
         {
@@ -452,7 +452,9 @@ namespace vcpkg
     }
     CMakeVariable::CMakeVariable(const std::string& var) : s(var) { }
 
-    std::string format_cmake_variable(StringView key, StringView value) { return fmt::format("-D{}={}", key, value); }
+    std::string format_cmake_variable(StringView key, StringView value)
+    { return fmt::format(FMT_COMPILE("-D{}={}"), key, value);
+    }
 
     Command make_basic_cmake_cmd(const Path& cmake_tool_path,
                                  const Path& cmake_script,
@@ -800,7 +802,7 @@ namespace
                                            DWORD dwCreationFlags,
                                            STARTUPINFOEXW& startup_info) noexcept
     {
-        Debug::print(fmt::format("{}: CreateProcessW({})\n", debug_id, command_line));
+        Debug::print(fmt::format(FMT_COMPILE("{}: CreateProcessW({})\n"), debug_id, command_line));
 
         // Flush stdout before launching external process
         fflush(nullptr);
@@ -969,7 +971,7 @@ namespace
             static CreatorOnlySecurityDescriptor creator_owner_sd;
             SECURITY_ATTRIBUTES namedPipeSa{sizeof(SECURITY_ATTRIBUTES), creator_owner_sd.sd, FALSE};
             std::wstring pipe_name{Strings::to_utf16(
-                fmt::format(R"(\\.\pipe\local\vcpkg-to-stdin-A8B4F218-4DB1-4A3E-8E5B-C41F1633F627-{}-{})",
+                fmt::format(FMT_COMPILE(R"(\\.\pipe\local\vcpkg-to-stdin-A8B4F218-4DB1-4A3E-8E5B-C41F1633F627-{}-{})"),
                             GetCurrentProcessId(),
                             debug_id))};
             write_pipe = CreateNamedPipeW(pipe_name.c_str(),
@@ -1049,7 +1051,7 @@ namespace
                             // OK, child didn't want all the data
                             break;
                         default:
-                            Debug::print(fmt::format("{}: Unexpected error writing to stdin of a child process: {:X}\n",
+                            Debug::print(fmt::format(FMT_COMPILE("{}: Unexpected error writing to stdin of a child process: {:X}\n"),
                                                      status->debug_id,
                                                      dwErrorCode));
                             break;
@@ -1075,12 +1077,12 @@ namespace
                     if (last_error)
                     {
                         Debug::print(
-                            fmt::format("{}: Unexpected WriteFileEx partial success: {:X}\n", debug_id, last_error));
+                            fmt::format(FMT_COMPILE("{}: Unexpected WriteFileEx partial success: {:X}\n"), debug_id, last_error));
                     }
                 }
                 else
                 {
-                    Debug::print(fmt::format("{}: stdin WriteFileEx failure: {:x}\n", debug_id, GetLastError()));
+                    Debug::print(fmt::format(FMT_COMPILE("{}: stdin WriteFileEx failure: {:x}\n"), debug_id, GetLastError()));
                     close_handle_mark_invalid(stdin_pipe.write_pipe);
                 }
             }
@@ -1102,7 +1104,7 @@ namespace
                             DWORD last_error = GetLastError();
                             if (last_error != ERROR_BROKEN_PIPE)
                             {
-                                Debug::print(fmt::format("{}: Writing to stdout failed: {:x}\n", debug_id, last_error));
+                                Debug::print(fmt::format(FMT_COMPILE("{}: Writing to stdout failed: {:x}\n"), debug_id, last_error));
                             }
 
                             close_handle_mark_invalid(stdout_pipe.read_pipe);
@@ -1115,7 +1117,7 @@ namespace
                     case WAIT_FAILED:
                         vcpkg::Checks::unreachable(
                             VCPKG_LINE_INFO,
-                            fmt::format("{}: Waiting for stdout failed: {:x}", debug_id, GetLastError()));
+                            fmt::format(FMT_COMPILE("{}: Waiting for stdout failed: {:x}"), debug_id, GetLastError()));
                         break;
                     default: vcpkg::Checks::unreachable(VCPKG_LINE_INFO); break;
                 }
@@ -1126,14 +1128,14 @@ namespace
             if (stdin_pipe.write_pipe != INVALID_HANDLE_VALUE)
             {
                 // this block probably never runs
-                Debug::print(fmt::format("{}: stdin write outlived the child process?\n", debug_id));
+                Debug::print(fmt::format(FMT_COMPILE("{}: stdin write outlived the child process?\n"), debug_id));
                 if (CancelIo(stdin_pipe.write_pipe))
                 {
                     drain_apcs();
                 }
                 else
                 {
-                    Debug::print(fmt::format("{}: Cancelling stdin write failed: {:x}\n", debug_id, GetLastError()));
+                    Debug::print(fmt::format(FMT_COMPILE("{}: Cancelling stdin write failed: {:x}\n"), debug_id, GetLastError()));
                 }
             }
 
@@ -1318,7 +1320,7 @@ namespace
 {
     void debug_print_cmd_execute_background_failure(int32_t debug_id, const LocalizedString& error)
     {
-        Debug::print(fmt::format("{}: cmd_execute_background() failed: {}\n", debug_id, error));
+        Debug::print(fmt::format(FMT_COMPILE("{}: cmd_execute_background() failed: {}\n"), debug_id, error));
     }
 }
 
@@ -1327,7 +1329,7 @@ namespace vcpkg
     void cmd_execute_background(const Command& cmd_line)
     {
         const auto debug_id = debug_id_counter.fetch_add(1, std::memory_order_relaxed);
-        Debug::print(fmt::format("{}: cmd_execute_background: {}\n", debug_id, cmd_line.command_line()));
+        Debug::print(fmt::format(FMT_COMPILE("{}: cmd_execute_background: {}\n"), debug_id, cmd_line.command_line()));
 #if defined(_WIN32)
         ProcessInfo process_info;
         STARTUPINFOEXW startup_info_ex;
@@ -1443,7 +1445,7 @@ namespace vcpkg
         real_command_line_builder.raw_arg(cmd.command_line());
 
         std::string real_command_line = std::move(real_command_line_builder).extract();
-        Debug::print(fmt::format("{}: system({})\n", debug_id, real_command_line));
+        Debug::print(fmt::format(FMT_COMPILE("{}: system({})\n"), debug_id, real_command_line));
         fflush(nullptr);
 
         return system(real_command_line.c_str());
@@ -1465,12 +1467,12 @@ namespace vcpkg
         g_subprocess_stats += elapsed;
         if (auto result = maybe_result.get())
         {
-            Debug::print(fmt::format("{}: cmd_execute() returned {} after {} us\n", debug_id, *result, elapsed));
+            Debug::print(fmt::format(FMT_COMPILE("{}: cmd_execute() returned {} after {} us\n"), debug_id, *result, elapsed));
         }
         else
         {
             Debug::print(
-                fmt::format("{}: cmd_execute() returned ({}) after {} us\n", debug_id, maybe_result.error(), elapsed));
+                fmt::format(FMT_COMPILE("{}: cmd_execute() returned ({}) after {} us\n"), debug_id, maybe_result.error(), elapsed));
         }
 
         return maybe_result;
@@ -1671,7 +1673,7 @@ namespace
         const auto unwrapped_to_execute = cmd.command_line();
         actual_cmd_line.append(unwrapped_to_execute.data(), unwrapped_to_execute.size());
 
-        Debug::print(fmt::format("{}: execute_process({})\n", debug_id, actual_cmd_line));
+        Debug::print(fmt::format(FMT_COMPILE("{}: execute_process({})\n"), debug_id, actual_cmd_line));
         // Flush stdout before launching external process
         fflush(stdout);
 
@@ -1865,7 +1867,7 @@ namespace vcpkg
         g_subprocess_stats += elapsed;
         if (const auto exit_code = maybe_exit_code.get())
         {
-            Debug::print(fmt::format("{}: cmd_execute_and_stream_data() returned {} after {:8} us\n",
+            Debug::print(fmt::format(FMT_COMPILE("{}: cmd_execute_and_stream_data() returned {} after {:8} us\n"),
                                      debug_id,
                                      *exit_code,
                                      static_cast<unsigned long long>(elapsed)));

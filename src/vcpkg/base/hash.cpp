@@ -583,7 +583,7 @@ namespace vcpkg::Hash
             } while (!file.eof());
 
             auto result_hash = hasher.get_hash();
-            Debug::print(fmt::format("{} has hash {}\n", path, result_hash));
+            Debug::print(fmt::format(FMT_COMPILE("{} has hash {}\n"), path, result_hash));
             return result_hash;
         });
     }

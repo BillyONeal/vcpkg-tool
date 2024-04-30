@@ -253,7 +253,7 @@ namespace vcpkg::Json
             auto res = this->get(key);
             if (res == nullptr)
             {
-                Checks::unreachable(VCPKG_LINE_INFO, fmt::format("JSON object missing key {}", key));
+                Checks::unreachable(VCPKG_LINE_INFO, fmt::format(FMT_COMPILE("JSON object missing key {}"), key));
             }
 
             return *res;
@@ -263,7 +263,7 @@ namespace vcpkg::Json
             auto res = this->get(key);
             if (res == nullptr)
             {
-                Checks::unreachable(VCPKG_LINE_INFO, fmt::format("JSON object missing key {}", key));
+                Checks::unreachable(VCPKG_LINE_INFO, fmt::format(FMT_COMPILE("JSON object missing key {}"), key));
             }
 
             return *res;

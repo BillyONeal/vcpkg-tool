@@ -55,7 +55,7 @@ Messages in vcpkg are written in American English. They should not contain:
   - `"internal error: "`, instead use `msgInternalErrorMessage`.
 
 They should also not be simple, locale-invariant messages -- something like, for example,
-`{file}:{line}:{column}: ` should be done with `LocalizedString::from_raw(fmt::format("{}:{}:{}", file, line, column))`.
+`{file}:{line}:{column}: ` should be done with `LocalizedString::from_raw(fmt::format(FMT_COMPILE("{}:{}:{}"), file, line, column))`.
 
 ## Using Messages
 

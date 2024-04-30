@@ -36,7 +36,7 @@ namespace Catch
     {
         static std::string convert(vcpkg::FullPackageSpec const& value)
         {
-            return fmt::format("{}[{}]:{}",
+            return fmt::format(FMT_COMPILE("{}[{}]:{}"),
                                value.package_spec.name(),
                                vcpkg::Strings::join(",", value.features),
                                value.package_spec.triplet());
@@ -48,7 +48,7 @@ namespace Catch
     {
         static std::string convert(vcpkg::FeatureSpec const& value)
         {
-            return fmt::format("{}[{}]:{}", value.port(), value.feature(), value.triplet());
+            return fmt::format(FMT_COMPILE("{}[{}]:{}"), value.port(), value.feature(), value.triplet());
         }
     };
 
