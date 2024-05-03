@@ -215,19 +215,6 @@ namespace vcpkg
         }
     }
 
-    static std::remove_const_t<decltype(ALL_POLICIES)> generate_all_policies()
-    {
-        std::remove_const_t<decltype(ALL_POLICIES)> res{};
-        for (size_t i = 0; i < res.size(); ++i)
-        {
-            res[i] = static_cast<BuildPolicy>(i);
-        }
-
-        return res;
-    }
-
-    decltype(ALL_POLICIES) ALL_POLICIES = generate_all_policies();
-
     StringLiteral to_string_view(BuildPolicy policy)
     {
         switch (policy)
@@ -1744,8 +1731,9 @@ namespace vcpkg
         }
 
         std::unordered_map<BuildPolicy, bool> policies;
-        for (const auto& policy : ALL_POLICIES)
+        for (size_t policy_idx = 0; policy_idx < static_cast<size_t>(BuildPolicy::COUNT); ++policy_idx)
         {
+            auto policy = static_cast<BuildPolicy>(policy_idx);
             const auto setting = parser.optional_field_or_empty(to_string_view(policy));
             if (setting.empty()) continue;
             if (setting == "enabled")

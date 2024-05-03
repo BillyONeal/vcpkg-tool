@@ -49,6 +49,11 @@ namespace vcpkg::Util
         {
             return std::find(container.begin(), container.end(), item) != container.end();
         }
+        template<class Vec, class Key, size_t N>
+        bool contains(const Vec (&container)[N], const Key& item)
+        {
+            return std::find(container, container + N, item) != container + N;
+        }
         template<class T>
         std::vector<T> concat(View<T> r1, View<T> r2)
         {
@@ -343,7 +348,7 @@ namespace vcpkg::Util
     template<class ForwardIt1, class ForwardRange2>
     void search(ForwardIt1 first, ForwardIt1 last, const char*) = delete;
 
-    // 0th is the first occurence
+    // 0th is the first occurrence
     // so find_nth({1, 2, 1, 3, 1, 4}, 1, 2)
     // returns the 1 before the 4
     template<class InputIt, class V>
@@ -367,7 +372,7 @@ namespace vcpkg::Util
         return find_nth(begin(r), end(r), v, n);
     }
 
-    // 0th is the last occurence
+    // 0th is the last occurrence
     // so find_nth({1, 2, 1, 3, 1, 4}, 1, 2)
     // returns the 1 before the 2
     template<class R, class V>

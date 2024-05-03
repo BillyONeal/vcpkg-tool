@@ -15,7 +15,7 @@
 
 namespace vcpkg
 {
-    constexpr static std::array<StringLiteral, 4> windows_system_names = {
+    constexpr static StringLiteral windows_system_names[] = {
         "",
         "Windows",
         "WindowsStore",
@@ -49,9 +49,9 @@ namespace vcpkg
 
     static View<StringLiteral> get_outdated_dynamic_crts(const Optional<std::string>& toolset_version)
     {
-        static constexpr std::array<StringLiteral, 13> V_NO_120 = {OUTDATED_V_NO_120};
+        static constexpr StringLiteral V_NO_120[] = {OUTDATED_V_NO_120};
 
-        static constexpr std::array<StringLiteral, 17> V_NO_MSVCRT = {
+        static constexpr StringLiteral V_NO_MSVCRT[] = {
             OUTDATED_V_NO_120,
             StringLiteral{"msvcp120.dll"},
             StringLiteral{"msvcp120_clr0400.dll"},

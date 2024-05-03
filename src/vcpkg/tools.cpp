@@ -17,12 +17,24 @@
 #include <vcpkg/tools.test.h>
 #include <vcpkg/versions.h>
 
+#include <algorithm>
 #include <regex>
 
 namespace vcpkg
 {
+    bool operator==(const VersionArray& lhs, const VersionArray& rhs) noexcept
+    {
+        return std::equal(lhs.version, lhs.version + 3, rhs.version);
+    }
+
+    std::string to_string(const VersionArray& version_array)
+    {
+        const auto& version = version_array.version;
+        return fmt::format(FMT_COMPILE("{}.{}.{}"), version[0], version[1], version[2]);
+    }
+
     // /\d+\.\d+(\.\d+)?/
-    Optional<std::array<int, 3>> parse_tool_version_string(StringView string_version)
+    Optional<VersionArray> parse_tool_version_string(StringView string_version)
     {
         // first, find the beginning of the version
         auto first = string_version.begin();
@@ -58,7 +70,7 @@ namespace vcpkg
         auto d3 = Strings::strto<int>(parsed_version.patch);
         if (!d3.has_value()) return {};
 
-        return std::array<int, 3>{*d1.get(), *d2.get(), *d3.get()};
+        return VersionArray{{*d1.get(), *d2.get(), *d3.get()}};
     }
 
     static Optional<ToolData> parse_tool_data_from_xml(StringView XML, StringView XML_PATH, StringView tool)
@@ -111,14 +123,14 @@ namespace vcpkg
         const std::string sha512 = Strings::find_exactly_one_enclosed(tool_data, "<sha512>", "</sha512>").to_string();
         auto archive_name = Strings::find_at_most_one_enclosed(tool_data, "<archiveName>", "</archiveName>");
 
-        const Optional<std::array<int, 3>> version = parse_tool_version_string(version_as_string);
+        const Optional<VersionArray> version = parse_tool_version_string(version_as_string);
         Checks::msg_check_exit(VCPKG_LINE_INFO,
                                version.has_value(),
                                msgFailedToParseVersionXML,
                                msg::tool_name = tool,
                                msg::version = version_as_string);
 
-        Path tool_dir_name = fmt::format("{}-{}-{}", tool, version_as_string, os);
+        Path tool_dir_name = fmt::format(FMT_COMPILE("{}-{}-{}"), tool, version_as_string, os);
         Path download_subpath;
         if (auto a = archive_name.get())
         {
@@ -185,7 +197,7 @@ namespace vcpkg
         virtual StringView tool_data_name() const = 0;
         /// \returns The stem of the executable to search PATH for, or empty string if tool can't be searched
         virtual std::vector<StringView> system_exe_stems() const { return std::vector<StringView>{}; }
-        virtual std::array<int, 3> default_min_version() const = 0;
+        virtual VersionArray default_min_version() const = 0;
         /// \returns \c true if the tool's version is included in package ABI calculations. ABI sensitive tools will be
         /// pinned to exact versions if \c --x-abi-tools-use-exact-versions is passed.
         virtual bool is_abi_sensitive() const = 0;
@@ -224,7 +236,7 @@ namespace vcpkg
 
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return m_tool_data_name; }
-        virtual std::array<int, 3> default_min_version() const override { return {0}; }
+        virtual VersionArray default_min_version() const override { return {0}; }
         virtual bool ignore_version() const override { return true; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path&) const override
@@ -238,7 +250,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return true; }
         virtual StringView tool_data_name() const override { return Tools::CMAKE; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::CMAKE}; }
-        virtual std::array<int, 3> default_min_version() const override { return {3, 17, 1}; }
+        virtual VersionArray default_min_version() const override { return {3, 17, 1}; }
 
 #if defined(_WIN32)
         virtual void add_system_paths(const ReadOnlyFilesystem&, std::vector<Path>& out_candidate_paths) const override
@@ -277,7 +289,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::NINJA; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::NINJA}; }
-        virtual std::array<int, 3> default_min_version() const override { return {3, 5, 1}; }
+        virtual VersionArray default_min_version() const override { return {3, 5, 1}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
@@ -291,7 +303,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::NUGET; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::NUGET}; }
-        virtual std::array<int, 3> default_min_version() const override { return {4, 6, 2}; }
+        virtual VersionArray default_min_version() const override { return {4, 6, 2}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache& cache,
                                                    MessageSink& status_sink,
@@ -326,7 +338,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::ARIA2; }
         virtual std::vector<StringView> system_exe_stems() const override { return {"aria2c"}; }
-        virtual std::array<int, 3> default_min_version() const override { return {1, 33, 1}; }
+        virtual VersionArray default_min_version() const override { return {1, 33, 1}; }
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::ARIA2, exe_path, Command(exe_path).string_arg("--version"))
@@ -344,7 +356,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::NODE; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::NODE}; }
-        virtual std::array<int, 3> default_min_version() const override { return {16, 12, 0}; }
+        virtual VersionArray default_min_version() const override { return {16, 12, 0}; }
 
 #if defined(_WIN32)
         virtual void add_system_paths(const ReadOnlyFilesystem&, std::vector<Path>& out_candidate_paths) const override
@@ -371,7 +383,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::GIT; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::GIT}; }
-        virtual std::array<int, 3> default_min_version() const override { return {2, 7, 4}; }
+        virtual VersionArray default_min_version() const override { return {2, 7, 4}; }
 
 #if defined(_WIN32)
         virtual void add_system_paths(const ReadOnlyFilesystem&, std::vector<Path>& out_candidate_paths) const override
@@ -401,7 +413,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::MONO; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::MONO}; }
-        virtual std::array<int, 3> default_min_version() const override { return {0, 0, 0}; }
+        virtual VersionArray default_min_version() const override { return {0, 0, 0}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
@@ -432,7 +444,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::GSUTIL; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::GSUTIL}; }
-        virtual std::array<int, 3> default_min_version() const override { return {4, 56, 0}; }
+        virtual VersionArray default_min_version() const override { return {4, 56, 0}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
@@ -450,7 +462,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::AWSCLI; }
         virtual std::vector<StringView> system_exe_stems() const override { return {Tools::AWSCLI}; }
-        virtual std::array<int, 3> default_min_version() const override { return {2, 4, 4}; }
+        virtual VersionArray default_min_version() const override { return {2, 4, 4}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
@@ -467,7 +479,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::COSCLI; }
         virtual std::vector<StringView> system_exe_stems() const override { return {"cos"}; }
-        virtual std::array<int, 3> default_min_version() const override { return {0, 11, 0}; }
+        virtual VersionArray default_min_version() const override { return {0, 11, 0}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
@@ -484,7 +496,7 @@ namespace vcpkg
     {
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return "installerbase"; }
-        virtual std::array<int, 3> default_min_version() const override { return {0, 0, 0}; }
+        virtual VersionArray default_min_version() const override { return {0, 0, 0}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
@@ -507,7 +519,7 @@ namespace vcpkg
         }
         virtual StringView tool_data_name() const override { return Tools::POWERSHELL_CORE; }
         virtual std::vector<StringView> system_exe_stems() const override { return {"pwsh"}; }
-        virtual std::array<int, 3> default_min_version() const override { return {7, 0, 3}; }
+        virtual VersionArray default_min_version() const override { return {7, 0, 3}; }
 
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
@@ -525,7 +537,7 @@ namespace vcpkg
         virtual bool is_abi_sensitive() const override { return false; }
         virtual StringView tool_data_name() const override { return Tools::PYTHON3; }
         virtual std::vector<StringView> system_exe_stems() const override { return {"python3", "py3", "python", "py"}; }
-        virtual std::array<int, 3> default_min_version() const override { return {3, 5, 0}; } // 3.5 added -m venv
+        virtual VersionArray default_min_version() const override { return {3, 5, 0}; } // 3.5 added -m venv
 
 #if defined(_WIN32)
         void add_system_paths_impl(const ReadOnlyFilesystem& fs,
@@ -630,7 +642,7 @@ namespace vcpkg
         }
 
         /**
-         * @param accept_version Callback that accepts a std::array<int,3> and returns true if the version is accepted
+         * @param accept_version Callback that accepts a VersionArray and returns true if the version is accepted
          * @param log_candidate Callback that accepts Path, ExpectedL<std::string> maybe_version. Gets called on every
          * existing candidate.
          */
@@ -662,8 +674,7 @@ namespace vcpkg
 
         Path download_tool(const ToolData& tool_data, MessageSink& status_sink) const
         {
-            const std::array<int, 3>& version = tool_data.version;
-            const std::string version_as_string = fmt::format("{}.{}.{}", version[0], version[1], version[2]);
+            const std::string version_as_string = to_string(tool_data.version);
             Checks::msg_check_maybe_upgrade(VCPKG_LINE_INFO,
                                             !tool_data.url.empty(),
                                             msgToolOfVersionXNotFound,
@@ -756,7 +767,7 @@ namespace vcpkg
             const bool ignore_version = env_force_system_binaries || tool.ignore_version();
 
             std::vector<Path> candidate_paths;
-            std::array<int, 3> min_version = tool.default_min_version();
+            VersionArray min_version = tool.default_min_version();
 
             if (auto tool_data = maybe_tool_data.get())
             {
@@ -802,16 +813,19 @@ namespace vcpkg
                     status_sink,
                     tool,
                     candidate_paths,
-                    [&min_version, exact_version](const std::array<int, 3>& actual_version) {
+                    [&min_version, exact_version](const VersionArray& wrapped_version) {
+                        const auto& mv = min_version.version;
+                        const auto& actual_version = wrapped_version.version;
                         if (exact_version)
                         {
-                            return actual_version[0] == min_version[0] && actual_version[1] == min_version[1] &&
-                                   actual_version[2] == min_version[2];
+                            return actual_version[0] == mv[0] && actual_version[1] == mv[1] &&
+                                   actual_version[2] == mv[2];
                         }
-                        return actual_version[0] > min_version[0] ||
-                               (actual_version[0] == min_version[0] && actual_version[1] > min_version[1]) ||
-                               (actual_version[0] == min_version[0] && actual_version[1] == min_version[1] &&
-                                actual_version[2] >= min_version[2]);
+                        // clang-format off
+                        return actual_version[0] > mv[0]
+                            || (actual_version[0] == mv[0] && actual_version[1] > mv[1])
+                            || (actual_version[0] == mv[0] && actual_version[1] == mv[1] && actual_version[2] >= mv[2]);
+                        // clang-format on
                     },
                     [&](const auto& path, const ExpectedL<std::string>& maybe_version) {
                         considered_versions += fmt::format("{}: {}\n",
@@ -856,7 +870,7 @@ namespace vcpkg
             if (!considered_versions.empty())
             {
                 s.append_raw('\n')
-                    .append(msgConsideredVersions, msg::version = fmt::join(min_version, "."))
+                    .append(msgConsideredVersions, msg::version = to_string(min_version))
                     .append_raw('\n')
                     .append_raw(considered_versions);
             }
