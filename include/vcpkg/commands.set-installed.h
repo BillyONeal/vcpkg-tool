@@ -22,6 +22,12 @@ namespace vcpkg
         Yes
     };
 
+    enum class PrintLicenseReport : bool
+    {
+        No,
+        Yes
+    };
+
     extern const CommandMetadata CommandSetInstalledMetadata;
 
     /**
@@ -40,6 +46,7 @@ namespace vcpkg
                                            const CMakeVars::CMakeVarProvider& cmake_vars,
                                            ActionPlan action_plan,
                                            DryRun dry_run,
+                                           PrintLicenseReport print_license_report,
                                            const Optional<Path>& maybe_pkgconfig,
                                            bool include_manifest_in_github_issue);
     void command_set_installed_and_exit(const VcpkgCmdArguments& args,

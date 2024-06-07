@@ -263,6 +263,7 @@ namespace vcpkg
     inline constexpr StringLiteral SwitchPrefabMinSdk = "prefab-min-sdk";
     inline constexpr StringLiteral SwitchPrefabTargetSdk = "prefab-target-sdk";
     inline constexpr StringLiteral SwitchPrefabVersion = "prefab-version";
+    inline constexpr StringLiteral SwitchPrintLicenses = "print-licenses";
     inline constexpr StringLiteral SwitchPrintmetrics = "printmetrics";
     inline constexpr StringLiteral SwitchPurge = "purge";
     inline constexpr StringLiteral SwitchPython = "python";

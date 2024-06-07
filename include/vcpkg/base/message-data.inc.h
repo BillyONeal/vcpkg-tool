@@ -1609,6 +1609,10 @@ DECLARE_MESSAGE(HelpTxtOptNoDownloads, (), "", "Does not download new sources")
 DECLARE_MESSAGE(HelpTxtOptNoUsage, (), "", "Does not print CMake usage information after install")
 DECLARE_MESSAGE(HelpTxtOptOnlyBinCache, (), "", "Fails if cached binaries are not available")
 DECLARE_MESSAGE(HelpTxtOptOnlyDownloads, (), "", "Makes best-effort attempt to download sources without building")
+DECLARE_MESSAGE(HelpTxtOptPrintLicenses,
+                (),
+                "",
+                "Print a report of licenses of ports installed by this install invocation")
 DECLARE_MESSAGE(HelpTxtOptRecurse, (), "", "Allows removal of packages as part of installation")
 DECLARE_MESSAGE(HelpTxtOptUseAria2, (), "", "Uses aria2 to perform download tasks")
 DECLARE_MESSAGE(HelpTxtOptUseHeadVersion,
@@ -1967,6 +1971,18 @@ DECLARE_MESSAGE(LicenseExpressionUnknownLicense,
                 (msg::value),
                 "Example of {value} is 'unknownlicense'",
                 "Unknown license identifier '{value}'. Known values are listed at https://spdx.org/licenses/")
+DECLARE_MESSAGE(LicenseReportHeader,
+                (),
+                "",
+                "The packages to install are declared with the following SPDX licenses. See https://spdx.org/licenses/ "
+                "for more information.")
+DECLARE_MESSAGE(
+    LicenseReportUnknownLicensesNotice,
+    (),
+    "",
+    "Some packages do not declare a license or explicitly note that their license is not directly "
+    "expressible as an SPDX license expression. Inspect installed/${{TRIPLET}}/share/${{PORT}}/copyright files "
+    "installed for more information.")
 DECLARE_MESSAGE(LinkageDynamicDebug, (), "", "Dynamic Debug (/MDd)")
 DECLARE_MESSAGE(LinkageDynamicRelease, (), "", "Dynamic Release (/MD)")
 DECLARE_MESSAGE(LinkageStaticDebug, (), "", "Static Debug (/MTd)")

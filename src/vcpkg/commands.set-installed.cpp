@@ -26,6 +26,7 @@ namespace
         {SwitchKeepGoing, msgHelpTxtOptKeepGoing},
         {SwitchEnforcePortChecks, msgHelpTxtOptEnforcePortChecks},
         {SwitchAllowUnsupported, msgHelpTxtOptAllowUnsupportedPort},
+        {SwitchPrintLicenses, msgHelpTxtOptPrintLicenses},
     };
 
     constexpr CommandSetting INSTALL_SETTINGS[] = {
@@ -168,6 +169,7 @@ namespace vcpkg
                                            const CMakeVars::CMakeVarProvider& cmake_vars,
                                            ActionPlan action_plan,
                                            DryRun dry_run,
+                                           PrintLicenseReport print_license_report,
                                            const Optional<Path>& maybe_pkgconfig,
                                            bool include_manifest_in_github_issue)
     {
@@ -211,7 +213,6 @@ namespace vcpkg
         adjust_action_plan_to_status_db(action_plan, status_db);
 
         print_plan(action_plan, true, paths.builtin_ports_directory());
-
         if (auto p_pkgsconfig = maybe_pkgconfig.get())
         {
             auto pkgsconfig_path = paths.original_cwd / *p_pkgsconfig;
@@ -253,6 +254,11 @@ namespace vcpkg
             }
         }
 
+        if (print_license_report == PrintLicenseReport::Yes)
+        {
+            msg::println(format_license_report(action_plan.install_actions));
+        }
+
         if (build_options.print_usage == PrintUsage::Yes)
         {
             // Note that this differs from the behavior of `vcpkg install` in that it will print usage information for
@@ -283,7 +289,10 @@ namespace vcpkg
                 .value_or_exit(VCPKG_LINE_INFO);
         });
 
-        const bool dry_run = Util::Sets::contains(options.switches, SwitchDryRun);
+        const auto dry_run = Util::Sets::contains(options.switches, SwitchDryRun) ? DryRun::Yes : DryRun::No;
+        const auto print_license_report = Util::Sets::contains(options.switches, SwitchPrintLicenses)
+                                              ? PrintLicenseReport::Yes
+                                              : PrintLicenseReport::No;
         const auto only_downloads =
             Util::Sets::contains(options.switches, SwitchOnlyDownloads) ? OnlyDownloads::Yes : OnlyDownloads::No;
         const auto keep_going =
@@ -341,7 +350,8 @@ namespace vcpkg
                                           build_options,
                                           *cmake_vars,
                                           std::move(action_plan),
-                                          dry_run ? DryRun::Yes : DryRun::No,
+                                          dry_run,
+                                          print_license_report,
                                           pkgsconfig,
                                           false);
     }

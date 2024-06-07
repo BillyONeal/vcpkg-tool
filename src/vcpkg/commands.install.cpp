@@ -642,6 +642,7 @@ namespace vcpkg
         {SwitchXProhibitBackcompatFeatures, {}},
         {SwitchAllowUnsupported, msgHelpTxtOptAllowUnsupportedPort},
         {SwitchNoPrintUsage, msgHelpTxtOptNoUsage},
+        {SwitchPrintLicenses, msgHelpTxtOptPrintLicenses},
     };
 
     static constexpr CommandSetting INSTALL_SETTINGS[] = {
@@ -1032,7 +1033,10 @@ namespace vcpkg
         const ParsedArguments options = args.parse_arguments(
             paths.manifest_mode_enabled() ? CommandInstallMetadataManifest : CommandInstallMetadataClassic);
 
-        const bool dry_run = Util::Sets::contains(options.switches, SwitchDryRun);
+        const auto dry_run = Util::Sets::contains(options.switches, SwitchDryRun) ? DryRun::Yes : DryRun::No;
+        const auto print_license_report = Util::Sets::contains(options.switches, SwitchPrintLicenses)
+                                              ? PrintLicenseReport::Yes
+                                              : PrintLicenseReport::No;
         const bool use_head_version = Util::Sets::contains(options.switches, (SwitchHead));
         const bool no_downloads = Util::Sets::contains(options.switches, (SwitchNoDownloads));
         const bool only_downloads = Util::Sets::contains(options.switches, (SwitchOnlyDownloads));
@@ -1268,7 +1272,8 @@ namespace vcpkg
                                               build_package_options,
                                               var_provider,
                                               std::move(install_plan),
-                                              dry_run ? DryRun::Yes : DryRun::No,
+                                              dry_run,
+                                              print_license_report,
                                               pkgsconfig,
                                               true);
         }
@@ -1325,7 +1330,6 @@ namespace vcpkg
 #endif // defined(_WIN32)
 
         print_plan(action_plan, is_recursive, paths.builtin_ports_directory());
-
         auto it_pkgsconfig = options.settings.find(SwitchXWriteNuGetPackagesConfig);
         if (it_pkgsconfig != options.settings.end())
         {
@@ -1337,12 +1341,12 @@ namespace vcpkg
             fs.write_contents(pkgsconfig_path, pkgsconfig_contents, VCPKG_LINE_INFO);
             msg::println(msgWroteNuGetPkgConfInfo, msg::path = pkgsconfig_path);
         }
-        else if (!dry_run)
+        else if (dry_run == DryRun::No)
         {
             compute_all_abis(paths, action_plan, var_provider, status_db);
         }
 
-        if (dry_run)
+        if (dry_run == DryRun::Yes)
         {
             Checks::exit_success(VCPKG_LINE_INFO);
         }
@@ -1385,6 +1389,11 @@ namespace vcpkg
             }
 
             fs.write_contents(it_xunit->second, xwriter.build_xml(default_triplet), VCPKG_LINE_INFO);
+        }
+
+        if (print_license_report == PrintLicenseReport::Yes)
+        {
+            msg::println(format_license_report(action_plan.install_actions));
         }
 
         if (build_package_options.print_usage == PrintUsage::Yes)

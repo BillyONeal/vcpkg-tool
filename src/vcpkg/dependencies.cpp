@@ -1327,6 +1327,45 @@ namespace vcpkg
         }
     }
 
+    LocalizedString format_license_report(View<InstallPlanAction> install_actions)
+    {
+        bool any_unknown = false;
+        std::set<std::string> licenses;
+        for (const auto& install_action : install_actions)
+        {
+            auto scfl = install_action.source_control_file_and_location.get();
+            if (!scfl)
+            {
+                continue;
+            }
+
+            auto&& license_field = scfl->source_control_file->core_paragraph->license;
+            if (auto license_value = license_field.get())
+            {
+                if (!license_value->empty())
+                {
+                    licenses.emplace(*license_value);
+                    continue;
+                }
+            }
+
+            any_unknown = true;
+        }
+
+        auto license_report = msg::format(msgLicenseReportHeader).append_raw('\n');
+        for (auto&& license : licenses)
+        {
+            license_report.append_raw(fmt::format("  * {}\n", license));
+        }
+
+        if (any_unknown)
+        {
+            license_report.append(msgLicenseReportUnknownLicensesNotice).append_raw('\n');
+        }
+
+        return license_report;
+    }
+
     namespace
     {
 
