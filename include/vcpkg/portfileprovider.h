@@ -3,6 +3,7 @@
 #include <vcpkg/base/fwd/expected.h>
 #include <vcpkg/base/fwd/span.h>
 
+#include <vcpkg/fwd/overlay-port-paths.h>
 #include <vcpkg/fwd/portfileprovider.h>
 #include <vcpkg/fwd/registries.h>
 #include <vcpkg/fwd/versions.h>
@@ -76,9 +77,10 @@ namespace vcpkg
 
     std::unique_ptr<IBaselineProvider> make_baseline_provider(const RegistrySet& registry_set);
     std::unique_ptr<IFullVersionedPortfileProvider> make_versioned_portfile_provider(const RegistrySet& registry_set);
-    std::unique_ptr<IFullOverlayProvider> make_overlay_provider(const ReadOnlyFilesystem& fs, View<Path> overlay_ports);
+    std::unique_ptr<IFullOverlayProvider> make_overlay_provider(const ReadOnlyFilesystem& fs,
+                                                                const OverlayPortPaths& overlay_ports);
     std::unique_ptr<IOverlayProvider> make_manifest_provider(const ReadOnlyFilesystem& fs,
-                                                             View<Path> overlay_ports,
+                                                             const OverlayPortPaths& overlay_ports,
                                                              const Path& manifest_path,
                                                              std::unique_ptr<SourceControlFile>&& manifest_scf);
 }
