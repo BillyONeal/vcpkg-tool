@@ -386,13 +386,60 @@ namespace vcpkg::Paragraphs
         });
     }
 
-    PortLoadResult try_load_port(const ReadOnlyFilesystem& fs, StringView port_name, const PortLocation& port_location)
+    PortContents try_load_port_on_disk_text(const ReadOnlyFilesystem& fs,
+                                            const Path& port_directory,
+                                            std::error_code& ec)
     {
-        StatsTimer timer(g_load_ports_stats);
-
         auto manifest_path = port_location.port_directory / "vcpkg.json";
         auto control_path = port_location.port_directory / "CONTROL";
         std::error_code ec;
+        auto manifest_contents = fs.read_contents(manifest_path, ec);
+        if (!ec)
+        {
+            if (fs.exists(control_path, IgnoreErrors{}))
+            {
+                return PortContents{PortMetadataKind::Conflict, Path{}, std::string{}};
+            }
+
+            return PortContents{PortMetadataKind::Manifest, std::move(manifest_path), std::move(manifest_contents)};
+        }
+
+        auto manifest_exists = ec != std::errc::no_such_file_or_directory;
+        if (manifest_exists)
+        {
+            return PortContents{fs.exists(control_path, IgnoreErrors{}) ? PortMetadataKind::Conflict
+                                                                        : PortMetadataKind::Manifest,
+                                std::move(manifest_path),
+                                std::string{}};
+        }
+
+        auto control_contents = fs.read_contents(control_path, ec);
+        if (!ec)
+        {
+            return PortContents{PortMetadataKind::Control, std::move(control_path), std::move(control_contents)};
+        }
+
+        if (ec == std::errc::no_such_file_or_directory)
+        {
+            return PortContents{PortMetadataKind::None, Path{}, std::string{}};
+        }
+
+        return PortContents{PortMetadataKind::Control, std::move(control_path), std::string{}};
+    }
+
+    PortLoadResult try_load_port(const ReadOnlyFilesystem& fs, StringView port_name, const PortLocation& port_location)
+    {
+        StatsTimer timer(g_load_ports_stats);
+        std::error_code ec;
+        auto contents = try_load_port_on_disk_text(fs, port_location.port_directory, ec);
+        if (ec)
+        {
+        }
+
+        switch (contents.kind)
+        {
+            case None:
+        }
         auto manifest_contents = fs.read_contents(manifest_path, ec);
         if (!ec)
         {
@@ -583,11 +630,10 @@ namespace vcpkg::Paragraphs
         LoadResults ret;
 
         auto port_dirs = fs.get_directories_non_recursive(directory, VCPKG_LINE_INFO);
-        Util::sort(port_dirs);
-
         Util::erase_remove_if(port_dirs,
                               [&](auto&& port_dir_entry) { return port_dir_entry.filename() == FileDotDsStore; });
 
+        Util::sort(port_dirs);
         for (auto&& path : port_dirs)
         {
             auto port_name = path.filename();

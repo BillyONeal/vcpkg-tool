@@ -26,11 +26,29 @@ namespace vcpkg::Paragraphs
 
     bool is_port_directory(const ReadOnlyFilesystem& fs, const Path& maybe_directory);
 
-    struct PortLoadResult
+    enum class PortMetadataKind
     {
-        ExpectedL<SourceControlFileAndLocation> maybe_scfl;
+        None,
+        Control,
+        Manifest,
+        Conflict
+    };
+
+    struct PortContents
+    {
+        PortMetadataKind kind;
+        Path metadata_path;
         std::string on_disk_contents;
     };
+
+    struct PortLoadResult
+    {
+        PortDirectoryKind kind;
+        std::string on_disk_contents;
+        ExpectedL<SourceControlFileAndLocation> maybe_scfl;
+    };
+
+    PortContents try_load_port_on_disk_text(const ReadOnlyFilesystem& fs, const Path& port_directory, std::error_code& ec);
 
     // If an error occurs, the Expected will be in the error state.
     // Otherwise, if the port is known, the maybe_scfl.get()->source_control_file contains the loaded port information.
