@@ -77,6 +77,7 @@ $VcpkgItem = Get-Item $VcpkgExe
 $VcpkgExe = $VcpkgItem.FullName
 $VcpkgPs1 = Join-Path $VcpkgItem.Directory "vcpkg-shell.ps1"
 $TestScriptAssetCacheExe = Join-Path $VcpkgItem.Directory "test-script-asset-cache"
+$TestScriptIntentionallyFails = Join-Path $VcpkgItem.Directory "test-script-intentionally-fails"
 $TestSuitesDir = Join-Path $PSScriptRoot "end-to-end-tests-dir"
 
 [System.IO.FileInfo[]]$AllTests = Get-ChildItem -LiteralPath $TestSuitesDir -File -Filter "*.ps1" | Sort-Object -Property Name

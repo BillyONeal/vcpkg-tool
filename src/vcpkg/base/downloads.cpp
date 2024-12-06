@@ -336,18 +336,17 @@ namespace vcpkg
                                                            const Path& downloaded_path,
                                                            StringView sha512)
     {
-        std::string actual_hash =
-            vcpkg::Hash::get_file_hash(fs, downloaded_path, Hash::Algorithm::Sha512).value_or_exit(VCPKG_LINE_INFO);
-        if (!Strings::case_insensitive_ascii_equals(sha512, actual_hash))
-        {
-            return msg::format_error(msgDownloadFailedHashMismatch,
-                                     msg::url = sanitized_url,
-                                     msg::path = downloaded_path,
-                                     msg::expected = sha512,
-                                     msg::actual = actual_hash);
-        }
-
-        return Unit{};
+        return Hash::get_file_hash(fs, downloaded_path, Hash::Algorithm::Sha512)
+            .then([&](std::string&& actual_hash) -> ExpectedL<Unit> {
+                if (!Strings::case_insensitive_ascii_equals(sha512, actual_hash))
+                {
+                    return msg::format_error(msgDownloadFailedHashMismatch,
+                                             msg::url = sanitized_url,
+                                             msg::path = downloaded_path,
+                                             msg::expected = sha512,
+                                             msg::actual = actual_hash);
+                }
+            });
     }
 
     void verify_downloaded_file_hash(const ReadOnlyFilesystem& fs,
@@ -975,22 +974,44 @@ namespace vcpkg
                     settings.environment = get_clean_environment();
                     settings.echo_in_debug = EchoInDebug::Show;
 
-                    auto maybe_res = flatten(cmd_execute_and_capture_output(cmd, settings), "<mirror-script>");
-                    if (maybe_res)
+                    auto maybe_mirror_script_invocation = cmd_execute_and_capture_output(cmd, settings);
+                    if (auto mirror_script_invocation = maybe_mirror_script_invocation.get())
                     {
-                        auto maybe_success =
-                            try_verify_downloaded_file_hash(fs, "<mirror-script>", download_path_part_path, *hash);
-                        if (maybe_success)
+                        if (mirror_script_invocation->exit_code == 0)
                         {
-                            fs.rename(download_path_part_path, download_path, VCPKG_LINE_INFO);
-                            msg::println(msgDownloadSuccesful, msg::path = download_path.filename());
-                            return urls[0];
+                            auto maybe_success = try_verify_downloaded_file_hash(
+                                fs, "x-script command line", download_path_part_path, *hash);
+                            if (maybe_success)
+                            {
+                                fs.rename(download_path_part_path, download_path, VCPKG_LINE_INFO);
+                                msg::println(msgDownloadSuccesful, msg::path = download_path.filename());
+                                return urls[0];
+                            }
+
+                            msg::println(std::move(maybe_success)
+                                             .error()
+                                             .append_raw('\n')
+                                             .append_raw(NotePrefix)
+                                             .append(msgScriptConsoleOutputWas)
+                                             .append_raw('\n')
+                                             .append_raw(mirror_script_invocation->output));
                         }
-                        msg::println_error(maybe_success.error());
+                        else
+                        {
+                            msg::println(msg::format_error(msgProgramReturnedNonzeroExitCode,
+                                                           msg::tool_name = cmd.command_line(),
+                                                           msg::exit_code = mirror_script_invocation->exit_code)
+                                             .append_raw('\n')
+                                             .append_raw(mirror_script_invocation->output));
+                        }
                     }
                     else
                     {
-                        msg::println_error(maybe_res.error());
+                        msg::println(std::move(maybe_mirror_script_invocation)
+                                         .error()
+                                         .append_raw('\n')
+                                         .append_raw(NotePrefix)
+                                         .append(msgWhileLaunching, msg::command_line = std::move(cmd).extract()));
                     }
                 }
             }

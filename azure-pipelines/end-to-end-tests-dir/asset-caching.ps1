@@ -11,7 +11,6 @@ $env:VCPKG_FORCE_DOWNLOADED_BINARIES = "ON"
 # Testing asset cache miss (not configured) + x-block-origin enabled
 Refresh-TestRoot
 $actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("install", "vcpkg-internal-e2e-test-port", "--overlay-ports=$PSScriptRoot/../e2e-ports", "--x-asset-sources=clear;x-block-origin", "--downloads-root=$DownloadsRoot"))
-$actual = $actual -replace "`r`n", "`n"
 
 $expected = @(
 "A suitable version of .* was not found \(required v[0-9\.]+\)."
@@ -24,7 +23,6 @@ if (-not ($actual -match $expected)) {
 
 # Testing asset cache miss (not configured) + x-block-origin disabled
 $actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("install", "vcpkg-internal-e2e-test-port", "--overlay-ports=$PSScriptRoot/../e2e-ports", "--x-asset-sources=clear;", "--downloads-root=$DownloadsRoot"))
-$actual = $actual -replace "`r`n", "`n"
 
 $expected = @(
 "A suitable version of .* was not found \(required v[0-9\.]+\)."
@@ -38,7 +36,6 @@ if (-not ($actual -match $expected)) {
 # Testing asset cache miss (configured) + x-block-origin enabled
 Refresh-TestRoot
 $actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("install", "vcpkg-internal-e2e-test-port", "--overlay-ports=$PSScriptRoot/../e2e-ports", "--x-asset-sources=x-azurl,file://$AssetCache,,readwrite;x-block-origin", "--downloads-root=$DownloadsRoot"))
-$actual = $actual -replace "`r`n", "`n"
 
 $expected = @(
 "A suitable version of .* was not found \(required v[0-9\.]+\)."
@@ -52,7 +49,6 @@ if (-not ($actual -match $expected)) {
 # Testing asset cache miss (configured) + x-block-origin disabled
 Refresh-TestRoot
 $actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("install", "vcpkg-internal-e2e-test-port", "--overlay-ports=$PSScriptRoot/../e2e-ports", "--x-asset-sources=x-azurl,file://$AssetCache,,readwrite;", "--downloads-root=$DownloadsRoot"))
-$actual = $actual -replace "`r`n", "`n"
 
 $expected = @(
 "A suitable version of .* was not found \(required v[0-9\.]+\)."
@@ -70,7 +66,6 @@ if (-not ($actual -match $expected)) {
 Refresh-Downloads
 Run-Vcpkg -TestArgs ($commonArgs + @('remove', 'vcpkg-internal-e2e-test-port'))
 $actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("install", "vcpkg-internal-e2e-test-port", "--overlay-ports=$PSScriptRoot/../e2e-ports", "--x-asset-sources=x-azurl,file://$AssetCache,,readwrite;", "--downloads-root=$DownloadsRoot"))
-$actual = $actual -replace "`r`n", "`n"
 
 $expected = @(
 "A suitable version of .* was not found \(required v[0-9\.]+\)."
@@ -147,7 +142,6 @@ if (-not ($actual.Contains("Asset cache miss; downloading from https://localhost
 # azurl (yes), x-block-origin (no), asset-cache (hit), download (n/a)
 # Expected: Download success message, asset cache named, nothing about x-block-origin
 Refresh-TestRoot
-$actual = $actual -replace "`r`n", "`n"
 Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("x-download", "$downloadsRoot/example3.html", "--sha512", "d06b93c883f8126a04589937a884032df031b05518eed9d433efb6447834df2596aebd500d69b8283e5702d988ed49655ae654c1683c7a4ae58bfa6b92f2b73a", "--url", "https://example.com", "--x-asset-sources=x-azurl,file://$AssetCache,,readwrite"))
 $actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("x-download", "$downloadsRoot/example3.html", "--sha512", "d06b93c883f8126a04589937a884032df031b05518eed9d433efb6447834df2596aebd500d69b8283e5702d988ed49655ae654c1683c7a4ae58bfa6b92f2b73a", "--url", "https://example.com", "--x-asset-sources=x-azurl,file://$AssetCache,,readwrite"))
 if (-not ($actual.Contains("Asset cache hit for example3.html; downloaded from: file://$AssetCache"))) {
@@ -225,3 +219,24 @@ if (-not ($actual.Contains("Successfully downloaded example3.html."))) {
     throw "Failure: x-script download success message"
 }
 
+# Test that error output is printed to the console when the script fails but returns 0
+Refresh-TestRoot
+$env:X_VCPKG_ASSET_SOURCES = "clear;x-script,$TestScriptIntentionallyFails 0;x-block-origin"
+$actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("x-download", "$downloadsRoot/intentionally-fails.html", "--url", "https://example.com/hello-world.txt", "--sha512", "09e1e2a84c92b56c8280f4a1203c7cffd61b162cfe987278d4d6be9afbf38c0e8934cdadf83751f4e99d111352bffefc958e5a4852c8a7a29c95742ce59288a8"))
+Throw-IfNotFailed
+Throw-IfNonContains -Expected @"
+note: The asset cache provider configured with x-script appeared to return success, but the file it was intended to download does not appear to have the correct SHA512. The x-script printed the following to the console:
+This is some error output that should be observable on the console
+"@ -Actual $actual
+
+# Test that error output is printed to the console when the script fails but returns not 0
+Refresh-TestRoot
+$env:X_VCPKG_ASSET_SOURCES = "clear;x-script,$TestScriptIntentionallyFails 1;x-block-origin"
+$actual = Run-VcpkgAndCaptureOutput -TestArgs ($commonArgs + @("x-download", "$downloadsRoot/intentionally-fails.html", "--url", "https://example.com/hello-world.txt", "--sha512", "09e1e2a84c92b56c8280f4a1203c7cffd61b162cfe987278d4d6be9afbf38c0e8934cdadf83751f4e99d111352bffefc958e5a4852c8a7a29c95742ce59288a8"))
+Throw-IfNotFailed
+Throw-IfNonContains -Expected @"
+error: $TestScriptIntentionallyFails 1 failed with exit code: (1).
+This is some error output that should be observable on the console
+
+error: Missing intentionally-fails.html and downloads are blocked by x-block-origin.
+"@ -Actual $actual

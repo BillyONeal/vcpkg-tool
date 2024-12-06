@@ -188,6 +188,7 @@ set(CLOSES_STDOUT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/closes-stdout.c")
 set(READS_STDIN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/reads-stdin.c")
 set(TEST_EDITOR_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test-editor.c")
 set(TEST_SCRIPT_ASSET_CACHE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test-script-asset-cache.c")
+set(TEST_SCRIPT_INTENTIONALLY_FAILS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/test-script-intentionally-fails.c")
 
 # ====================
 # === Dependencies ===
@@ -565,10 +566,15 @@ set_property(TARGET reads-stdin PROPERTY PDB_NAME "reads-stdin${VCPKG_PDB_SUFFIX
 add_executable(test-editor ${TEST_EDITOR_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg.manifest")
 set_property(TARGET test-editor PROPERTY PDB_NAME "test-editor${VCPKG_PDB_SUFFIX}")
 
-# === Target: test-editor ===
+# === Target: test-script-asset-cache ===
 
 add_executable(test-script-asset-cache ${TEST_SCRIPT_ASSET_CACHE_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg.manifest")
 set_property(TARGET test-script-asset-cache PROPERTY PDB_NAME "test-script-asset-cache${VCPKG_PDB_SUFFIX}")
+
+# === Target: test-script-intentionally-fails ===
+
+add_executable(test-script-intentionally-fails ${TEST_SCRIPT_INTENTIONALLY_FAILS_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg.manifest")
+set_property(TARGET test-script-intentionally-fails PROPERTY PDB_NAME "test-script-intentionaly-fails${VCPKG_PDB_SUFFIX}")
 endif()
 
 # === Target: verify_messages ===
@@ -597,7 +603,7 @@ if(CLANG_FORMAT)
 
         COMMAND "${CLANG_FORMAT}" -i -verbose ${VCPKG_FUZZ_SOURCES} ${TLS12_DOWNLOAD_SOURCES}
             ${CLOSES_STDIN_SOURCES} ${CLOSES_STDOUT_SOURCES} ${READS_STDIN_SOURCES} ${CLOSES_EXIT_MINUS_ONE_SOURCES}
-            ${TEST_EDITOR_SOURCES} ${TEST_SCRIPT_ASSET_CACHE_SOURCES}
+            ${TEST_EDITOR_SOURCES} ${TEST_SCRIPT_ASSET_CACHE_SOURCES} ${TEST_SCRIPT_INTENTIONALLY_FAILS_SOURCES}
     )
 endif()
 

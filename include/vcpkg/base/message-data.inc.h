@@ -2654,6 +2654,12 @@ DECLARE_MESSAGE(ScriptAssetCacheRequiresScript,
                 (),
                 "",
                 "expected arguments: asset config 'x-script' requires exactly the exec template as an argument")
+DECLARE_MESSAGE(
+    ScriptConsoleOutputWas,
+    (),
+    "",
+    "The asset cache provider configured with x-script appeared to return success, but the file it was intended to "
+    "download does not appear to have the correct SHA512. The x-script printed the following to the console:")
 DECLARE_MESSAGE(SecretBanner, (), "", "*** SECRET ***")
 DECLARE_MESSAGE(SeeURL, (msg::url), "", "See {url} for more information.")
 DECLARE_MESSAGE(SerializedBinParagraphHeader, (), "", "\nSerialized Binary Paragraph")
@@ -3208,6 +3214,7 @@ DECLARE_MESSAGE(WhileCheckingOutPortTreeIsh,
                 "",
                 "while checking out port {package_name} with git tree {git_tree_sha}")
 DECLARE_MESSAGE(WhileGettingLocalTreeIshObjectsForPorts, (), "", "while getting local treeish objects for ports")
+DECLARE_MESSAGE(WhileLaunching, (msg::command_line), "", "while launching {command_line}")
 DECLARE_MESSAGE(WhileLookingForSpec, (msg::spec), "", "while looking for {spec}:")
 DECLARE_MESSAGE(WhileLoadingBaselineVersionForPort,
                 (msg::package_name),
