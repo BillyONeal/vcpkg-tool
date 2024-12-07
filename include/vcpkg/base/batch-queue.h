@@ -5,25 +5,25 @@
 #include <vector>
 
 template<class T>
-class BatchQueue
+class BatchCollector
 {
 public:
     template<class... Args>
     void push(Args&&... args)
     {
-        forward.emplace_back(std::forward<Args>(args)...);
+        m_batch.emplace_back(std::forward<Args>(args)...);
     }
 
-    bool empty() const { return forward.empty(); }
+    bool empty() const { return m_batch.empty(); }
 
-    void pop(std::vector<T>& out)
+    void extract_all(std::vector<T>& out)
     {
         out.clear();
-        swap(out, forward);
+        swap(out, m_batch);
     }
 
 private:
-    std::vector<T> forward;
+    std::vector<T> m_batch;
 };
 
 template<class WorkItem>
@@ -41,7 +41,7 @@ struct BGThreadBatchQueue
     {
         std::unique_lock<std::mutex> lock(m_mtx);
         m_cv.wait(lock, [this]() { return !m_tasks.empty() || !m_running; });
-        m_tasks.pop(out);
+        m_tasks.extract_all(out);
     }
 
     void stop()
@@ -60,6 +60,6 @@ struct BGThreadBatchQueue
 private:
     std::mutex m_mtx;
     std::condition_variable m_cv;
-    BatchQueue<WorkItem> m_tasks;
+    BatchCollector<WorkItem> m_tasks;
     bool m_running = true;
 };
