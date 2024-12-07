@@ -17,6 +17,7 @@
 #include <vcpkg/tools.h>
 #include <vcpkg/tools.test.h>
 #include <vcpkg/versions.h>
+#include <vcpkg/visualstudio.h>
 
 #include <regex>
 
@@ -218,10 +219,14 @@ namespace vcpkg
         // considered.
         virtual bool ignore_version() const { return false; }
 
-        virtual void add_system_paths(const ReadOnlyFilesystem& fs, std::vector<Path>& out_candidate_paths) const
+        virtual void add_system_paths(const ReadOnlyFilesystem& fs,
+                                      std::vector<Path>& out_candidate_paths,
+                                      const std::function<const std::vector<VisualStudio::VisualStudioInstance>&()>&
+                                          get_sorted_visual_studio_instances) const
         {
             (void)fs;
             (void)out_candidate_paths;
+            (void)get_sorted_visual_studio_instances;
         }
 
         virtual ExpectedL<std::string> get_version(const ToolCache& cache,
@@ -266,7 +271,10 @@ namespace vcpkg
         virtual std::array<int, 3> default_min_version() const override { return {3, 17, 1}; }
 
 #if defined(_WIN32)
-        virtual void add_system_paths(const ReadOnlyFilesystem&, std::vector<Path>& out_candidate_paths) const override
+        virtual void add_system_paths(const ReadOnlyFilesystem&,
+                                      std::vector<Path>& out_candidate_paths,
+                                      const std::function<const std::vector<VisualStudio::VisualStudioInstance>&()>&
+                                          get_sorted_visual_studio_instances) const override
         {
             const auto& program_files = get_program_files_platform_bitness();
             if (const auto pf = program_files.get())
@@ -278,6 +286,12 @@ namespace vcpkg
             if (const auto pf = program_files_32_bit.get())
             {
                 out_candidate_paths.push_back(*pf / "CMake" / "bin" / "cmake.exe");
+            }
+
+            for (auto&& vs_instance : get_sorted_visual_studio_instances())
+            {
+                out_candidate_paths.push_back(vs_instance.root_path / "Common7" / "IDE" / "CommonExtensions" /
+                                              "Microsoft" / "CMake" / "CMake" / "bin" / "cmake.exe");
             }
         }
 #endif
@@ -372,12 +386,28 @@ namespace vcpkg
         virtual std::array<int, 3> default_min_version() const override { return {16, 12, 0}; }
 
 #if defined(_WIN32)
-        virtual void add_system_paths(const ReadOnlyFilesystem&, std::vector<Path>& out_candidate_paths) const override
+        virtual void add_system_paths(const ReadOnlyFilesystem&,
+                                      std::vector<Path>& out_candidate_paths,
+                                      const std::function<const std::vector<VisualStudio::VisualStudioInstance>&()>&
+                                          get_sorted_visual_studio_instances) const override
         {
             const auto& program_files = get_program_files_platform_bitness();
-            if (const auto pf = program_files.get()) out_candidate_paths.push_back(*pf / "nodejs" / "node.exe");
+            if (const auto pf = program_files.get())
+            {
+                out_candidate_paths.push_back(*pf / "nodejs" / "node.exe");
+            }
+
             const auto& program_files_32_bit = get_program_files_32_bit();
-            if (const auto pf = program_files_32_bit.get()) out_candidate_paths.push_back(*pf / "nodejs" / "node.exe");
+            if (const auto pf = program_files_32_bit.get())
+            {
+                out_candidate_paths.push_back(*pf / "nodejs" / "node.exe");
+            }
+
+            for (auto&& vs_instance : get_sorted_visual_studio_instances())
+            {
+                out_candidate_paths.push_back(vs_instance.root_path / "MSBuild" / "Microsoft" / "VisualStudio" /
+                                              "NodeJs" / "node.exe");
+            }
         }
 #endif
 
@@ -399,14 +429,28 @@ namespace vcpkg
         virtual std::array<int, 3> default_min_version() const override { return {2, 7, 4}; }
 
 #if defined(_WIN32)
-        virtual void add_system_paths(const ReadOnlyFilesystem&, std::vector<Path>& out_candidate_paths) const override
+        virtual void add_system_paths(const ReadOnlyFilesystem&,
+                                      std::vector<Path>& out_candidate_paths,
+                                      const std::function<const std::vector<VisualStudio::VisualStudioInstance>&()>&
+                                          get_sorted_visual_studio_instances) const override
         {
             const auto& program_files = get_program_files_platform_bitness();
-            if (const auto pf = program_files.get()) out_candidate_paths.push_back(*pf / "git" / "cmd" / "git.exe");
+            if (const auto pf = program_files.get())
+            {
+                out_candidate_paths.push_back(*pf / "git" / "cmd" / "git.exe");
+            }
+
             const auto& program_files_32_bit = get_program_files_32_bit();
             if (const auto pf = program_files_32_bit.get())
             {
                 out_candidate_paths.push_back(*pf / "git" / "cmd" / "git.exe");
+            }
+
+            for (auto&& vs_instance : get_sorted_visual_studio_instances())
+            {
+                out_candidate_paths.push_back(vs_instance.root_path / "Common7" / "IDE" / "CommonExtensions" /
+                                              "Microsoft" / "TeamFoundation" / "Team Explorer" / "Git" / "cmd" /
+                                              "git.exe");
             }
         }
 #endif
@@ -593,8 +637,10 @@ namespace vcpkg
             }
         }
 
-        virtual void add_system_paths(const ReadOnlyFilesystem& fs,
-                                      std::vector<Path>& out_candidate_paths) const override
+        virtual void add_system_paths(
+            const ReadOnlyFilesystem& fs,
+            std::vector<Path>& out_candidate_paths,
+            const std::function<const std::vector<VisualStudio::VisualStudioInstance>&()>&) const override
         {
             const auto& program_files = get_program_files_platform_bitness();
             if (const auto pf = program_files.get())
@@ -660,22 +706,26 @@ namespace vcpkg
         const Path xml_config;
         const Path tools;
         const RequireExactVersions abiToolVersionHandling;
+        std::function<const std::vector<VisualStudio::VisualStudioInstance>&()> get_sorted_visual_studio_instances;
 
         vcpkg::Lazy<std::string> xml_config_contents;
         vcpkg::Cache<std::string, PathAndVersion> path_version_cache;
 
         ToolCacheImpl(const Filesystem& fs,
                       const std::shared_ptr<const DownloadManager>& downloader,
-                      Path downloads,
-                      Path xml_config,
-                      Path tools,
-                      RequireExactVersions abiToolVersionHandling)
+                      StringView downloads,
+                      StringView xml_config,
+                      StringView tools,
+                      RequireExactVersions abiToolVersionHandling,
+                      const std::function<const std::vector<VisualStudio::VisualStudioInstance>&()>&
+                          get_sorted_visual_studio_instances)
             : fs(fs)
             , downloader(downloader)
-            , downloads(std::move(downloads))
-            , xml_config(std::move(xml_config))
-            , tools(std::move(tools))
+            , downloads(downloads)
+            , xml_config(xml_config)
+            , tools(tools)
             , abiToolVersionHandling(abiToolVersionHandling)
+            , get_sorted_visual_studio_instances(get_sorted_visual_studio_instances)
         {
         }
 
@@ -809,7 +859,7 @@ namespace vcpkg
                 // (e.g Program Files).
                 auto paths_from_path = fs.find_from_PATH(system_exe_stems);
                 candidate_paths.insert(candidate_paths.end(), paths_from_path.cbegin(), paths_from_path.cend());
-                tool.add_system_paths(fs, candidate_paths);
+                tool.add_system_paths(fs, candidate_paths, get_sorted_visual_studio_instances);
             }
 
             std::string considered_versions;
@@ -1003,14 +1053,17 @@ namespace vcpkg
             ;
     }
 
-    std::unique_ptr<ToolCache> get_tool_cache(const Filesystem& fs,
-                                              std::shared_ptr<const DownloadManager> downloader,
-                                              Path downloads,
-                                              Path xml_config,
-                                              Path tools,
-                                              RequireExactVersions abiToolVersionHandling)
+    std::unique_ptr<ToolCache> get_tool_cache(
+        const Filesystem& fs,
+        const std::shared_ptr<const DownloadManager>& downloader,
+        StringView downloads,
+        StringView xml_config,
+        StringView tools,
+        RequireExactVersions abiToolVersionHandling,
+        const std::function<const std::vector<VisualStudio::VisualStudioInstance>&()>&
+            get_sorted_visual_studio_instances)
     {
         return std::make_unique<ToolCacheImpl>(
-            fs, std::move(downloader), downloads, xml_config, tools, abiToolVersionHandling);
+            fs, downloader, downloads, xml_config, tools, abiToolVersionHandling, get_sorted_visual_studio_instances);
     }
 }
