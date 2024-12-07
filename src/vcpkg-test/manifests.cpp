@@ -3,6 +3,7 @@
 #include <vcpkg/base/fwd/message_sinks.h>
 
 #include <vcpkg/base/json.h>
+#include <vcpkg/base/util.h>
 
 #include <vcpkg/documentation.h>
 #include <vcpkg/sourceparagraph.h>
@@ -1260,20 +1261,22 @@ static std::string test_serialized_license(StringView license)
 
 static bool license_is_parsable(StringView license)
 {
-    ParseMessages messages;
-    parse_spdx_license_expression(license, messages);
-    return !messages.error.has_value();
+    BufferedDiagnosticContext bdc;
+    auto result = parse_spdx_license_expression(bdc, license).has_value();
+    CHECK(result == !bdc.any_errors());
+    return result;
 }
 static bool license_is_strict(StringView license)
 {
-    ParseMessages messages;
-    parse_spdx_license_expression(license, messages);
-    return !messages.error.has_value() && messages.warnings.empty();
-}
+    BufferedDiagnosticContext bdc;
+    auto parsable = parse_spdx_license_expression(bdc, license).has_value();
+    if (parsable)
+    {
+        CHECK(!bdc.any_errors());
+        return bdc.lines.empty();
+    }
 
-static std::string test_format_parse_warning(const ParseMessage& msg)
-{
-    return msg.format("<license string>", MessageKind::Warning).extract_data();
+    return false;
 }
 
 TEST_CASE ("simple license in manifest", "[manifests][license]")
@@ -1323,42 +1326,51 @@ TEST_CASE ("license serialization", "[manifests][license]")
 
 TEST_CASE ("license error messages", "[manifests][license]")
 {
-    ParseMessages messages;
-    parse_spdx_license_expression("", messages);
-    CHECK(messages.error.value_or_exit(VCPKG_LINE_INFO) ==
-          LocalizedString::from_raw(R"(<license string>: error: SPDX license expression was empty.
+    {
+        BufferedDiagnosticContext bdc;
+        CHECK(!parse_spdx_license_expression(bdc, "").has_value());
+        CHECK(bdc.to_string() ==
+              R"(<license string>: error: SPDX license expression was empty.
   on expression: 
-                 ^)"));
+                 ^)");
+    }
 
-    parse_spdx_license_expression("MIT ()", messages);
-    CHECK(messages.error.value_or_exit(VCPKG_LINE_INFO) ==
-          LocalizedString::from_raw(
+    {
+        BufferedDiagnosticContext bdc;
+        CHECK(!parse_spdx_license_expression(bdc, "MIT ()").has_value());
+        CHECK(bdc.to_string() ==
               R"(<license string>: error: Expected a compound or the end of the string, found a parenthesis.
   on expression: MIT ()
-                     ^)"));
+                     ^)");
+    }
 
-    parse_spdx_license_expression("MIT +", messages);
-    CHECK(
-        messages.error.value_or_exit(VCPKG_LINE_INFO) ==
-        LocalizedString::from_raw(
+    {
+        BufferedDiagnosticContext bdc;
+        CHECK(!parse_spdx_license_expression(bdc, "MIT +").has_value());
+        CHECK(
+            bdc.to_string() ==
             R"(<license string>: error: SPDX license expression contains an extra '+'. These are only allowed directly after a license identifier.
   on expression: MIT +
-                     ^)"));
+                     ^)");
+    }
 
-    parse_spdx_license_expression("MIT AND", messages);
-    CHECK(messages.error.value_or_exit(VCPKG_LINE_INFO) ==
-          LocalizedString::from_raw(R"(<license string>: error: Expected a license name, found the end of the string.
+    {
+        BufferedDiagnosticContext bdc;
+        CHECK(!parse_spdx_license_expression(bdc, "MIT AND").has_value());
+        CHECK(bdc.to_string() ==
+              R"(<license string>: error: Expected a license name, found the end of the string.
   on expression: MIT AND
-                        ^)"));
-
-    parse_spdx_license_expression("MIT AND unknownlicense", messages);
-    CHECK(!messages.error);
-    REQUIRE(messages.warnings.size() == 1);
-    CHECK(
-        test_format_parse_warning(messages.warnings[0]) ==
-        R"(<license string>: warning: Unknown license identifier 'unknownlicense'. Known values are listed at https://spdx.org/licenses/
+                        ^)");
+    }
+    {
+        BufferedDiagnosticContext bdc;
+        CHECK(parse_spdx_license_expression(bdc, "MIT AND unknownlicense").has_value());
+        CHECK(
+            bdc.to_string() ==
+            R"(<license string>: warning: Unknown license identifier 'unknownlicense'. Known values are listed at https://spdx.org/licenses/
   on expression: MIT AND unknownlicense
                          ^)");
+    }
 }
 
 TEST_CASE ("default-feature-core errors", "[manifests]")
@@ -1418,7 +1430,7 @@ TEST_CASE ("default-feature-empty errors", "[manifests]")
     REQUIRE(!m_pgh.has_value());
     REQUIRE(m_pgh.error().data() ==
             "<test manifest>: error: $.default-features[0] (a feature name): \"\" is not a valid feature name. Feature "
-            "names must be lowercase alphanumeric+hyphens and not reserved (see " +
+            "names must be lowercase alphanumeric+hypens and not reserved (see " +
                 docs::manifests_url + " for more information).");
 }
 
@@ -1431,7 +1443,7 @@ TEST_CASE ("default-feature-empty-object errors", "[manifests]")
     REQUIRE(!m_pgh.has_value());
     REQUIRE(m_pgh.error().data() ==
             "<test manifest>: error: $.default-features[0].name (a feature name): \"\" is not a valid feature name. "
-            "Feature names must be lowercase alphanumeric+hyphens and not reserved (see " +
+            "Feature names must be lowercase alphanumeric+hypens and not reserved (see " +
                 docs::manifests_url + " for more information).");
 }
 
@@ -1444,7 +1456,7 @@ TEST_CASE ("dependency-name-empty errors", "[manifests]")
     REQUIRE(!m_pgh.has_value());
     REQUIRE(m_pgh.error().data() ==
             "<test manifest>: error: $.dependencies[0] (a package name): \"\" is not a valid package name. Package "
-            "names must be lowercase alphanumeric+hyphens and not reserved (see " +
+            "names must be lowercase alphanumeric+hypens and not reserved (see " +
                 docs::manifests_url + " for more information).");
 }
 
@@ -1457,7 +1469,7 @@ TEST_CASE ("dependency-name-empty-object errors", "[manifests]")
     REQUIRE(!m_pgh.has_value());
     REQUIRE(m_pgh.error().data() ==
             "<test manifest>: error: $.dependencies[0].name (a package name): \"\" is not a valid package name. "
-            "Package names must be lowercase alphanumeric+hyphens and not reserved (see " +
+            "Package names must be lowercase alphanumeric+hypens and not reserved (see " +
                 docs::manifests_url + " for more information).");
 }
 
@@ -1544,7 +1556,7 @@ TEST_CASE ("dependency-feature-name-empty errors", "[manifests]")
     REQUIRE(!m_pgh.has_value());
     REQUIRE(m_pgh.error().data() ==
             "<test manifest>: error: $.dependencies[0].features[0] (a feature name): \"\" is not a valid feature name. "
-            "Feature names must be lowercase alphanumeric+hyphens and not reserved (see " +
+            "Feature names must be lowercase alphanumeric+hypens and not reserved (see " +
                 docs::manifests_url + " for more information).");
 }
 
@@ -1562,6 +1574,6 @@ TEST_CASE ("dependency-feature-name-empty-object errors", "[manifests]")
     REQUIRE(!m_pgh.has_value());
     REQUIRE(m_pgh.error().data() ==
             "<test manifest>: error: $.dependencies[0].features[0].name (a feature name): \"\" is not a valid feature "
-            "name. Feature names must be lowercase alphanumeric+hyphens and not reserved (see " +
+            "name. Feature names must be lowercase alphanumeric+hypens and not reserved (see " +
                 docs::manifests_url + " for more information).");
 }

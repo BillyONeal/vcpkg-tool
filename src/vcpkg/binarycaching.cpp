@@ -167,9 +167,10 @@ namespace
             std::vector<std::pair<SourceLoc, std::string>> segments;
             parse_segments(segments);
 
-            if (get_error())
+            if (any_errors())
             {
-                return {};
+                ret.clear();
+                return ret;
             }
 
             // Skip empty sources like ';;'
@@ -186,13 +187,13 @@ namespace
         return ret;
     }
 
-    FeedReference make_feedref(const PackageSpec& spec, const Version& version, StringView abi_tag, StringView prefix)
+    NugetReference make_nugetref(const PackageSpec& spec, const Version& version, StringView abi_tag, StringView prefix)
     {
-        return {Strings::concat(prefix, spec.dir()), format_version_for_feedref(version.text, abi_tag)};
+        return {Strings::concat(prefix, spec.dir()), format_version_for_nugetref(version.text, abi_tag)};
     }
-    FeedReference make_feedref(const BinaryPackageReadInfo& info, StringView prefix)
+    NugetReference make_nugetref(const BinaryPackageReadInfo& info, StringView prefix)
     {
-        return make_feedref(info.spec, info.version, info.package_abi, prefix);
+        return make_nugetref(info.spec, info.version, info.package_abi, prefix);
     }
 
     void clean_prepare_dir(const Filesystem& fs, const Path& dir)
@@ -650,7 +651,7 @@ namespace
 
         NuGetSource m_src;
 
-        static std::string generate_packages_config(View<FeedReference> refs)
+        static std::string generate_packages_config(View<NugetReference> refs)
         {
             XmlSerializer xml;
             xml.emit_declaration().line_break();
@@ -743,7 +744,7 @@ namespace
             }
 
             size_t count_stored = 0;
-            auto nupkg_path = m_buildtrees / make_feedref(request, m_nuget_prefix).nupkg_filename();
+            auto nupkg_path = m_buildtrees / make_nugetref(request, m_nuget_prefix).nupkg_filename();
             for (auto&& write_src : m_sources)
             {
                 msg_sink.println(
@@ -812,12 +813,10 @@ namespace
                 auto maybe_json = Json::parse_object(*p, m_url);
                 if (auto json = maybe_json.get())
                 {
-                    if (auto archive_location = json->get(JsonIdArchiveCapitalLocation))
+                    auto archive_location = json->get(JsonIdArchiveCapitalLocation);
+                    if (archive_location && archive_location->is_string())
                     {
-                        if (auto archive_location_string = archive_location->maybe_string())
-                        {
-                            return *archive_location_string;
-                        }
+                        return archive_location->string(VCPKG_LINE_INFO).to_string();
                     }
                 }
             }
@@ -1257,162 +1256,6 @@ namespace
         Path m_tool;
     };
 
-    struct AzureUpkgTool
-    {
-        AzureUpkgTool(const ToolCache& cache, MessageSink& sink) { az_cli = cache.get_tool_path(Tools::AZCLI, sink); }
-
-        Command base_cmd(const AzureUpkgSource& src,
-                         StringView package_name,
-                         StringView package_version,
-                         StringView verb) const
-        {
-            Command cmd{az_cli};
-            cmd.string_arg("artifacts")
-                .string_arg("universal")
-                .string_arg(verb)
-                .string_arg("--organization")
-                .string_arg(src.organization)
-                .string_arg("--feed")
-                .string_arg(src.feed)
-                .string_arg("--name")
-                .string_arg(package_name)
-                .string_arg("--version")
-                .string_arg(package_version);
-            if (!src.project.empty())
-            {
-                cmd.string_arg("--project").string_arg(src.project).string_arg("--scope").string_arg("project");
-            }
-            return cmd;
-        }
-
-        ExpectedL<Unit> download(const AzureUpkgSource& src,
-                                 StringView package_name,
-                                 StringView package_version,
-                                 const Path& download_path,
-                                 MessageSink& sink) const
-        {
-            Command cmd = base_cmd(src, package_name, package_version, "download");
-            cmd.string_arg("--path").string_arg(download_path);
-            return run_az_artifacts_cmd(cmd, sink);
-        }
-
-        ExpectedL<Unit> publish(const AzureUpkgSource& src,
-                                StringView package_name,
-                                StringView package_version,
-                                const Path& package_dir,
-                                StringView description,
-                                MessageSink& sink) const
-        {
-            Command cmd = base_cmd(src, package_name, package_version, "publish");
-            cmd.string_arg("--description").string_arg(description).string_arg("--path").string_arg(package_dir);
-            return run_az_artifacts_cmd(cmd, sink);
-        }
-
-        ExpectedL<Unit> run_az_artifacts_cmd(const Command& cmd, MessageSink& sink) const
-        {
-            RedirectedProcessLaunchSettings show_in_debug_settings;
-            show_in_debug_settings.echo_in_debug = EchoInDebug::Show;
-            return cmd_execute_and_capture_output(cmd, show_in_debug_settings)
-                .then([&](ExitCodeAndOutput&& res) -> ExpectedL<Unit> {
-                    if (res.exit_code == 0)
-                    {
-                        return {Unit{}};
-                    }
-
-                    // az command line error message: Before you can run Azure DevOps commands, you need to
-                    // run the login command(az login if using AAD/MSA identity else az devops login if using PAT token)
-                    // to setup credentials.
-                    if (res.output.find("you need to run the login command") != std::string::npos)
-                    {
-                        sink.println(Color::warning,
-                                     msgFailedVendorAuthentication,
-                                     msg::vendor = "Universal Packages",
-                                     msg::url = "https://learn.microsoft.com/cli/azure/authenticate-azure-cli");
-                    }
-                    return LocalizedString::from_raw(std::move(res).output);
-                });
-        }
-        Path az_cli;
-    };
-
-    struct AzureUpkgPutBinaryProvider : public IWriteBinaryProvider
-    {
-        AzureUpkgPutBinaryProvider(const ToolCache& cache, MessageSink& sink, std::vector<AzureUpkgSource>&& sources)
-            : m_azure_tool(cache, sink), m_sources(sources)
-        {
-        }
-
-        size_t push_success(const BinaryPackageWriteInfo& request, MessageSink& msg_sink) override
-        {
-            size_t count_stored = 0;
-            auto ref = make_feedref(request, "");
-            std::string package_description = "Cached package for " + ref.id;
-            for (auto&& write_src : m_sources)
-            {
-                auto res = m_azure_tool.publish(
-                    write_src, ref.id, ref.version, request.package_dir, package_description, msg_sink);
-                if (res)
-                {
-                    count_stored++;
-                }
-                else
-                {
-                    msg::println(res.error());
-                }
-            }
-
-            return count_stored;
-        }
-
-        bool needs_nuspec_data() const override { return false; }
-        bool needs_zip_file() const override { return false; }
-
-    private:
-        AzureUpkgTool m_azure_tool;
-        std::vector<AzureUpkgSource> m_sources;
-    };
-
-    struct AzureUpkgGetBinaryProvider : public IReadBinaryProvider
-    {
-        AzureUpkgGetBinaryProvider(const ToolCache& cache, MessageSink& sink, AzureUpkgSource source)
-            : m_azure_tool(cache, sink), m_sink(sink), m_source(source)
-        {
-        }
-
-        // Prechecking doesn't exist with universal packages so it's not implemented
-        void precheck(View<const InstallPlanAction*>, Span<CacheAvailability>) const override { }
-
-        LocalizedString restored_message(size_t count,
-                                         std::chrono::high_resolution_clock::duration elapsed) const override
-        {
-            return msg::format(msgRestoredPackagesFromAZUPKG, msg::count = count, msg::elapsed = ElapsedTime(elapsed));
-        }
-
-        void fetch(View<const InstallPlanAction*> actions, Span<RestoreResult> out_status) const override
-        {
-            for (size_t i = 0; i < actions.size(); ++i)
-            {
-                auto info = BinaryPackageReadInfo{*actions[i]};
-                auto ref = make_feedref(info, "");
-                auto res = m_azure_tool.download(m_source, ref.id, ref.version, info.package_dir, m_sink);
-
-                if (res)
-                {
-                    out_status[i] = RestoreResult::restored;
-                }
-                else
-                {
-                    out_status[i] = RestoreResult::unavailable;
-                }
-            }
-        }
-
-    private:
-        AzureUpkgTool m_azure_tool;
-        MessageSink& m_sink;
-        AzureUpkgSource m_source;
-    };
-
     ExpectedL<Path> default_cache_path_impl()
     {
         auto maybe_cachepath = get_environment_variable(EnvironmentVariableVcpkgDefaultBinaryCache);
@@ -1454,8 +1297,12 @@ namespace
 
     struct BinaryConfigParser : ConfigSegmentsParser
     {
-        BinaryConfigParser(StringView text, Optional<StringView> origin, BinaryConfigParserState* state)
-            : ConfigSegmentsParser(text, origin, {0, 0}), state(state)
+        BinaryConfigParser(DiagnosticContext& context,
+                           StringView text,
+                           Optional<StringView> origin,
+                           int init_row,
+                           BinaryConfigParserState* state)
+            : ConfigSegmentsParser(context, text, origin, init_row), state(state)
         {
         }
 
@@ -1466,7 +1313,7 @@ namespace
             auto all_segments = parse_all_segments();
             for (auto&& x : all_segments)
             {
-                if (get_error()) return;
+                if (any_errors()) return;
                 handle_segments(std::move(x));
             }
         }
@@ -1859,24 +1706,6 @@ namespace
                     state->url_templates_to_get, state->url_templates_to_put, std::move(url_template), segments, 2);
                 state->binary_cache_providers.insert("http");
             }
-            else if (segments[0].second == "x-az-universal")
-            {
-                // Scheme: x-az-universal,<organization>,<project>,<feed>[,<readwrite>]
-                if (segments.size() < 4 || segments.size() > 5)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresFourOrFiveArguments,
-                                                 msg::binary_source = "Universal Packages"));
-                }
-                AzureUpkgSource upkg_template{
-                    segments[1].second,
-                    segments[2].second,
-                    segments[3].second,
-                };
-
-                state->binary_cache_providers.insert("upkg");
-                handle_readwrite(
-                    state->upkg_templates_to_get, state->upkg_templates_to_put, std::move(upkg_template), segments, 4);
-            }
             else
             {
                 return add_error(msg::format(msgUnknownBinaryProviderType), segments[0].first);
@@ -1906,8 +1735,9 @@ namespace
 
     struct AssetSourcesParser : ConfigSegmentsParser
     {
-        AssetSourcesParser(StringView text, StringView origin, AssetSourcesState* state)
-            : ConfigSegmentsParser(text, origin, {0, 0}), state(state)
+        AssetSourcesParser(
+            DiagnosticContext& context, StringView text, StringView origin, int init_row, AssetSourcesState* state)
+            : ConfigSegmentsParser(context, text, origin, init_row), state(state)
         {
         }
 
@@ -1918,7 +1748,7 @@ namespace
             auto all_segments = parse_all_segments();
             for (auto&& x : all_segments)
             {
-                if (get_error()) return;
+                if (any_errors()) return;
                 handle_segments(std::move(x));
             }
         }
@@ -2010,7 +1840,7 @@ namespace vcpkg
     {
         std::vector<std::string> invalid_keys;
         auto result = api_stable_format(url_template, [&](std::string&, StringView key) {
-            static constexpr StringLiteral valid_keys[] = {"name", "version", "sha", "triplet"};
+            static constexpr std::array<StringLiteral, 4> valid_keys = {"name", "version", "sha", "triplet"};
             if (!Util::Vectors::contains(valid_keys, key))
             {
                 invalid_keys.push_back(key.to_string());
@@ -2130,7 +1960,6 @@ namespace vcpkg
                 {"gcs", DefineMetric::BinaryCachingGcs},
                 {"http", DefineMetric::BinaryCachingHttp},
                 {"nuget", DefineMetric::BinaryCachingNuget},
-                {"upkg", DefineMetric::BinaryCachingUpkg},
             };
 
             MetricsSubmission metrics;
@@ -2274,19 +2103,6 @@ namespace vcpkg
                     ret.write.push_back(std::make_unique<NugetBinaryPushProvider>(
                         nuget_base, std::move(s.sources_to_write), std::move(s.configs_to_write)));
                 }
-            }
-
-            if (!s.upkg_templates_to_get.empty())
-            {
-                for (auto&& src : s.upkg_templates_to_get)
-                {
-                    ret.read.push_back(std::make_unique<AzureUpkgGetBinaryProvider>(tools, out_sink, std::move(src)));
-                }
-            }
-            if (!s.upkg_templates_to_put.empty())
-            {
-                ret.write.push_back(
-                    std::make_unique<AzureUpkgPutBinaryProvider>(tools, out_sink, std::move(s.upkg_templates_to_put)));
             }
         }
         return std::move(ret);
@@ -2572,7 +2388,8 @@ namespace vcpkg
     }
 }
 
-ExpectedL<DownloadManagerConfig> vcpkg::parse_download_configuration(const Optional<std::string>& arg)
+Optional<DownloadManagerConfig> vcpkg::parse_download_configuration(DiagnosticContext& context,
+                                                                    const Optional<std::string>& arg)
 {
     if (!arg || arg.get()->empty()) return DownloadManagerConfig{};
 
@@ -2580,29 +2397,25 @@ ExpectedL<DownloadManagerConfig> vcpkg::parse_download_configuration(const Optio
 
     AssetSourcesState s;
     const auto source = Strings::concat("$", EnvironmentVariableXVcpkgAssetSources);
-    AssetSourcesParser parser(*arg.get(), source, &s);
+    AssetSourcesParser parser(context, *arg.get(), source, 0, &s);
     parser.parse();
-    if (auto err = parser.get_error())
+    if (parser.any_errors())
     {
-        return LocalizedString::from_raw(err->to_string()) // note that this already contains error:
-            .append_raw('\n')
-            .append_raw(NotePrefix)
-            .append(msgSeeURL, msg::url = docs::assetcaching_url);
+        context.report(DiagnosticLine{DiagKind::Note, msg::format(msgSeeURL, msg::url = docs::assetcaching_url)});
+        return nullopt;
     }
 
     if (s.azblob_templates_to_put.size() > 1)
     {
-        return msg::format_error(msgAMaximumOfOneAssetWriteUrlCanBeSpecified)
-            .append_raw('\n')
-            .append_raw(NotePrefix)
-            .append(msgSeeURL, msg::url = docs::assetcaching_url);
+        context.report_error(msgAMaximumOfOneAssetWriteUrlCanBeSpecified);
+        context.report(DiagnosticLine{DiagKind::Note, msg::format(msgSeeURL, msg::url = docs::assetcaching_url)});
+        return nullopt;
     }
     if (s.url_templates_to_get.size() > 1)
     {
-        return msg::format_error(msgAMaximumOfOneAssetReadUrlCanBeSpecified)
-            .append_raw('\n')
-            .append_raw(NotePrefix)
-            .append(msgSeeURL, msg::url = docs::assetcaching_url);
+        context.report_error(msgAMaximumOfOneAssetReadUrlCanBeSpecified);
+        context.report(DiagnosticLine{DiagKind::Note, msg::format(msgSeeURL, msg::url = docs::assetcaching_url)});
+        return nullopt;
     }
 
     Optional<std::string> get_url;
@@ -2628,39 +2441,62 @@ ExpectedL<DownloadManagerConfig> vcpkg::parse_download_configuration(const Optio
                                  s.script};
 }
 
-ExpectedL<BinaryConfigParserState> vcpkg::parse_binary_provider_configs(const std::string& env_string,
-                                                                        View<std::string> args)
+ExpectedL<DownloadManagerConfig> vcpkg::parse_download_configuration(const Optional<std::string>& arg)
 {
-    BinaryConfigParserState s;
+    return adapt_context_to_expected(
+        static_cast<Optional<DownloadManagerConfig> (*)(DiagnosticContext&, const Optional<std::string>&)>(
+            parse_download_configuration),
+        arg);
+}
 
-    BinaryConfigParser default_parser("default,readwrite", "<defaults>", &s);
+Optional<BinaryConfigParserState> vcpkg::parse_binary_provider_configs(DiagnosticContext& context,
+                                                                       const std::string& env_string,
+                                                                       View<std::string> args)
+{
+    Optional<BinaryConfigParserState> result;
+    auto& s = result.emplace();
+
+    BinaryConfigParser default_parser(context, "default,readwrite", "<defaults>", 0, &s);
     default_parser.parse();
-    if (auto err = default_parser.get_error())
+    if (default_parser.any_errors())
     {
-        return *err;
+        result.clear();
+        return result;
     }
 
-    BinaryConfigParser env_parser(env_string, "VCPKG_BINARY_SOURCES", &s);
+    BinaryConfigParser env_parser(context, env_string, "VCPKG_BINARY_SOURCES", 0, &s);
     env_parser.parse();
-    if (auto err = env_parser.get_error())
+    if (env_parser.any_errors())
     {
-        return *err;
+        result.clear();
+        return result;
     }
 
     for (auto&& arg : args)
     {
-        BinaryConfigParser arg_parser(arg, nullopt, &s);
+        BinaryConfigParser arg_parser(context, arg, nullopt, 0, &s);
         arg_parser.parse();
-        if (auto err = arg_parser.get_error())
+        if (arg_parser.any_errors())
         {
-            return *err;
+            result.clear();
+            return result;
         }
     }
 
-    return s;
+    return result;
 }
 
-std::string vcpkg::format_version_for_feedref(StringView version_text, StringView abi_tag)
+ExpectedL<BinaryConfigParserState> vcpkg::parse_binary_provider_configs(const std::string& env_string,
+                                                                        View<std::string> args)
+{
+    return adapt_context_to_expected(
+        static_cast<Optional<BinaryConfigParserState> (*)(DiagnosticContext&, const std::string&, View<std::string>)>(
+            parse_binary_provider_configs),
+        env_string,
+        args);
+}
+
+std::string vcpkg::format_version_for_nugetref(StringView version_text, StringView abi_tag)
 {
     // this cannot use DotVersion::try_parse or DateVersion::try_parse,
     // since this is a subtly different algorithm
@@ -2798,7 +2634,6 @@ LocalizedString vcpkg::format_help_topic_binary_caching()
     table.format("x-azblob,<url>,<sas>[,<rw>]", msg::format(msgHelpBinaryCachingAzBlob));
     table.format("x-gcs,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingGcs));
     table.format("x-cos,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingCos));
-    table.format("x-az-universal,<organization>,<project>,<feed>[,<rw>]", msg::format(msgHelpBinaryCachingAzUpkg));
     table.blank();
 
     // NuGet sources:
@@ -2848,8 +2683,8 @@ std::string vcpkg::generate_nuget_packages_config(const ActionPlan& plan, String
     return std::move(xml.buf);
 }
 
-FeedReference vcpkg::make_nugetref(const InstallPlanAction& action, StringView prefix)
+NugetReference vcpkg::make_nugetref(const InstallPlanAction& action, StringView prefix)
 {
-    return ::make_feedref(
+    return ::make_nugetref(
         action.spec, action.version(), action.abi_info.value_or_exit(VCPKG_LINE_INFO).package_abi, prefix);
 }

@@ -70,7 +70,12 @@ namespace
 
 namespace vcpkg
 {
-    std::string FeatureSpec::to_string() const { return adapt_to_string(*this); }
+    std::string FeatureSpec::to_string() const
+    {
+        std::string ret;
+        this->to_string(ret);
+        return ret;
+    }
     void FeatureSpec::to_string(std::string& out) const
     {
         if (feature().empty()) return spec().to_string(out);
@@ -125,7 +130,7 @@ namespace vcpkg
 
     std::string PackageSpec::dir() const { return fmt::format("{}_{}", this->m_name, this->m_triplet); }
 
-    std::string PackageSpec::to_string() const { return adapt_to_string(*this); }
+    std::string PackageSpec::to_string() const { return fmt::format("{}:{}", this->name(), this->triplet()); }
     void PackageSpec::to_string(std::string& s) const
     {
         fmt::format_to(std::back_inserter(s), "{}:{}", this->name(), this->triplet());
@@ -166,13 +171,14 @@ namespace vcpkg
         return PackageSpec{name, resolve_triplet(triplet, default_triplet)};
     }
 
-    ExpectedL<ParsedQualifiedSpecifier> parse_qualified_specifier(StringView input,
-                                                                  AllowFeatures allow_features,
-                                                                  ParseExplicitTriplet parse_explicit_triplet,
-                                                                  AllowPlatformSpec allow_platform_spec)
+    Optional<ParsedQualifiedSpecifier> parse_qualified_specifier(DiagnosticContext& context,
+                                                                 StringView input,
+                                                                 AllowFeatures allow_features,
+                                                                 ParseExplicitTriplet parse_explicit_triplet,
+                                                                 AllowPlatformSpec allow_platform_spec)
     {
         // there is no origin because this function is used for user inputs
-        auto parser = ParserBase(input, nullopt, {0, 0});
+        auto parser = ParserBase(context, input, nullopt, 0);
         auto maybe_pqs = parse_qualified_specifier(parser, allow_features, parse_explicit_triplet, allow_platform_spec);
         if (!parser.at_eof())
         {
@@ -188,7 +194,7 @@ namespace vcpkg
                 auto triplet = pqs ? pqs->triplet.get() : nullptr;
                 if (pqs && triplet && !pqs->platform.has_value() && parser.cur() == '[')
                 {
-                    auto speculative_parser_copy = parser;
+                    auto speculative_parser_copy = parser.clone_with_context(null_diagnostic_context);
                     char32_t ch = '[';
                     if (parse_features(ch, *pqs, speculative_parser_copy) && speculative_parser_copy.at_eof())
                     {
@@ -212,12 +218,27 @@ namespace vcpkg
             }
         }
 
-        if (auto e = parser.get_error())
+        if (parser.any_errors())
         {
-            return LocalizedString::from_raw(e->to_string());
+            maybe_pqs.clear();
         }
 
-        return std::move(maybe_pqs).value_or_exit(VCPKG_LINE_INFO);
+        return maybe_pqs;
+    }
+
+    ExpectedL<ParsedQualifiedSpecifier> parse_qualified_specifier(StringView input,
+                                                                  AllowFeatures allow_features,
+                                                                  ParseExplicitTriplet parse_explicit_triplet,
+                                                                  AllowPlatformSpec allow_platform_spec)
+    {
+        return adapt_context_to_expected(
+            static_cast<Optional<ParsedQualifiedSpecifier> (*)(
+                DiagnosticContext&, StringView, AllowFeatures, ParseExplicitTriplet, AllowPlatformSpec)>(
+                parse_qualified_specifier),
+            input,
+            allow_features,
+            parse_explicit_triplet,
+            allow_platform_spec);
     }
 
     Optional<std::string> parse_feature_name(ParserBase& parser)

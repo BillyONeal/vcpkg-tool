@@ -139,55 +139,79 @@ namespace vcpkg
     template<class T, class Message, class F>
     static Optional<std::vector<T>> parse_list_until_eof(Message bad_comma_message, ParserBase& parser, F f)
     {
-        std::vector<T> ret;
+        Optional<std::vector<T>> ret;
+        auto& vec = ret.emplace();
         parser.skip_whitespace();
         if (parser.at_eof()) return std::vector<T>{};
-        do
+        for (;;)
         {
             auto item = f(parser);
-            if (!item) return nullopt;
-            ret.push_back(std::move(item).value_or_exit(VCPKG_LINE_INFO));
+            if (!item) break;
+            vec.push_back(std::move(item).value_or_exit(VCPKG_LINE_INFO));
             parser.skip_whitespace();
-            if (parser.at_eof()) return {std::move(ret)};
+            if (parser.at_eof()) return ret;
             if (parser.cur() != ',')
             {
                 parser.add_error(msg::format(bad_comma_message));
-                return nullopt;
+                break;
             }
             parser.next();
             parser.skip_whitespace();
-        } while (true);
+        }
+
+        ret.clear();
+        return ret;
     }
 
+    Optional<std::vector<std::string>> parse_default_features_list(DiagnosticContext& context,
+                                                                   const std::string& str,
+                                                                   Optional<StringView> origin,
+                                                                   int init_row)
+    {
+        auto parser = ParserBase(context, str, origin, init_row);
+        return parse_list_until_eof<std::string>(msgExpectedDefaultFeaturesList, parser, &parse_feature_name);
+    }
     ExpectedL<std::vector<std::string>> parse_default_features_list(const std::string& str,
                                                                     Optional<StringView> origin,
-                                                                    TextRowCol textrowcol)
+                                                                    int init_row)
     {
-        auto parser = ParserBase(str, origin, textrowcol);
-        auto opt = parse_list_until_eof<std::string>(msgExpectedDefaultFeaturesList, parser, &parse_feature_name);
-        if (!opt) return {LocalizedString::from_raw(parser.get_error()->to_string()), expected_right_tag};
-        return {std::move(opt).value_or_exit(VCPKG_LINE_INFO), expected_left_tag};
+        return adapt_context_to_expected(
+            static_cast<Optional<std::vector<std::string>> (*)(
+                DiagnosticContext&, const std::string&, Optional<StringView>, int)>(parse_default_features_list),
+            str,
+            origin,
+            init_row);
     }
-    ExpectedL<std::vector<ParsedQualifiedSpecifier>> parse_qualified_specifier_list(const std::string& str,
-                                                                                    Optional<StringView> origin,
-                                                                                    TextRowCol textrowcol)
+    Optional<std::vector<ParsedQualifiedSpecifier>> parse_qualified_specifier_list(DiagnosticContext& context,
+                                                                                   const std::string& str,
+                                                                                   Optional<StringView> origin,
+                                                                                   int init_row)
     {
-        auto parser = ParserBase(str, origin, textrowcol);
-        auto opt =
-            parse_list_until_eof<ParsedQualifiedSpecifier>(msgExpectedDependenciesList, parser, [](ParserBase& parser) {
+        auto parser = ParserBase(context, str, origin, init_row);
+        return parse_list_until_eof<ParsedQualifiedSpecifier>(
+            msgExpectedDependenciesList, parser, [](ParserBase& parser) {
                 return parse_qualified_specifier(
                     parser, AllowFeatures::Yes, ParseExplicitTriplet::Allow, AllowPlatformSpec::Yes);
             });
-        if (!opt) return {LocalizedString::from_raw(parser.get_error()->to_string()), expected_right_tag};
-
-        return {std::move(opt).value_or_exit(VCPKG_LINE_INFO), expected_left_tag};
     }
-    ExpectedL<std::vector<Dependency>> parse_dependencies_list(const std::string& str,
-                                                               StringView origin,
-                                                               TextRowCol textrowcol)
+    ExpectedL<std::vector<ParsedQualifiedSpecifier>> parse_qualified_specifier_list(const std::string& str,
+                                                                                    Optional<StringView> origin,
+                                                                                    int init_row)
     {
-        auto parser = ParserBase(str, origin, textrowcol);
-        auto opt = parse_list_until_eof<Dependency>(msgExpectedDependenciesList, parser, [](ParserBase& parser) {
+        return adapt_context_to_expected(
+            static_cast<Optional<std::vector<ParsedQualifiedSpecifier>> (*)(
+                DiagnosticContext&, const std::string&, Optional<StringView>, int)>(parse_qualified_specifier_list),
+            str,
+            origin,
+            init_row);
+    }
+    Optional<std::vector<Dependency>> parse_dependencies_list(DiagnosticContext& context,
+                                                              const std::string& str,
+                                                              StringView origin,
+                                                              int init_row)
+    {
+        auto parser = ParserBase(context, str, origin, init_row);
+        return parse_list_until_eof<Dependency>(msgExpectedDependenciesList, parser, [](ParserBase& parser) {
             return parse_qualified_specifier(
                        parser, AllowFeatures::Yes, ParseExplicitTriplet::Forbid, AllowPlatformSpec::Yes)
                 .then([&](ParsedQualifiedSpecifier&& pqs) -> Optional<Dependency> {
@@ -206,9 +230,15 @@ namespace vcpkg
                     return dependency;
                 });
         });
-        if (!opt) return {LocalizedString::from_raw(parser.get_error()->to_string()), expected_right_tag};
-
-        return {std::move(opt).value_or_exit(VCPKG_LINE_INFO), expected_left_tag};
+    }
+    ExpectedL<std::vector<Dependency>> parse_dependencies_list(const std::string& str, StringView origin, int init_row)
+    {
+        return adapt_context_to_expected(
+            static_cast<Optional<std::vector<Dependency>> (*)(DiagnosticContext&, const std::string&, StringView, int)>(
+                parse_dependencies_list),
+            str,
+            origin,
+            init_row);
     }
 }
 
@@ -268,9 +298,12 @@ namespace vcpkg::Paragraphs
         }
 
     public:
-        PghParser(StringView text, StringView origin) : ParserBase(text, origin, {1, 1}) { }
+        PghParser(DiagnosticContext& context, StringView text, StringView origin, int init_row)
+            : ParserBase(context, text, origin, init_row)
+        {
+        }
 
-        ExpectedL<std::vector<Paragraph>> get_paragraphs()
+        Optional<std::vector<Paragraph>> get_paragraphs()
         {
             std::vector<Paragraph> paragraphs;
 
@@ -280,15 +313,22 @@ namespace vcpkg::Paragraphs
                 get_paragraph(paragraphs.emplace_back());
                 match_while(is_lineend);
             }
-            if (get_error()) return LocalizedString::from_raw(get_error()->to_string());
+
+            if (any_errors())
+            {
+                return nullopt;
+            }
 
             return paragraphs;
         }
     };
 
-    ExpectedL<Paragraph> parse_single_merged_paragraph(StringView str, StringView origin)
+    Optional<Paragraph> parse_single_merged_paragraph(DiagnosticContext& context,
+                                                      StringView str,
+                                                      StringView origin,
+                                                      int init_row)
     {
-        return PghParser(str, origin).get_paragraphs().map([](std::vector<Paragraph>&& paragraphs) {
+        return PghParser(context, str, origin, init_row).get_paragraphs().map([](std::vector<Paragraph>&& paragraphs) {
             if (paragraphs.empty())
             {
                 return Paragraph{};
@@ -307,32 +347,39 @@ namespace vcpkg::Paragraphs
         });
     }
 
-    ExpectedL<Paragraph> parse_single_paragraph(StringView str, StringView origin)
+    Optional<Paragraph> parse_single_paragraph(DiagnosticContext& context,
+                                               StringView str,
+                                               StringView origin,
+                                               int init_row)
     {
-        return PghParser(str, origin)
-            .get_paragraphs()
-            .then([](std::vector<Paragraph>&& paragraphs) -> ExpectedL<Paragraph> {
-                if (paragraphs.size() == 1)
-                {
-                    return std::move(paragraphs.front());
-                }
-                else
-                {
-                    return msg::format(msgParagraphExactlyOne);
-                }
-            });
+        PghParser parser(context, str, origin, init_row);
+        auto maybe_paragraphs = parser.get_paragraphs();
+        if (auto paragraphs = maybe_paragraphs.get())
+        {
+            if (paragraphs->size() == 1)
+            {
+                return std::move(paragraphs->front());
+            }
+
+            context.report(DiagnosticLine{DiagKind::Error, origin, msg::format(msgParagraphExactlyOne)});
+        }
+
+        return nullopt;
     }
 
-    ExpectedL<Paragraph> get_single_paragraph(const ReadOnlyFilesystem& fs, const Path& control_path)
+    Optional<Paragraph> get_single_paragraph(DiagnosticContext& context,
+                                             const ReadOnlyFilesystem& fs,
+                                             const Path& control_path)
     {
         std::error_code ec;
         std::string contents = fs.read_contents(control_path, ec);
         if (ec)
         {
-            return format_filesystem_call_error(ec, "read_contents", {control_path});
+            context.report(DiagnosticLine{DiagKind::Error, control_path, LocalizedString::from_raw(ec.message())});
+            return nullopt;
         }
 
-        return parse_single_paragraph(contents, control_path);
+        return parse_single_paragraph(context, contents, control_path, 1);
     }
 
     ExpectedL<std::vector<Paragraph>> get_paragraphs(const ReadOnlyFilesystem& fs, const Path& control_path)
@@ -344,22 +391,25 @@ namespace vcpkg::Paragraphs
             return LocalizedString::from_raw(ec.message());
         }
 
-        return parse_paragraphs(contents, control_path);
+        return parse_paragraphs(contents, control_path, 1);
     }
 
-    ExpectedL<std::vector<Paragraph>> parse_paragraphs(StringView str, StringView origin)
+    Optional<std::vector<Paragraph>> parse_paragraphs(DiagnosticContext& context,
+                                                      StringView str,
+                                                      StringView origin,
+                                                      int init_row)
     {
-        return PghParser(str, origin).get_paragraphs();
+        return PghParser(context, str, origin, init_row).get_paragraphs();
     }
 
-    void append_paragraph_field(StringView name, StringView field, std::string& out_str)
+    ExpectedL<std::vector<Paragraph>> parse_paragraphs(StringView str, StringView origin, int init_row)
     {
-        if (field.empty())
-        {
-            return;
-        }
-
-        out_str.append(name.data(), name.size()).append(": ").append(field.data(), field.size()).push_back('\n');
+        return adapt_context_to_expected(
+            static_cast<Optional<std::vector<Paragraph>> (*)(DiagnosticContext&, StringView, StringView, int)>(
+                parse_paragraphs),
+            str,
+            origin,
+            init_row);
     }
 
     bool is_port_directory(const ReadOnlyFilesystem& fs, const Path& maybe_directory)
@@ -388,15 +438,17 @@ namespace vcpkg::Paragraphs
         });
     }
 
-    ExpectedL<std::unique_ptr<SourceControlFile>> try_load_control_file_text(StringView text, StringView control_path)
+    ExpectedL<std::unique_ptr<SourceControlFile>> try_load_control_file_text(StringView text,
+                                                                             StringView control_path,
+                                                                             int init_row)
     {
         StatsTimer timer(g_load_ports_stats);
-        return parse_paragraphs(text, control_path).then([&](std::vector<Paragraph>&& vector_pghs) {
+        return parse_paragraphs(text, control_path, init_row).then([&](std::vector<Paragraph>&& vector_pghs) {
             return SourceControlFile::parse_control_file(control_path, std::move(vector_pghs));
         });
     }
 
-    PortLoadResult try_load_port(const ReadOnlyFilesystem& fs, const PortLocation& port_location)
+    PortLoadResult try_load_port(const ReadOnlyFilesystem& fs, StringView port_name, const PortLocation& port_location)
     {
         StatsTimer timer(g_load_ports_stats);
 
@@ -435,7 +487,7 @@ namespace vcpkg::Paragraphs
         auto control_contents = fs.read_contents(control_path, ec);
         if (!ec)
         {
-            return PortLoadResult{try_load_control_file_text(control_contents, control_path)
+            return PortLoadResult{try_load_control_file_text(control_contents, control_path, 1)
                                       .map([&](std::unique_ptr<SourceControlFile>&& scf) {
                                           return SourceControlFileAndLocation{
                                               std::move(scf), std::move(control_path), port_location.spdx_location};
@@ -451,34 +503,34 @@ namespace vcpkg::Paragraphs
                                   std::string{}};
         }
 
-        return PortLoadResult{SourceControlFileAndLocation{}, std::string{}};
+        if (fs.exists(port_location.port_directory, IgnoreErrors{}))
+        {
+            return PortLoadResult{LocalizedString::from_raw(port_location.port_directory)
+                                      .append_raw(": ")
+                                      .append_raw(ErrorPrefix)
+                                      .append(msgPortMissingManifest2, msg::package_name = port_name),
+                                  std::string{}};
+        }
+
+        return PortLoadResult{LocalizedString::from_raw(port_location.port_directory)
+                                  .append_raw(": ")
+                                  .append_raw(ErrorPrefix)
+                                  .append(msgPortDoesNotExist, msg::package_name = port_name),
+                              std::string{}};
     }
 
     PortLoadResult try_load_port_required(const ReadOnlyFilesystem& fs,
                                           StringView port_name,
                                           const PortLocation& port_location)
     {
-        auto load_result = try_load_port(fs, port_location);
+        auto load_result = try_load_port(fs, port_name, port_location);
         auto maybe_res = load_result.maybe_scfl.get();
         if (maybe_res)
         {
             auto res = maybe_res->source_control_file.get();
             if (!res)
             {
-                if (fs.exists(port_location.port_directory, IgnoreErrors{}))
-                {
-                    load_result.maybe_scfl = LocalizedString::from_raw(port_location.port_directory)
-                                                 .append_raw(": ")
-                                                 .append_raw(ErrorPrefix)
-                                                 .append(msgPortMissingManifest2, msg::package_name = port_name);
-                }
-                else
-                {
-                    load_result.maybe_scfl = LocalizedString::from_raw(port_location.port_directory)
-                                                 .append_raw(": ")
-                                                 .append_raw(ErrorPrefix)
-                                                 .append(msgPortDoesNotExist, msg::package_name = port_name);
-                }
+                load_result.maybe_scfl = msg::format_error(msgPortDoesNotExist, msg::package_name = port_name);
             }
         }
 
@@ -518,7 +570,7 @@ namespace vcpkg::Paragraphs
         return maybe_paragraphs.error();
     }
 
-    LoadResults try_load_all_registry_ports(const RegistrySet& registries)
+    LoadResults try_load_all_registry_ports(const ReadOnlyFilesystem& fs, const RegistrySet& registries)
     {
         LoadResults ret;
         std::vector<std::string> ports = registries.get_all_reachable_port_names().value_or_exit(VCPKG_LINE_INFO);
@@ -540,8 +592,11 @@ namespace vcpkg::Paragraphs
             const auto port_entry = maybe_port_entry.get();
             if (!port_entry) continue;  // port is attributed to this registry, but loading it failed
             if (!*port_entry) continue; // port is attributed to this registry, but doesn't exist in this registry
-            auto maybe_scfl = (*port_entry)->try_load_port(*baseline_version);
-            if (const auto scfl = maybe_scfl.get())
+            auto maybe_port_location = (*port_entry)->get_version(*baseline_version);
+            const auto port_location = maybe_port_location.get();
+            if (!port_location) continue; // baseline version was not in version db (registry consistency issue)
+            auto maybe_result = try_load_port_required(fs, port_name, *port_location);
+            if (const auto scfl = maybe_result.maybe_scfl.get())
             {
                 ret.paragraphs.push_back(std::move(*scfl));
             }
@@ -549,7 +604,7 @@ namespace vcpkg::Paragraphs
             {
                 ret.errors.emplace_back(std::piecewise_construct,
                                         std::forward_as_tuple(port_name.data(), port_name.size()),
-                                        std::forward_as_tuple(std::move(maybe_scfl).error()));
+                                        std::forward_as_tuple(std::move(maybe_result.maybe_scfl).error()));
             }
         }
 
@@ -581,9 +636,10 @@ namespace vcpkg::Paragraphs
         }
     }
 
-    std::vector<SourceControlFileAndLocation> load_all_registry_ports(const RegistrySet& registries)
+    std::vector<SourceControlFileAndLocation> load_all_registry_ports(const ReadOnlyFilesystem& fs,
+                                                                      const RegistrySet& registries)
     {
-        auto results = try_load_all_registry_ports(registries);
+        auto results = try_load_all_registry_ports(fs, registries);
         load_results_print_error(results);
         return std::move(results.paragraphs);
     }
