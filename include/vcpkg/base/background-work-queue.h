@@ -43,7 +43,7 @@ struct BackgroundWorkQueue
         m_cv.notify_all();
     }
 
-    bool stopped()
+    bool stopped()  // FIXME, it seems like this question should never be asked
     {
         std::lock_guard<std::mutex> lock(m_mtx);
         return !m_running;

@@ -220,7 +220,7 @@ namespace vcpkg
     //   3. Sending any replies from the background thread through `m_bg_msg_sink`
     //   4. Ensuring any supporting data, such as tool exes, is provided before the background thread is started.
     //   5. Ensuring that work is not submitted to the background thread until the corresponding `packages` directory to
-    //   upload is no longer being actively touched by the foreground thread.
+    //   upload is no longer being actively written by the foreground thread.
     struct BinaryCache : ReadOnlyBinaryCache
     {
         static ExpectedL<BinaryCache> make(const VcpkgCmdArguments& args, const VcpkgPaths& paths, MessageSink& sink);
