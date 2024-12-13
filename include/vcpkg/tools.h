@@ -6,6 +6,7 @@
 
 #include <vcpkg/fwd/tools.h>
 
+#include <vcpkg/base/diagnostics.h>
 #include <vcpkg/base/stringview.h>
 
 #include <string>
@@ -46,15 +47,17 @@ namespace vcpkg
         virtual const std::string& get_tool_version(StringView tool, MessageSink& status_sink) const = 0;
     };
 
-    ExpectedL<std::string> extract_prefixed_nonquote(StringLiteral prefix,
-                                                     StringLiteral tool_name,
-                                                     std::string&& output,
-                                                     const Path& exe_path);
+    bool extract_prefixed_nonquote(DiagnosticContext& context,
+                                   std::string& target,
+                                   StringLiteral prefix,
+                                   StringLiteral tool_name,
+                                   const Path& exe_path);
 
-    ExpectedL<std::string> extract_prefixed_nonwhitespace(StringLiteral prefix,
-                                                          StringLiteral tool_name,
-                                                          std::string&& output,
-                                                          const Path& exe_path);
+    bool extract_prefixed_nonwhitespace(DiagnosticContext& context,
+                                        std::string& target,
+                                        StringLiteral prefix,
+                                        StringLiteral tool_name,
+                                        const Path& exe_path);
 
     ExpectedL<Path> find_system_tar(const ReadOnlyFilesystem& fs);
     ExpectedL<Path> find_system_cmake(const ReadOnlyFilesystem& fs);

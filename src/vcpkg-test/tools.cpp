@@ -62,6 +62,7 @@ TEST_CASE ("parse_tool_data_from_xml", "[tools]")
         <version>16.12.0</version>
         <exeRelativePath>node-v16.12.0-win-x64\node.exe</exeRelativePath>
         <url>https://nodejs.org/dist/v16.12.0/node-v16.12.0-win-x64.7z</url>
+
         <sha512>0bb793fce8140bd59c17f3ac9661b062eac0f611d704117774f5cb2453d717da94b1e8b17d021d47baff598dc023fb7068ed1f8a7678e446260c3db3537fa888</sha512>
         <archiveName>node-v16.12.0-win-x64.7z</archiveName>
     </tool>
@@ -118,25 +119,34 @@ TEST_CASE ("parse_tool_data_from_xml", "[tools]")
 
 TEST_CASE ("extract_prefixed_nonwhitespace", "[tools]")
 {
-    CHECK(extract_prefixed_nonwhitespace("fooutil version ", "fooutil", "fooutil version 1.2", "fooutil.exe")
-              .value_or_exit(VCPKG_LINE_INFO) == "1.2");
-    CHECK(extract_prefixed_nonwhitespace("fooutil version ", "fooutil", "fooutil version 1.2   ", "fooutil.exe")
-              .value_or_exit(VCPKG_LINE_INFO) == "1.2");
-    auto error_result =
-        extract_prefixed_nonwhitespace("fooutil version ", "fooutil", "malformed output", "fooutil.exe");
-    CHECK(!error_result.has_value());
-    CHECK(error_result.error() == "error: fooutil (fooutil.exe) produced unexpected output when attempting to "
-                                  "determine the version:\nmalformed output");
+    BufferedDiagnosticContext bdc;
+    std::string target = "fooutil version 1.2";
+    CHECK(extract_prefixed_nonwhitespace(bdc, target, "fooutil version ", "fooutil", "fooutil.exe"));
+    CHECK(target == "1.2");
+    CHECK(!bdc.any_errors());
+    target = "fooutil version 1.2   ";
+    CHECK(extract_prefixed_nonwhitespace(bdc, target, "fooutil version ", "fooutil", "fooutil.exe"));
+    CHECK(target == "1.2");
+    CHECK(!bdc.any_errors());
+    target = "malformed output";
+    CHECK(!extract_prefixed_nonwhitespace(bdc, target, "fooutil version ", "fooutil", "fooutil.exe"));
+    CHECK(bdc.to_string() == "error: fooutil (fooutil.exe) produced unexpected output when attempting to "
+                             "determine the version:\nmalformed output");
 }
 
 TEST_CASE ("extract_prefixed_nonquote", "[tools]")
 {
-    CHECK(extract_prefixed_nonquote("fooutil version ", "fooutil", "fooutil version 1.2\"", "fooutil.exe")
-              .value_or_exit(VCPKG_LINE_INFO) == "1.2");
-    CHECK(extract_prefixed_nonquote("fooutil version ", "fooutil", "fooutil version 1.2 \"  ", "fooutil.exe")
-              .value_or_exit(VCPKG_LINE_INFO) == "1.2 ");
-    auto error_result = extract_prefixed_nonquote("fooutil version ", "fooutil", "malformed output", "fooutil.exe");
-    CHECK(!error_result.has_value());
-    CHECK(error_result.error() == "error: fooutil (fooutil.exe) produced unexpected output when attempting to "
-                                  "determine the version:\nmalformed output");
+    BufferedDiagnosticContext bdc;
+    std::string target = "fooutil version 1.2\"";
+    CHECK(extract_prefixed_nonquote(bdc, target, "fooutil version ", "fooutil", "fooutil.exe"));
+    CHECK(target == "1.2");
+    CHECK(!bdc.any_errors());
+    target = "fooutil version 1.2 \"  ";
+    CHECK(extract_prefixed_nonquote(bdc, target, "fooutil version ", "fooutil", "fooutil.exe"));
+    CHECK(target == "1.2 ");
+    CHECK(!bdc.any_errors());
+    target = "malformed output";
+    CHECK(!extract_prefixed_nonquote(bdc, target, "fooutil version ", "fooutil", "fooutil.exe"));
+    CHECK(bdc.to_string() == "error: fooutil (fooutil.exe) produced unexpected output when attempting to "
+                             "determine the version:\nmalformed output");
 }

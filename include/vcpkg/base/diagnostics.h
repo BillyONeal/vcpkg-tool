@@ -92,6 +92,16 @@ namespace vcpkg
             this->report_error(std::move(message));
         }
 
+        template<VCPKG_DECL_MSG_TEMPLATE>
+        void report_error_with_log(StringView log_content, VCPKG_DECL_MSG_ARGS)
+        {
+            LocalizedString message;
+            msg::format_to(message, VCPKG_EXPAND_MSG_ARGS);
+            message.append_raw('\n');
+            message.append_raw(log_content);
+            this->report_error(std::move(message));
+        }
+
     protected:
         ~DiagnosticContext() = default;
     };

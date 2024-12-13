@@ -167,42 +167,44 @@ namespace vcpkg
         target.erase(0, begin_idx);
     }
 
-    ExpectedL<std::string> extract_prefixed_nonquote(StringLiteral prefix,
-                                                     StringLiteral tool_name,
-                                                     std::string&& output,
-                                                     const Path& exe_path)
+    bool vcpkg::extract_prefixed_nonquote(DiagnosticContext& context,
+                                          std::string& target,
+                                          StringLiteral prefix,
+                                          StringLiteral tool_name,
+                                          const Path& exe_path)
     {
-        auto idx = output.find(prefix.data(), 0, prefix.size());
+        auto idx = target.find(prefix.data(), 0, prefix.size());
         if (idx != std::string::npos)
         {
             idx += prefix.size();
-            const auto end_idx = output.find('"', idx);
-            set_string_to_subrange(output, idx, end_idx);
-            return {std::move(output), expected_left_tag};
+            const auto end_idx = target.find('"', idx);
+            set_string_to_subrange(target, idx, end_idx);
+            return true;
         }
 
-        return std::move(msg::format_error(msgUnexpectedToolOutput, msg::tool_name = tool_name, msg::path = exe_path)
-                             .append_raw('\n')
-                             .append_raw(std::move(output)));
+        context.report_error_with_log(
+            target, msgUnexpectedToolOutput, msg::tool_name = tool_name, msg::path = exe_path);
+        return false;
     }
 
-    ExpectedL<std::string> extract_prefixed_nonwhitespace(StringLiteral prefix,
-                                                          StringLiteral tool_name,
-                                                          std::string&& output,
-                                                          const Path& exe_path)
+    bool vcpkg::extract_prefixed_nonwhitespace(DiagnosticContext& context,
+                                               std::string& target,
+                                               StringLiteral prefix,
+                                               StringLiteral tool_name,
+                                               const Path& exe_path)
     {
-        auto idx = output.find(prefix.data(), 0, prefix.size());
+        auto idx = target.find(prefix.data(), 0, prefix.size());
         if (idx != std::string::npos)
         {
             idx += prefix.size();
-            const auto end_idx = output.find_first_of(" \r\n", idx, 3);
-            set_string_to_subrange(output, idx, end_idx);
-            return {std::move(output), expected_left_tag};
+            const auto end_idx = target.find_first_of(" \r\n", idx, 3);
+            set_string_to_subrange(target, idx, end_idx);
+            return true;
         }
 
-        return std::move(msg::format_error(msgUnexpectedToolOutput, msg::tool_name = tool_name, msg::path = exe_path)
-                             .append_raw('\n')
-                             .append_raw(std::move(output)));
+        context.report_error_with_log(
+            std::move(target), msgUnexpectedToolOutput, msg::tool_name = tool_name, msg::path = exe_path);
+        return false;
     }
 
     struct ToolProvider
@@ -284,7 +286,7 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::CMAKE, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output:
                     // cmake version 3.10.2
                     //
@@ -292,7 +294,13 @@ namespace vcpkg
 
                     // There are two expected output formats to handle: "cmake3 version x.x.x" and "cmake version x.x.x"
                     Strings::inplace_replace_all(output, "cmake3", "cmake");
-                    return extract_prefixed_nonwhitespace("cmake version ", Tools::CMAKE, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "cmake version ", Tools::CMAKE, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -336,12 +344,18 @@ namespace vcpkg
                 })
 #endif // ^^^ !_WIN32
 
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output:
                     // NuGet Version: 4.6.2.5055
                     // usage: NuGet <command> [args] [options]
                     // Type 'NuGet help <command>' for help on a specific command.
-                    return extract_prefixed_nonwhitespace("NuGet Version: ", Tools::NUGET, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "NuGet Version: ", Tools::NUGET, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -355,11 +369,17 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::ARIA2, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output:
                     // aria2 version 1.35.0
                     // Copyright (C) 2006, 2019 Tatsuhiro Tsujikawa
-                    return extract_prefixed_nonwhitespace("aria2 version ", Tools::ARIA2, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "aria2 version ", Tools::ARIA2, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -384,9 +404,15 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::NODE, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output: v16.12.0
-                    return extract_prefixed_nonwhitespace("v", Tools::NODE, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "v", Tools::NODE, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -414,9 +440,15 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::GIT, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output: git version 2.17.1.windows.2
-                    return extract_prefixed_nonwhitespace("git version ", Tools::GIT, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "git version ", Tools::GIT, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -431,11 +463,17 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::MONO, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output:
                     // Mono JIT compiler version 6.8.0.105 (Debian 6.8.0.105+dfsg-2 Wed Feb 26 23:23:50 UTC 2020)
-                    return extract_prefixed_nonwhitespace(
-                        "Mono JIT compiler version ", Tools::MONO, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(
+                            bdc, output, "Mono JIT compiler version ", Tools::MONO, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
 
@@ -462,10 +500,15 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::GSUTIL, exe_path, Command(exe_path).string_arg("version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output: gsutil version: 4.58
-                    return extract_prefixed_nonwhitespace(
-                        "gsutil version: ", Tools::GSUTIL, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "gsutil version: ", Tools::GSUTIL, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -480,9 +523,15 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::AWSCLI, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output: aws-cli/2.4.4 Python/3.8.8 Windows/10 exe/AMD64 prompt/off
-                    return extract_prefixed_nonwhitespace("aws-cli/", Tools::AWSCLI, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "aws-cli/", Tools::AWSCLI, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -500,14 +549,19 @@ namespace vcpkg
                        Tools::AZCLI,
                        exe_path,
                        Command(exe_path).string_arg("version").string_arg("--output").string_arg("json"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // {
                     //    ...
                     //   "azure-cli": "2.64.0",
                     //    ...
                     // }
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonquote(bdc, output, "\"azure-cli\": \"", Tools::AZCLI, exe_path))
+                    {
+                        return std::move(output);
+                    }
 
-                    return extract_prefixed_nonquote("\"azure-cli\": \"", Tools::AZCLI, std::move(output), exe_path);
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -522,10 +576,15 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::COSCLI, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output: coscli version v0.11.0-beta
-                    return extract_prefixed_nonwhitespace(
-                        "coscli version v", Tools::COSCLI, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "coscli version v", Tools::COSCLI, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -562,10 +621,15 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::POWERSHELL_CORE, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output: PowerShell 7.0.3\r\n
-                    return extract_prefixed_nonwhitespace(
-                        "PowerShell ", Tools::POWERSHELL_CORE, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "PowerShell ", Tools::POWERSHELL_CORE, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
     };
@@ -613,9 +677,15 @@ namespace vcpkg
         virtual ExpectedL<std::string> get_version(const ToolCache&, MessageSink&, const Path& exe_path) const override
         {
             return run_to_extract_version(Tools::PYTHON3, exe_path, Command(exe_path).string_arg("--version"))
-                .then([&](std::string&& output) {
+                .then([&](std::string&& output) -> ExpectedL<std::string> {
                     // Sample output: Python 3.10.2\r\n
-                    return extract_prefixed_nonwhitespace("Python ", Tools::PYTHON3, std::move(output), exe_path);
+                    BufferedDiagnosticContext bdc;
+                    if (extract_prefixed_nonwhitespace(bdc, output, "Python ", Tools::PYTHON3, exe_path))
+                    {
+                        return std::move(output);
+                    }
+
+                    return LocalizedString::from_raw(bdc.to_string());
                 });
         }
 
