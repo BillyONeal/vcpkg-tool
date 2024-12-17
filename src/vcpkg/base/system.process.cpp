@@ -790,14 +790,15 @@ namespace
         }
     };
 
-    ExpectedL<Unit> windows_create_process(std::int32_t debug_id,
-                                           ProcessInfo& process_info,
-                                           StringView command_line,
-                                           const Optional<Path>& working_directory,
-                                           const Optional<Environment>& environment,
-                                           BOOL bInheritHandles,
-                                           DWORD dwCreationFlags,
-                                           STARTUPINFOEXW& startup_info) noexcept
+    bool windows_create_process(DiagnosticContext& context,
+                                std::int32_t debug_id,
+                                ProcessInfo& process_info,
+                                StringView command_line,
+                                const Optional<Path>& working_directory,
+                                const Optional<Environment>& environment,
+                                BOOL bInheritHandles,
+                                DWORD dwCreationFlags,
+                                STARTUPINFOEXW& startup_info) noexcept
     {
         Debug::print(fmt::format("{}: CreateProcessW({})\n", debug_id, command_line));
 
@@ -840,24 +841,27 @@ namespace
                             &startup_info.StartupInfo,
                             &process_info))
         {
-            return format_system_error_message("CreateProcessW", GetLastError());
+            context.report_error(format_system_error_message("CreateProcessW", GetLastError()));
+            return false;
         }
 
-        return Unit{};
+        return true;
     }
 
     // Used to, among other things, control which handles are inherited by child processes.
     // from https://devblogs.microsoft.com/oldnewthing/20111216-00/?p=8873
     struct ProcAttributeList
     {
-        ExpectedL<Unit> create(DWORD dwAttributeCount)
+        bool create(DiagnosticContext& context, DWORD dwAttributeCount)
         {
             Checks::check_exit(VCPKG_LINE_INFO, buffer.empty());
             SIZE_T size = 0;
             if (InitializeProcThreadAttributeList(nullptr, dwAttributeCount, 0, &size) ||
                 GetLastError() != ERROR_INSUFFICIENT_BUFFER)
             {
-                return format_system_error_message("InitializeProcThreadAttributeList nullptr", GetLastError());
+                context.report_error(
+                    format_system_error_message("InitializeProcThreadAttributeList nullptr", GetLastError()));
+                return false;
             }
             Checks::check_exit(VCPKG_LINE_INFO, size > 0);
             ASSUME(size > 0);
@@ -865,18 +869,23 @@ namespace
             if (!InitializeProcThreadAttributeList(
                     reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(buffer.data()), dwAttributeCount, 0, &size))
             {
-                return format_system_error_message("InitializeProcThreadAttributeList attribute_list", GetLastError());
+                context.report_error(
+                    format_system_error_message("InitializeProcThreadAttributeList attribute_list", GetLastError()));
+                return false;
             }
 
-            return Unit{};
+            return true;
         }
-        ExpectedL<Unit> update_attribute(DWORD_PTR Attribute, PVOID lpValue, SIZE_T cbSize)
+        bool update_attribute(DiagnosticContext& context, DWORD_PTR Attribute, PVOID lpValue, SIZE_T cbSize)
         {
             if (!UpdateProcThreadAttribute(get(), 0, Attribute, lpValue, cbSize, nullptr, nullptr))
             {
-                return format_system_error_message("InitializeProcThreadAttributeList attribute_list", GetLastError());
+                context.report_error(
+                    format_system_error_message("InitializeProcThreadAttributeList attribute_list", GetLastError()));
+                return false;
             }
-            return Unit{};
+
+            return true;
         }
         LPPROC_THREAD_ATTRIBUTE_LIST get() noexcept
         {
@@ -912,17 +921,18 @@ namespace
             close_handle_mark_invalid(write_pipe);
         }
 
-        ExpectedL<Unit> create()
+        bool create(DiagnosticContext& context)
         {
             Checks::check_exit(VCPKG_LINE_INFO, read_pipe == INVALID_HANDLE_VALUE);
             Checks::check_exit(VCPKG_LINE_INFO, write_pipe == INVALID_HANDLE_VALUE);
             SECURITY_ATTRIBUTES anonymousSa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
             if (!CreatePipe(&read_pipe, &write_pipe, &anonymousSa, 0))
             {
-                return format_system_error_message("CreatePipe", GetLastError());
+                context.report_error(format_system_error_message("CreatePipe", GetLastError()));
+                return false;
             }
 
-            return Unit{};
+            return true;
         }
     };
 
@@ -960,7 +970,7 @@ namespace
             close_handle_mark_invalid(write_pipe);
         }
 
-        ExpectedL<Unit> create(std::int32_t debug_id)
+        bool create(DiagnosticContext& context, std::int32_t debug_id)
         {
             Checks::check_exit(VCPKG_LINE_INFO, read_pipe == INVALID_HANDLE_VALUE);
             Checks::check_exit(VCPKG_LINE_INFO, write_pipe == INVALID_HANDLE_VALUE);
@@ -981,17 +991,19 @@ namespace
                                           &namedPipeSa);
             if (write_pipe == INVALID_HANDLE_VALUE)
             {
-                return format_system_error_message("CreateNamedPipeW stdin", GetLastError());
+                context.report_error(format_system_error_message("CreateNamedPipeW stdin", GetLastError()));
+                return false;
             }
 
             SECURITY_ATTRIBUTES openSa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
             read_pipe = CreateFileW(pipe_name.c_str(), FILE_GENERIC_READ, 0, &openSa, OPEN_EXISTING, 0, 0);
             if (read_pipe == INVALID_HANDLE_VALUE)
             {
-                return format_system_error_message("CreateFileW stdin", GetLastError());
+                context.report_error(format_system_error_message("CreateFileW stdin", GetLastError()));
+                return false;
             }
 
-            return Unit{};
+            return true;
         }
     };
 
@@ -1156,31 +1168,34 @@ namespace
             }
         }
 
-        ExpectedL<Unit> create()
+        bool create(DiagnosticContext& context)
         {
 #if defined(__APPLE__)
             static std::mutex pipe_creation_lock;
             std::lock_guard<std::mutex> lck{pipe_creation_lock};
             if (pipe(pipefd))
             {
-                return format_system_error_message("pipe", errno);
+                context.report_error(format_system_error_message("pipe", errno));
+                return false;
             }
 
             for (size_t idx = 0; idx < 2; ++idx)
             {
                 if (fcntl(pipefd[idx], F_SETFD, FD_CLOEXEC))
                 {
-                    return format_system_error_message("fcntl", errno);
+                    context.report_error(format_system_error_message("fcntl", errno));
+                    return false;
                 }
             }
 #else  // ^^^ Apple // !Apple vvv
             if (pipe2(pipefd, O_CLOEXEC))
             {
-                return format_system_error_message("pipe2", errno);
+                context.report_error(format_system_error_message("pipe2", errno));
+                return false;
             }
 #endif // ^^^ !Apple
 
-            return Unit{};
+            return true;
         }
     };
 
@@ -1198,15 +1213,16 @@ namespace
         PosixSpawnFileActions(const PosixSpawnFileActions&) = delete;
         PosixSpawnFileActions& operator=(const PosixSpawnFileActions&) = delete;
 
-        ExpectedL<Unit> adddup2(int fd, int newfd)
+        bool adddup2(DiagnosticContext& context, int fd, int newfd)
         {
             const int error = posix_spawn_file_actions_adddup2(&actions, fd, newfd);
             if (error)
             {
-                return format_system_error_message("posix_spawn_file_actions_adddup2", error);
+                context.report_error(format_system_error_message("posix_spawn_file_actions_adddup2", error));
+                return false;
             }
 
-            return Unit{};
+            return true;
         }
     };
 
@@ -1216,7 +1232,7 @@ namespace
 
         PosixPid() : pid{-1} { }
 
-        ExpectedL<int> wait_for_termination()
+        Optional<int> wait_for_termination(DiagnosticContext& context)
         {
             int exit_code = -1;
             if (pid != -1)
@@ -1225,7 +1241,8 @@ namespace
                 const auto child = waitpid(pid, &status, 0);
                 if (child != pid)
                 {
-                    return format_system_error_message("waitpid", errno);
+                    context.report_error(format_system_error_message("waitpid", errno));
+                    return nullopt;
                 }
 
                 if (WIFEXITED(status))
@@ -1311,18 +1328,7 @@ namespace vcpkg
         return new_env;
     }
 #endif
-} // namespace vcpkg
 
-namespace
-{
-    void debug_print_cmd_execute_background_failure(int32_t debug_id, const LocalizedString& error)
-    {
-        Debug::print(fmt::format("{}: cmd_execute_background() failed: {}\n", debug_id, error));
-    }
-}
-
-namespace vcpkg
-{
     void cmd_execute_background(const Command& cmd_line)
     {
         const auto debug_id = debug_id_counter.fetch_add(1, std::memory_order_relaxed);
@@ -1334,18 +1340,15 @@ namespace vcpkg
         startup_info_ex.StartupInfo.cb = sizeof(STARTUPINFOEXW);
         startup_info_ex.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
         startup_info_ex.StartupInfo.wShowWindow = SW_HIDE;
-        auto process_create = windows_create_process(debug_id,
-                                                     process_info,
-                                                     cmd_line.command_line(),
-                                                     nullopt,
-                                                     nullopt,
-                                                     FALSE,
-                                                     CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB,
-                                                     startup_info_ex);
-        if (!process_create)
-        {
-            debug_print_cmd_execute_background_failure(debug_id, process_create.error());
-        }
+        (void)windows_create_process(Debug::g_debugging ? console_diagnostic_context : null_diagnostic_context,
+                                     debug_id,
+                                     process_info,
+                                     cmd_line.command_line(),
+                                     nullopt,
+                                     nullopt,
+                                     FALSE,
+                                     CREATE_NEW_CONSOLE | CREATE_BREAKAWAY_FROM_JOB,
+                                     startup_info_ex);
 #else  // ^^^ _WIN32 // !_WIN32
         pid_t pid;
 
@@ -1368,15 +1371,17 @@ namespace vcpkg
         int error = posix_spawn(&pid, "/bin/sh", nullptr /*file_actions*/, nullptr /*attrp*/, argv.data(), environ);
         if (error)
         {
-            debug_print_cmd_execute_background_failure(debug_id, format_system_error_message("posix_spawn", errno));
-            return;
+            Debug::print(fmt::format("{}: cmd_execute_background() failed: {}\n",
+                                     debug_id,
+                                     format_system_error_message("posix_spawn", errno)));
         }
 #endif // ^^^ !_WIN32
     }
 
-    static ExpectedL<ExitCodeIntegral> cmd_execute_impl(const Command& cmd,
-                                                        const ProcessLaunchSettings& settings,
-                                                        const int32_t debug_id)
+    static Optional<ExitCodeIntegral> cmd_execute_impl(DiagnosticContext& context,
+                                                       const Command& cmd,
+                                                       const ProcessLaunchSettings& settings,
+                                                       const int32_t debug_id)
     {
 #if defined(_WIN32)
         STARTUPINFOEXW startup_info_ex;
@@ -1386,10 +1391,10 @@ namespace vcpkg
         startup_info_ex.StartupInfo.wShowWindow = SW_HIDE;
 
         ProcAttributeList proc_attribute_list;
-        auto proc_attribute_list_create = proc_attribute_list.create(1);
+        auto proc_attribute_list_create = proc_attribute_list.create(context, 1);
         if (!proc_attribute_list_create)
         {
-            return std::move(proc_attribute_list_create).error();
+            return nullopt;
         }
 
         constexpr size_t number_of_candidate_handles = 3;
@@ -1399,17 +1404,18 @@ namespace vcpkg
         size_t number_of_handles =
             std::unique(handles_to_inherit, handles_to_inherit + number_of_candidate_handles) - handles_to_inherit;
 
-        auto maybe_error = proc_attribute_list.update_attribute(
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles_to_inherit, number_of_handles * sizeof(HANDLE));
-        if (!maybe_error.has_value())
+        if (!proc_attribute_list.update_attribute(
+                context, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles_to_inherit, number_of_handles * sizeof(HANDLE)))
         {
-            return std::move(maybe_error).error();
+            return nullopt;
         }
+
         startup_info_ex.lpAttributeList = proc_attribute_list.get();
 
         SpawnProcessGuard spawn_process_guard;
         ProcessInfo process_info;
-        auto process_create = windows_create_process(debug_id,
+        auto process_create = windows_create_process(context,
+                                                     debug_id,
                                                      process_info,
                                                      cmd.command_line(),
                                                      settings.working_directory,
@@ -1419,7 +1425,7 @@ namespace vcpkg
                                                      startup_info_ex);
         if (!process_create)
         {
-            return std::move(process_create).error();
+            return nullopt;
         }
 
         return process_info.wait();
@@ -1448,46 +1454,50 @@ namespace vcpkg
 #endif
     }
 
-    ExpectedL<ExitCodeIntegral> cmd_execute(const Command& cmd)
+    Optional<ExitCodeIntegral> cmd_execute(DiagnosticContext& context, const Command& cmd)
     {
         ProcessLaunchSettings default_process_launch_settings;
-        return cmd_execute(cmd, default_process_launch_settings);
+        return cmd_execute(context, cmd, default_process_launch_settings);
     }
 
-    ExpectedL<ExitCodeIntegral> cmd_execute(const Command& cmd, const ProcessLaunchSettings& settings)
+    Optional<ExitCodeIntegral> cmd_execute(DiagnosticContext& context,
+                                           const Command& cmd,
+                                           const ProcessLaunchSettings& settings)
     {
         const ElapsedTimer timer;
         const auto debug_id = debug_id_counter.fetch_add(1, std::memory_order_relaxed);
-        auto maybe_result = cmd_execute_impl(cmd, settings, debug_id);
+        auto maybe_exit_code = cmd_execute_impl(context, cmd, settings, debug_id);
         const auto elapsed = timer.us_64();
         g_subprocess_stats += elapsed;
-        if (auto result = maybe_result.get())
+        if (auto exit_code = maybe_exit_code.get())
         {
-            Debug::print(fmt::format("{}: cmd_execute() returned {} after {} us\n", debug_id, *result, elapsed));
+            Debug::print(fmt::format("{}: child process returned {} after {} us\n", debug_id, *exit_code, elapsed));
         }
         else
         {
             Debug::print(
-                fmt::format("{}: cmd_execute() returned ({}) after {} us\n", debug_id, maybe_result.error(), elapsed));
+                fmt::format("{}: cmd_execute() failed to launch child process after {} us\n", debug_id, elapsed));
         }
 
-        return maybe_result;
+        return maybe_exit_code;
     }
 
-    ExpectedL<ExitCodeIntegral> cmd_execute_and_stream_lines(const Command& cmd,
-                                                             const std::function<void(StringView)>& per_line_cb)
+    Optional<ExitCodeIntegral> cmd_execute_and_stream_lines(DiagnosticContext& context,
+                                                            const Command& cmd,
+                                                            const std::function<void(StringView)>& per_line_cb)
     {
         RedirectedProcessLaunchSettings default_redirected_process_launch_settings;
-        return cmd_execute_and_stream_lines(cmd, default_redirected_process_launch_settings, per_line_cb);
+        return cmd_execute_and_stream_lines(context, cmd, default_redirected_process_launch_settings, per_line_cb);
     }
 
-    ExpectedL<ExitCodeIntegral> cmd_execute_and_stream_lines(const Command& cmd,
-                                                             const RedirectedProcessLaunchSettings& settings,
-                                                             const std::function<void(StringView)>& per_line_cb)
+    Optional<ExitCodeIntegral> cmd_execute_and_stream_lines(DiagnosticContext& context,
+                                                            const Command& cmd,
+                                                            const RedirectedProcessLaunchSettings& settings,
+                                                            const std::function<void(StringView)>& per_line_cb)
     {
         Strings::LinesStream lines;
-        auto rc =
-            cmd_execute_and_stream_data(cmd, settings, [&](const StringView sv) { lines.on_data(sv, per_line_cb); });
+        auto rc = cmd_execute_and_stream_data(
+            context, cmd, settings, [&](const StringView sv) { lines.on_data(sv, per_line_cb); });
         lines.on_end(per_line_cb);
         return rc;
     }
@@ -1503,7 +1513,7 @@ namespace
         std::size_t offset;
 
         // Write a hunk of data to `target`. If there is no more input to write, returns `true`.
-        ExpectedL<bool> do_write(int target)
+        Optional<bool> do_write(DiagnosticContext& context, int target)
         {
             const auto this_write = input.size() - offset;
             // Big enough to be big, small enough to avoid implementation limits
@@ -1515,7 +1525,8 @@ namespace
                     write(target, static_cast<const void*>(input.data() + offset), this_write_clamped);
                 if (actually_written < 0)
                 {
-                    return format_system_error_message("write", errno);
+                    context.report_error(format_system_error_message("write", errno));
+                    return nullopt;
                 }
 
                 offset += actually_written;
@@ -1526,10 +1537,11 @@ namespace
     };
 #endif // ^^^ !_WIN32
 
-    ExpectedL<ExitCodeIntegral> cmd_execute_and_stream_data_impl(const Command& cmd,
-                                                                 const RedirectedProcessLaunchSettings& settings,
-                                                                 const std::function<void(StringView)>& data_cb,
-                                                                 uint32_t debug_id)
+    Optional<ExitCodeIntegral> cmd_execute_and_stream_data_impl(DiagnosticContext& context,
+                                                                const Command& cmd,
+                                                                const RedirectedProcessLaunchSettings& settings,
+                                                                const std::function<void(StringView)>& data_cb,
+                                                                uint32_t debug_id)
     {
 #if defined(_WIN32)
         std::wstring as_utf16;
@@ -1544,7 +1556,8 @@ namespace
         auto stdin_content_size_raw = stdin_content.size();
         if (stdin_content_size_raw > MAXDWORD)
         {
-            return format_system_error_message("WriteFileEx", ERROR_INSUFFICIENT_BUFFER);
+            context.report_error(format_system_error_message("WriteFileEx", ERROR_INSUFFICIENT_BUFFER));
+            return nullopt;
         }
 
         auto stdin_content_size = static_cast<DWORD>(stdin_content_size_raw);
@@ -1567,52 +1580,48 @@ namespace
         }
 
         // Create a pipe for the child process's STDIN.
-        auto stdin_create = process_info.stdin_pipe.create(debug_id);
-        if (!stdin_create)
+        if (!process_info.stdin_pipe.create(context, debug_id))
         {
-            return std::move(stdin_create).error();
+            return nullopt;
         }
 
         startup_info_ex.StartupInfo.hStdInput = process_info.stdin_pipe.read_pipe;
 
         // Create a pipe for the child process's STDOUT/STDERR.
-        auto stdout_create = process_info.stdout_pipe.create();
-        if (!stdout_create)
+        if (!process_info.stdout_pipe.create(context))
         {
-            return std::move(stdout_create).error();
+            return nullopt;
         }
 
         startup_info_ex.StartupInfo.hStdOutput = process_info.stdout_pipe.write_pipe;
         startup_info_ex.StartupInfo.hStdError = process_info.stdout_pipe.write_pipe;
 
         ProcAttributeList proc_attribute_list;
-        auto proc_attribute_list_create = proc_attribute_list.create(1);
-        if (!proc_attribute_list_create)
+        if (!proc_attribute_list.create(context, 1))
         {
-            return std::move(proc_attribute_list_create).error();
+            return nullopt;
         }
 
         HANDLE handles_to_inherit[2] = {startup_info_ex.StartupInfo.hStdOutput, startup_info_ex.StartupInfo.hStdInput};
-        auto maybe_error = proc_attribute_list.update_attribute(
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles_to_inherit, 2 * sizeof(HANDLE));
-        if (!maybe_error.has_value())
+        if (!proc_attribute_list.update_attribute(
+                context, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles_to_inherit, 2 * sizeof(HANDLE)))
         {
-            return std::move(maybe_error).error();
+            return nullopt;
         }
+
         startup_info_ex.lpAttributeList = proc_attribute_list.get();
 
-        auto process_create = windows_create_process(debug_id,
-                                                     process_info.proc_info,
-                                                     cmd.command_line(),
-                                                     settings.working_directory,
-                                                     settings.environment,
-                                                     TRUE,
-                                                     dwCreationFlags,
-                                                     startup_info_ex);
-
-        if (!process_create)
+        if (!windows_create_process(context,
+                                    debug_id,
+                                    process_info.proc_info,
+                                    cmd.command_line(),
+                                    settings.working_directory,
+                                    settings.environment,
+                                    TRUE,
+                                    dwCreationFlags,
+                                    startup_info_ex))
         {
-            return std::move(process_create).error();
+            return nullopt;
         }
 
         close_handle_mark_invalid(process_info.stdin_pipe.read_pipe);
@@ -1847,20 +1856,21 @@ namespace
 
 namespace vcpkg
 {
-    ExpectedL<ExitCodeIntegral> cmd_execute_and_stream_data(const Command& cmd,
+    Optional<ExitCodeIntegral> cmd_execute_and_stream_data(DiagnosticContext& context, const Command& cmd,
                                                             const std::function<void(StringView)>& data_cb)
     {
         RedirectedProcessLaunchSettings default_redirected_process_launch_settings;
-        return cmd_execute_and_stream_data(cmd, default_redirected_process_launch_settings, data_cb);
+        return cmd_execute_and_stream_data(context, cmd, default_redirected_process_launch_settings, data_cb);
     }
 
-    ExpectedL<ExitCodeIntegral> cmd_execute_and_stream_data(const Command& cmd,
+    Optional<ExitCodeIntegral> cmd_execute_and_stream_data(DiagnosticContext& context,
+                                                            const Command& cmd,
                                                             const RedirectedProcessLaunchSettings& settings,
                                                             const std::function<void(StringView)>& data_cb)
     {
         const ElapsedTimer timer;
         const auto debug_id = debug_id_counter.fetch_add(1, std::memory_order_relaxed);
-        auto maybe_exit_code = cmd_execute_and_stream_data_impl(cmd, settings, data_cb, debug_id);
+        auto maybe_exit_code = cmd_execute_and_stream_data_impl(context, cmd, settings, data_cb, debug_id);
         const auto elapsed = timer.us_64();
         g_subprocess_stats += elapsed;
         if (const auto exit_code = maybe_exit_code.get())
@@ -1874,17 +1884,18 @@ namespace vcpkg
         return maybe_exit_code;
     }
 
-    ExpectedL<ExitCodeAndOutput> cmd_execute_and_capture_output(const Command& cmd)
+    Optional<ExitCodeAndOutput> cmd_execute_and_capture_output(DiagnosticContext& context, const Command& cmd)
     {
         RedirectedProcessLaunchSettings default_redirected_process_launch_settings;
-        return cmd_execute_and_capture_output(cmd, default_redirected_process_launch_settings);
+        return cmd_execute_and_capture_output(context, cmd, default_redirected_process_launch_settings);
     }
 
-    ExpectedL<ExitCodeAndOutput> cmd_execute_and_capture_output(const Command& cmd,
+    Optional<ExitCodeAndOutput> cmd_execute_and_capture_output(DiagnosticContext& context,
+                                                               const Command& cmd,
                                                                 const RedirectedProcessLaunchSettings& settings)
     {
         std::string output;
-        return cmd_execute_and_stream_data(cmd, settings, [&](StringView sv) { Strings::append(output, sv); })
+        return cmd_execute_and_stream_data(context, cmd, settings, [&](StringView sv) { Strings::append(output, sv); })
             .map([&](ExitCodeIntegral exit_code) { return ExitCodeAndOutput{exit_code, std::move(output)}; });
     }
 
@@ -1960,4 +1971,24 @@ namespace vcpkg
                 expected_right_tag};
     }
 
+
+    std::string* check_zero_exit_code(DiagnosticContext& context,
+                                      Optional<ExitCodeAndOutput>& maybe_exit,
+                                      StringView exe_path)
+    {
+        if (auto exit = maybe_exit.get())
+        {
+            if (exit->exit_code == 0)
+            {
+                return &exit->output;
+            }
+
+            context.report(
+                DiagnosticLine{DiagKind::Error,
+                               exe_path,
+                               msg::format(msgProgramPathReturnedNonzeroExitCode, msg::exit_code = exit->exit_code)});
+        }
+
+        return nullptr;
+    }
 } // namespace vcpkg

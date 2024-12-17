@@ -1304,11 +1304,6 @@ DECLARE_MESSAGE(FailedToParseVersionXML,
                 (msg::tool_name, msg::version),
                 "",
                 "Could not parse version for tool {tool_name}. Version string was: {version}")
-DECLARE_MESSAGE(FailedToRunToolToDetermineVersion,
-                (msg::tool_name, msg::path),
-                "Additional information, such as the command line output, if any, will be appended on "
-                "the line after this message",
-                "Failed to run \"{path}\" to determine the {tool_name} version.")
 DECLARE_MESSAGE(FailedToStoreBackToMirror, (msg::path, msg::url), "", "Failed to store {path} to {url}.")
 DECLARE_MESSAGE(FailedToStoreBinaryCache, (msg::path), "", "Failed to store binary cache {path}")
 DECLARE_MESSAGE(FailedToTakeFileSystemLock, (), "", "Failed to take the filesystem lock")
@@ -2586,6 +2581,10 @@ DECLARE_MESSAGE(ProgramReturnedNonzeroExitCode,
                 (msg::tool_name, msg::exit_code),
                 "The program's console output is appended after this.",
                 "{tool_name} failed with exit code: ({exit_code}).")
+DECLARE_MESSAGE(ProgramPathReturnedNonzeroExitCode,
+                (msg::exit_code),
+                "",
+                "failed with exit code {exit_code}")
 DECLARE_MESSAGE(
     ProvideExportType,
     (),
@@ -3207,6 +3206,7 @@ DECLARE_MESSAGE(WhileCheckingOutPortTreeIsh,
                 (msg::package_name, msg::git_tree_sha),
                 "",
                 "while checking out port {package_name} with git tree {git_tree_sha}")
+DECLARE_MESSAGE(WhileDeterminingVersion, (), "", "while determining version")
 DECLARE_MESSAGE(WhileGettingLocalTreeIshObjectsForPorts, (), "", "while getting local treeish objects for ports")
 DECLARE_MESSAGE(WhileLookingForSpec, (msg::spec), "", "while looking for {spec}:")
 DECLARE_MESSAGE(WhileLoadingBaselineVersionForPort,
