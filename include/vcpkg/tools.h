@@ -60,7 +60,7 @@ namespace vcpkg
     ExpectedL<Path> find_system_cmake(const ReadOnlyFilesystem& fs);
 
     std::unique_ptr<ToolCache> get_tool_cache(const Filesystem& fs,
-                                              std::shared_ptr<const DownloadManager> downloader,
+                                              const DownloadGlobalSettings& download_settings,
                                               Path downloads,
                                               Path xml_config,
                                               Path tools,
