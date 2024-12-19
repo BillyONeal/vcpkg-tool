@@ -662,7 +662,7 @@ namespace vcpkg
     struct ToolCacheImpl final : ToolCache
     {
         const Filesystem& fs;
-        const std::shared_ptr<const DownloadManager> downloader;
+        AssetCachingSettings download_settings;
         const Path downloads;
         const Path xml_config;
         const Path tools;
@@ -672,13 +672,13 @@ namespace vcpkg
         vcpkg::Cache<std::string, PathAndVersion> path_version_cache;
 
         ToolCacheImpl(const Filesystem& fs,
-                      const std::shared_ptr<const DownloadManager>& downloader,
+                      const AssetCachingSettings& download_settings,
                       Path downloads,
                       Path xml_config,
                       Path tools,
                       RequireExactVersions abiToolVersionHandling)
             : fs(fs)
-            , downloader(downloader)
+            , download_settings(download_settings)
             , downloads(std::move(downloads))
             , xml_config(std::move(xml_config))
             , tools(std::move(tools))
@@ -734,7 +734,7 @@ namespace vcpkg
             const auto download_path = downloads / tool_data.download_subpath;
             if (!fs.exists(download_path, IgnoreErrors{}))
             {
-                downloader->download_file(fs, tool_data.url, {}, download_path, tool_data.sha512, null_sink);
+                download_file(download_settings, fs, tool_data.url, {}, download_path, tool_data.sha512, null_sink);
             }
             else
             {
@@ -1011,13 +1011,13 @@ namespace vcpkg
     }
 
     std::unique_ptr<ToolCache> get_tool_cache(const Filesystem& fs,
-                                              std::shared_ptr<const DownloadManager> downloader,
+                                              const AssetCachingSettings& download_settings,
                                               Path downloads,
                                               Path xml_config,
                                               Path tools,
                                               RequireExactVersions abiToolVersionHandling)
     {
         return std::make_unique<ToolCacheImpl>(
-            fs, std::move(downloader), downloads, xml_config, tools, abiToolVersionHandling);
+            fs, download_settings, downloads, xml_config, tools, abiToolVersionHandling);
     }
 }
