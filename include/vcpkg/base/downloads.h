@@ -25,11 +25,6 @@ namespace vcpkg
     // e.g. {"https","//example.org", "/index.html"}
     ExpectedL<SplitURIView> split_uri_view(StringView uri);
 
-    void verify_downloaded_file_hash(const ReadOnlyFilesystem& fs,
-                                     StringView sanitized_url,
-                                     const Path& downloaded_path,
-                                     StringView sha512);
-
     View<std::string> azure_blob_headers();
 
     std::vector<int> download_files(View<std::pair<std::string, Path>> url_pairs,
