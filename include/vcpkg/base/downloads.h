@@ -27,9 +27,10 @@ namespace vcpkg
 
     View<std::string> azure_blob_headers();
 
-    std::vector<int> download_files(View<std::pair<std::string, Path>> url_pairs,
-                                    View<std::string> headers,
-                                    View<std::string> secrets);
+    Optional<std::vector<int>> download_files_uncached(DiagnosticContext& context,
+                                                       View<std::pair<std::string, Path>> url_pairs,
+                                                       View<std::string> headers,
+                                                       View<std::string> secrets);
 
     bool submit_github_dependency_graph_snapshot(const Optional<std::string>& maybe_github_server_url,
                                                  const std::string& github_token,
@@ -42,14 +43,15 @@ namespace vcpkg
                             const Path& file,
                             StringView method = "PUT");
 
-    ExpectedL<std::string> invoke_http_request(StringView method,
-                                               View<std::string> headers,
-                                               StringView url,
-                                               StringView data = {});
+    Optional<std::string> invoke_http_request(
+        DiagnosticContext& context, StringView method, View<std::string> headers, StringView url, StringView data = {});
 
     std::string format_url_query(StringView base_url, View<std::string> query_params);
 
-    std::vector<int> url_heads(View<std::string> urls, View<std::string> headers, View<std::string> secrets);
+    Optional<std::vector<int>> url_heads(DiagnosticContext& context,
+                                         View<std::string> urls,
+                                         View<std::string> headers,
+                                         View<std::string> secrets);
 
     struct AssetCachingSettings
     {
@@ -65,22 +67,25 @@ namespace vcpkg
     };
 
     // Handles downloading and uploading to a content addressable mirror
-    void download_file(const AssetCachingSettings& download_settings,
+    bool download_file(DiagnosticContext& context,
+                       MessageSink& machine_readable_progress,
+                       const AssetCachingSettings& download_settings,
                        const Filesystem& fs,
                        const std::string& url,
                        View<std::string> headers,
                        const Path& download_path,
-                       const Optional<std::string>& sha512,
-                       MessageSink& progress_sink);
+                       const Optional<std::string>& sha512);
 
-    // Returns url that was successfully downloaded from
-    std::string download_file(const AssetCachingSettings& download_settings,
-                              const Filesystem& fs,
-                              View<std::string> urls,
-                              View<std::string> headers,
-                              const Path& download_path,
-                              const Optional<std::string>& sha512,
-                              MessageSink& progress_sink);
+    // Returns a sanitized URL was successfully downloaded from, or nullptr
+    // The url returned may not be one of the urls if there is an asset cache hit
+    Optional<std::string> download_file(DiagnosticContext& context,
+                                        MessageSink& machine_readable_progress,
+                                        const AssetCachingSettings& download_settings,
+                                        const Filesystem& fs,
+                                        View<std::string> urls,
+                                        View<std::string> headers,
+                                        const Path& download_path,
+                                        const Optional<std::string>& sha512);
 
     ExpectedL<int> put_file_to_mirror(const AssetCachingSettings& download_settings,
                                       const ReadOnlyFilesystem& fs,

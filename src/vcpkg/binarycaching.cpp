@@ -439,11 +439,20 @@ namespace
                                        make_temp_archive_path(m_buildtrees, action.spec));
             }
 
-            auto codes = download_files(url_paths, m_url_template.headers, m_secrets);
-
-            for (size_t i = 0; i < codes.size(); ++i)
+            console_diagnostic_context.statusln(msg::format(msgDownloadingBulkBinaryCache,
+                                                            msg::count = url_paths.size(),
+                                                            msg::base_url = m_url_template.url_template));
+            auto maybe_codes =
+                download_files_uncached(console_diagnostic_context, url_paths, m_url_template.headers, m_secrets);
+            auto codes = maybe_codes.get();
+            if (!codes)
             {
-                if (codes[i] == 200)
+                return;
+            }
+
+            for (size_t i = 0; i < codes->size(); ++i)
+            {
+                if ((*codes)[i] == 200)
                 {
                     out_zip_paths[i].emplace(std::move(url_paths[i].second), RemoveWhen::always);
                 }
@@ -458,10 +467,19 @@ namespace
                 urls.push_back(m_url_template.instantiate_variables(BinaryPackageReadInfo{*actions[idx]}));
             }
 
-            auto codes = url_heads(urls, {}, m_secrets);
-            for (size_t i = 0; i < codes.size(); ++i)
+            console_diagnostic_context.statusln(msg::format(
+                msgConsultBinaryCacheStatus, msg::count = urls.size(), msg::base_url = m_url_template.url_template));
+            auto maybe_codes = url_heads(console_diagnostic_context, urls, m_url_template.headers, m_secrets);
+            auto codes = maybe_codes.get();
+            if (!codes)
             {
-                out_status[i] = codes[i] == 200 ? CacheAvailability::available : CacheAvailability::unavailable;
+                // FIXME report?
+                return;
+            }
+
+            for (size_t i = 0; i < codes->size(); ++i)
+            {
+                out_status[i] = (*codes)[i] == 200 ? CacheAvailability::available : CacheAvailability::unavailable;
             }
         }
 
@@ -806,7 +824,7 @@ namespace
                 m_token_header,
                 m_accept_header.to_string(),
             };
-            auto res = invoke_http_request("GET", headers, url);
+            auto res = invoke_http_request(status_only_diagnostic_context, "GET", headers, url);
             if (auto p = res.get())
             {
                 auto maybe_json = Json::parse_object(*p, m_url);
@@ -840,7 +858,9 @@ namespace
                 url_indices.push_back(idx);
             }
 
-            const auto codes = download_files(url_paths, {}, m_secrets);
+            // FIXME status
+            const auto codes = download_files_uncached(console_diagnostic_context, url_paths, {}, m_secrets)
+                                   .value_or_exit(VCPKG_LINE_INFO);
 
             for (size_t i = 0; i < codes.size(); ++i)
             {
@@ -887,7 +907,7 @@ namespace
                 m_token_header,
             };
 
-            auto res = invoke_http_request("POST", headers, m_url, stringify(payload));
+            auto res = invoke_http_request(status_only_diagnostic_context, "POST", headers, m_url, stringify(payload));
             if (auto p = res.get())
             {
                 auto maybe_json = Json::parse_object(*p, m_url);
@@ -934,14 +954,10 @@ namespace
                         m_token_header,
                     };
 
-                    auto res = invoke_http_request("POST", headers, url, stringify(commit));
+                    auto res = invoke_http_request(console_diagnostic_context, "POST", headers, url, stringify(commit));
                     if (res)
                     {
                         ++upload_count;
-                    }
-                    else
-                    {
-                        msg::println(res.error());
                     }
                 }
             }

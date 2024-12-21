@@ -138,14 +138,22 @@ namespace vcpkg
                 urls = it_urls->second;
             }
 
-            download_file(download_settings,
-                          fs,
-                          urls,
-                          headers,
-                          file,
-                          sha,
-                          Util::Sets::contains(parsed.switches, SwitchZMachineReadableProgress) ? out_sink : null_sink);
-            Checks::exit_success(VCPKG_LINE_INFO);
+            bool machine_readable = Util::Sets::contains(parsed.switches, SwitchZMachineReadableProgress);
+            FullyBufferedDiagnosticContext bdc; // used only in machine readable mode
+            if (download_file(machine_readable ? bdc : console_diagnostic_context,
+                              machine_readable ? out_sink : null_sink,
+                              download_settings,
+                              fs,
+                              urls,
+                              headers,
+                              file,
+                              sha))
+            {
+                Checks::exit_success(VCPKG_LINE_INFO);
+            }
+
+            bdc.print_to(out_sink);
+            Checks::exit_fail(VCPKG_LINE_INFO);
         }
     }
 } // namespace vcpkg

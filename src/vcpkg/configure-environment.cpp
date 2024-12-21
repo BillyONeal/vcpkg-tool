@@ -115,20 +115,30 @@ namespace vcpkg
         const auto bundle_uri =
             "https://github.com/microsoft/vcpkg-tool/releases/download/" VCPKG_BASE_VERSION_AS_STRING
             "/vcpkg-standalone-bundle.tar.gz";
-        download_file(download_settings,
-                      fs,
-                      bundle_uri,
-                      {},
-                      bundle_tarball,
-                      MACRO_TO_STRING(VCPKG_STANDALONE_BUNDLE_SHA),
-                      null_sink);
+        BufferedDiagnosticContext bdc{out_sink};
+        if (!download_file(bdc,
+                           null_sink,
+                           download_settings,
+                           fs,
+                           bundle_uri,
+                           {},
+                           bundle_tarball,
+                           MACRO_TO_STRING(VCPKG_STANDALONE_BUNDLE_SHA)))
+        {
+            return LocalizedString::from_raw(bdc.to_string());
+        }
 #else  // ^^^ VCPKG_STANDALONE_BUNDLE_SHA / !VCPKG_STANDALONE_BUNDLE_SHA vvv
         const auto bundle_tarball = download_root / "vcpkg-standalone-bundle-latest.tar.gz";
         msg::println(Color::warning, msgDownloadingVcpkgStandaloneBundleLatest);
         fs.remove(bundle_tarball, VCPKG_LINE_INFO);
         const auto bundle_uri =
             "https://github.com/microsoft/vcpkg-tool/releases/latest/download/vcpkg-standalone-bundle.tar.gz";
-        download_file(download_settings, fs, bundle_uri, {}, bundle_tarball, nullopt, null_sink);
+        BufferedDiagnosticContext bdc{out_sink};
+        if (!download_file(
+                console_diagnostic_context, null_sink, download_settings, fs, bundle_uri, {}, bundle_tarball, nullopt))
+        {
+            return LocalizedString::from_raw(bdc.to_string());
+        }
 #endif // ^^^ !VCPKG_STANDALONE_BUNDLE_SHA
         return bundle_tarball;
     }

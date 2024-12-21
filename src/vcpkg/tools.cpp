@@ -751,7 +751,17 @@ namespace vcpkg
             }
             else
             {
-                download_file(download_settings, fs, tool_data.url, {}, download_path, tool_data.sha512, null_sink);
+                if (!download_file(console_diagnostic_context,
+                                   null_sink,
+                                   download_settings,
+                                   fs,
+                                   tool_data.url,
+                                   {},
+                                   download_path,
+                                   tool_data.sha512))
+                {
+                    Checks::exit_fail(VCPKG_LINE_INFO);
+                }
             }
 
             const auto tool_dir_path = tools / tool_data.tool_dir_subpath;
