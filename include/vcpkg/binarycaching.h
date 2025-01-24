@@ -220,7 +220,7 @@ namespace vcpkg
         BinaryCache(BinaryProviders&& providers, const Filesystem& fs);
 
         const Filesystem& m_fs;
-        Optional<ZipTool> m_zip_tool;
+        ZipTool m_zip_tool;
         bool m_needs_nuspec_data = false;
         bool m_needs_zip_file = false;
     };

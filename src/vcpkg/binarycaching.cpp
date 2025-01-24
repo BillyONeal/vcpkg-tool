@@ -2205,13 +2205,8 @@ namespace vcpkg
             if (!s.archives_to_read.empty() || !s.url_templates_to_get.empty() || !s.gcs_read_prefixes.empty() ||
                 !s.aws_read_prefixes.empty() || !s.cos_read_prefixes.empty() || s.gha_read)
             {
-                auto maybe_zip_tool = ZipTool::make(tools, out_sink);
-                if (!maybe_zip_tool.has_value())
-                {
-                    return std::move(maybe_zip_tool).error();
-                }
-                const auto& zip_tool = *maybe_zip_tool.get();
-
+                ZipTool zip_tool;
+                zip_tool.setup(tools, out_sink);
                 for (auto&& dir : s.archives_to_read)
                 {
                     ret.read.push_back(std::make_unique<FilesReadBinaryProvider>(zip_tool, fs, std::move(dir)));
@@ -2427,15 +2422,7 @@ namespace vcpkg
             b.m_needs_zip_file = Util::any_of(b.m_config.write, [](auto&& p) { return p->needs_zip_file(); });
             if (b.m_needs_zip_file)
             {
-                auto maybe_zt = ZipTool::make(paths.get_tool_cache(), sink);
-                if (auto z = maybe_zt.get())
-                {
-                    b.m_zip_tool.emplace(std::move(*z));
-                }
-                else
-                {
-                    return std::move(maybe_zt).error();
-                }
+                b.m_zip_tool.setup(paths.get_tool_cache(), sink);
             }
             return std::move(b);
         });
