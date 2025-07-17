@@ -789,6 +789,53 @@ TEST_CASE ("BinaryConfigParser Universal Packages provider", "[binaryconfigparse
     }
 }
 
+TEST_CASE ("BinaryConfigParser x-gha provider", "[binaryconfigparser]")
+{
+    auto expected_binary_cache_providers = std::set<StringLiteral>{"default", "gha"};
+
+    // Test basic x-gha configuration
+    {
+        auto maybe_parsed = parse_binary_provider_configs("x-gha", {});
+        auto& parsed = maybe_parsed.value_or_exit(VCPKG_LINE_INFO);
+        CHECK(parsed.gha_read);
+        CHECK(!parsed.gha_write);
+        CHECK(parsed.binary_cache_providers == expected_binary_cache_providers);
+    }
+
+    // Test x-gha with readwrite mode
+    {
+        auto maybe_parsed = parse_binary_provider_configs("x-gha,readwrite", {});
+        auto& parsed = maybe_parsed.value_or_exit(VCPKG_LINE_INFO);
+        CHECK(parsed.gha_read);
+        CHECK(parsed.gha_write);
+        CHECK(parsed.binary_cache_providers == expected_binary_cache_providers);
+    }
+
+    // Test x-gha with read mode
+    {
+        auto maybe_parsed = parse_binary_provider_configs("x-gha,read", {});
+        auto& parsed = maybe_parsed.value_or_exit(VCPKG_LINE_INFO);
+        CHECK(parsed.gha_read);
+        CHECK(!parsed.gha_write);
+        CHECK(parsed.binary_cache_providers == expected_binary_cache_providers);
+    }
+
+    // Test x-gha with write mode
+    {
+        auto maybe_parsed = parse_binary_provider_configs("x-gha,write", {});
+        auto& parsed = maybe_parsed.value_or_exit(VCPKG_LINE_INFO);
+        CHECK(!parsed.gha_read);
+        CHECK(parsed.gha_write);
+        CHECK(parsed.binary_cache_providers == expected_binary_cache_providers);
+    }
+
+    // Test x-gha with too many arguments (should fail)
+    {
+        auto maybe_parsed = parse_binary_provider_configs("x-gha,read,extra", {});
+        REQUIRE(!maybe_parsed.has_value());
+    }
+}
+
 TEST_CASE ("AssetConfigParser azurl provider", "[assetconfigparser]")
 {
     CHECK(parse_download_configuration({}));
