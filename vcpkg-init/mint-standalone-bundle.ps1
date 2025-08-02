@@ -108,6 +108,7 @@ try {
     Copy-Item -Path "$ArchIndependentSignedFilesRoot/scripts/posh-vcpkg.psm1" -Destination 'out/scripts/posh-vcpkg/posh-vcpkg.psm1'
     Copy-Item -Path "$ArchIndependentSignedFilesRoot/scripts/posh-vcpkg.psd1" -Destination 'out/scripts/posh-vcpkg/posh-vcpkg.psd1'
 
+    Copy-Item -Path "$ArchIndependentSignedFilesRoot/github-actions-cache-adapter.mjs" -Destination 'out/github-actions-cache-adapter.mjs'
     Copy-Item -Path "$ArchIndependentSignedFilesRoot/vcpkg-artifacts.mjs" -Destination 'out/vcpkg-artifacts.mjs'
 
     New-Item -Path "out/.vcpkg-root" -ItemType "File"

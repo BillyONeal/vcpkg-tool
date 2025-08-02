@@ -11,6 +11,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FilesToSign Include="$(IntermediateOutputPath)\github-actions-cache-adapter.mjs">
+      <Authenticode>Microsoft400</Authenticode>
+    </FilesToSign>
     <FilesToSign Include="$(IntermediateOutputPath)\vcpkg-artifacts.js">
       <Authenticode>Microsoft400</Authenticode>
     </FilesToSign>

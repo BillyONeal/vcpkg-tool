@@ -12,11 +12,11 @@ namespace vcpkg
     inline constexpr StringLiteral JsonIdAcquiredArtifacts = "acquired-artifacts";
     inline constexpr StringLiteral JsonIdActivatedArtifacts = "activated-artifacts";
     inline constexpr StringLiteral JsonIdAlgorithm = "algorithm";
-    inline constexpr StringLiteral JsonIdArchive = "archive";
     inline constexpr StringLiteral JsonIdAllCapsSHA256 = "SHA256";
     inline constexpr StringLiteral JsonIdAllCapsSHA512 = "SHA512";
     inline constexpr StringLiteral JsonIdApply = "apply";
     inline constexpr StringLiteral JsonIdArch = "arch";
+    inline constexpr StringLiteral JsonIdArchive = "archive";
     inline constexpr StringLiteral JsonIdArchiveCapitalLocation = "archiveLocation";
     inline constexpr StringLiteral JsonIdArtifact = "artifact";
     inline constexpr StringLiteral JsonIdBaseline = "baseline";
@@ -45,6 +45,7 @@ namespace vcpkg
     inline constexpr StringLiteral JsonIdDetectedCIEnvironment = "detected-ci-environment";
     inline constexpr StringLiteral JsonIdDetector = "detector";
     inline constexpr StringLiteral JsonIdDirect = "direct";
+    inline constexpr StringLiteral JsonIdDirectory = "directory";
     inline constexpr StringLiteral JsonIdDocumentation = "documentation";
     inline constexpr StringLiteral JsonIdDollarSchema = "$schema";
     inline constexpr StringLiteral JsonIdDownloads = "downloads";
@@ -83,6 +84,7 @@ namespace vcpkg
     inline constexpr StringLiteral JsonIdPlatform = "platform";
     inline constexpr StringLiteral JsonIdPortUnderscoreVersion = "port_version";
     inline constexpr StringLiteral JsonIdPortVersion = "port-version";
+    inline constexpr StringLiteral JsonIdPush = "push";
     inline constexpr StringLiteral JsonIdRef = "ref";
     inline constexpr StringLiteral JsonIdReference = "reference";
     inline constexpr StringLiteral JsonIdRegistries = "registries";
@@ -91,6 +93,7 @@ namespace vcpkg
     inline constexpr StringLiteral JsonIdRepository = "repository";
     inline constexpr StringLiteral JsonIdRequires = "requires";
     inline constexpr StringLiteral JsonIdResolved = "resolved";
+    inline constexpr StringLiteral JsonIdRestore = "restore";
     inline constexpr StringLiteral JsonIdScanned = "scanned";
     inline constexpr StringLiteral JsonIdSchemaVersion = "schema-version";
     inline constexpr StringLiteral JsonIdSettings = "settings";

@@ -634,6 +634,25 @@ namespace vcpkg
             "GameDKLatest",
             "GRDKLatest",
             "GXDKLatest",
+            // Used by @actions/cache
+            "ACTIONS_CACHE_SERVICE_V2",
+            "ACTIONS_CACHE_URL",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+            "ACTIONS_ID_TOKEN_REQUEST_URL",
+            "ACTIONS_RESULTS_URL",
+            "ACTIONS_RUNTIME_TOKEN",
+            "CACHE_UPLOAD_CHUNK_SIZE",
+            "CACHE_UPLOAD_CONCURRENCY",
+            "GITHUB_ENV",
+            "GITHUB_OUTPUT",
+            "GITHUB_PATH",
+            "GITHUB_REF",
+            "GITHUB_SERVER_URL",
+            "GITHUB_STATE",
+            "GITHUB_WORKSPACE",
+            "RUNNER_DEBUG",
+            "RUNNER_TEMP",
+            "SEGMENT_DOWNLOAD_TIMEOUT_MINS",
         };
 
         std::vector<std::string> env_prefix_string = {

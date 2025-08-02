@@ -82,9 +82,17 @@ extends:
             filePath: vcpkg-init/lock-versions.ps1
             arguments: '-Destination "$(Build.BinariesDirectory)" -VcpkgBaseVersion $(VCPKG_INITIAL_BASE_VERSION)'
         - task: UseNode@1
-          displayName: Use Node 18 or later
+          displayName: Use Node 22 or later
           inputs:
-            version: "18.x"
+            version: "22.x"
+        - task: Npm@1
+          inputs:
+            command: 'custom'
+            workingDir: 'github-actions-cache-adapter'
+            customCommand: 'ci'
+            customRegistry: 'useFeed'
+            customFeed: '0bdbc590-a062-4c3f-b0f6-9383f67865ee/105b4584-173c-41aa-8061-612294abe099'
+          displayName: Restore github-actions-cache-adapter Dev Dependencies
         - task: Npm@1
           inputs:
             command: 'custom'
@@ -94,14 +102,20 @@ extends:
             customFeed: '0bdbc590-a062-4c3f-b0f6-9383f67865ee/105b4584-173c-41aa-8061-612294abe099'
           displayName: Restore vcpkg-artifacts Dev Dependencies
         - task: ComponentGovernanceComponentDetection@0
-          displayName: Detect Components
+          displayName: Detect github-actions-cache-adapter Components
+          inputs:
+            sourceScanPath: github-actions-cache-adapter
+        - task: ComponentGovernanceComponentDetection@0
+          displayName: Detect vcpkg-artifacts Components
           inputs:
             sourceScanPath: vcpkg-artifacts
         - script: |
             mkdir "$(Build.BinariesDirectory)"
+            node "$(Build.SourcesDirectory)\github-actions-cache-adapter\node_modules\@vercel\ncc\dist\ncc\cli.js" build "$(Build.SourcesDirectory)\github-actions-cache-adapter\main.mjs" --out "$(Build.BinariesDirectory)\github-actions-cache-adapter-build"
+            move "$(Build.BinariesDirectory)\github-actions-cache-adapter-build\index.js" "$(Build.BinariesDirectory)\github-actions-cache-adapter.js"
             node "$(Build.SourcesDirectory)\vcpkg-artifacts\node_modules\@vercel\ncc\dist\ncc\cli.js" build "$(Build.SourcesDirectory)\vcpkg-artifacts\main.ts" --out "$(Build.BinariesDirectory)\vcpkg-artifacts-build"
             move "$(Build.BinariesDirectory)\vcpkg-artifacts-build\index.js" "$(Build.BinariesDirectory)\vcpkg-artifacts.js"
-          displayName: 'Build vcpkg-artifacts'
+          displayName: 'Build node.js Components'
         - script: |
             mkdir "$(Build.BinariesDirectory)\scripts"
             xcopy /F /E "$(Build.SourcesDirectory)\scripts" "$(Build.BinariesDirectory)\scripts"
@@ -124,6 +138,7 @@ extends:
           # Note that signing must happen before packing steps because the packs contain files that are themselves signed.
         - script: |
             copy "$(Build.BinariesDirectory)\vcpkg-init.ps1" "$(Build.BinariesDirectory)\vcpkg-init.cmd"
+            move "$(Build.BinariesDirectory)\github-actions-cache-adapter.js" "$(Build.BinariesDirectory)\github-actions-cache-adapter.mjs"
             move "$(Build.BinariesDirectory)\vcpkg-artifacts.js" "$(Build.BinariesDirectory)\vcpkg-artifacts.mjs"
           displayName: 'Arrange Signed Bits'
         - task: Powershell@2
@@ -143,6 +158,7 @@ extends:
             move "$(Build.BinariesDirectory)\scripts\addPoshVcpkgToPowershellProfile.ps1" "$(Build.ArtifactStagingDirectory)\staging\scripts\addPoshVcpkgToPowershellProfile.ps1"
             move "$(Build.BinariesDirectory)\scripts\posh-vcpkg.psm1" "$(Build.ArtifactStagingDirectory)\staging\scripts\posh-vcpkg.psm1"
             move "$(Build.BinariesDirectory)\scripts\posh-vcpkg.psd1" "$(Build.ArtifactStagingDirectory)\staging\scripts\posh-vcpkg.psd1"
+            move "$(Build.BinariesDirectory)\github-actions-cache-adapter.mjs" "$(Build.ArtifactStagingDirectory)\staging\github-actions-cache-adapter.mjs"
             move "$(Build.BinariesDirectory)\vcpkg-artifacts.mjs" "$(Build.ArtifactStagingDirectory)\staging\vcpkg-artifacts.mjs"
           displayName: 'Arrange Architecture-independent Files for Staging'
         - task: Powershell@2
@@ -154,6 +170,8 @@ extends:
             script: |
               $standaloneBundleSha = (Get-FileHash "$(Build.ArtifactStagingDirectory)\staging\vcpkg-standalone-bundle.tar.gz" -Algorithm SHA512).Hash.ToLowerInvariant()
               Write-Host "##vso[task.setvariable variable=VCPKG_STANDALONE_BUNDLE_SHA;isOutput=true]$standaloneBundleSha"
+              $githubActionsCacheAdapterSha = (Get-FileHash "$(Build.ArtifactStagingDirectory)\staging\github-actions-cache-adapter.mjs" -Algorithm SHA512).Hash.ToLowerInvariant()
+              Write-Host "##vso[task.setvariable variable=GITHUB_ACTIONS_CACHE_ADAPTER_SHA;isOutput=true]$githubActionsCacheAdapterSha"
               $vcpkgArtifactsSha = (Get-FileHash "$(Build.ArtifactStagingDirectory)\staging\vcpkg-artifacts.mjs" -Algorithm SHA512).Hash.ToLowerInvariant()
               Write-Host "##vso[task.setvariable variable=VCPKG_ARTIFACTS_SHA;isOutput=true]$vcpkgArtifactsSha"
       - job: macos_build
@@ -167,6 +185,7 @@ extends:
         variables:
           VCPKG_BASE_VERSION: $[ dependencies.arch_independent.outputs['versions.VCPKG_BASE_VERSION'] ]
           VCPKG_STANDALONE_BUNDLE_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_STANDALONE_BUNDLE_SHA'] ]
+          GITHUB_ACTIONS_CACHE_ADAPTER_SHA: $[ dependencies.arch_independent.outputs['shas.GITHUB_ACTIONS_CACHE_ADAPTER_SHA'] ]
           VCPKG_ARTIFACTS_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_ARTIFACTS_SHA'] ]
         templateContext:
           sdl:
@@ -188,7 +207,7 @@ extends:
           inputs:
             failOnStderr: true
             script: |
-              cmake -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" "-DVCPKG_FMT_URL=$(fmt-tarball-url)" "-DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url)" "-DVCPKG_BASE_VERSION=$VCPKG_BASE_VERSION" "-DVCPKG_VERSION=$(Build.SourceVersion)" "-DVCPKG_STANDALONE_BUNDLE_SHA=$VCPKG_STANDALONE_BUNDLE_SHA" "-DVCPKG_ARTIFACTS_SHA=$VCPKG_ARTIFACTS_SHA" -B "$(Build.BinariesDirectory)/build" 2>&1
+              cmake -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" "-DVCPKG_FMT_URL=$(fmt-tarball-url)" "-DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url)" "-DVCPKG_BASE_VERSION=$VCPKG_BASE_VERSION" "-DVCPKG_VERSION=$(Build.SourceVersion)" "-DVCPKG_STANDALONE_BUNDLE_SHA=$VCPKG_STANDALONE_BUNDLE_SHA" "-DGITHUB_ACTIONS_CACHE_ADAPTER_SHA=$GITHUB_ACTIONS_CACHE_ADAPTER_SHA" "-DVCPKG_ARTIFACTS_SHA=$VCPKG_ARTIFACTS_SHA" -B "$(Build.BinariesDirectory)/build" 2>&1
               make -j 8 -C "$(Build.BinariesDirectory)/build"
               zip -j "$(Build.ArtifactStagingDirectory)/vcpkg-macos.zip" "$(Build.BinariesDirectory)/build/vcpkg"
       - job: glibc_build
@@ -201,6 +220,7 @@ extends:
         variables:
           VCPKG_BASE_VERSION: $[ dependencies.arch_independent.outputs['versions.VCPKG_BASE_VERSION'] ]
           VCPKG_STANDALONE_BUNDLE_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_STANDALONE_BUNDLE_SHA'] ]
+          GITHUB_ACTIONS_CACHE_ADAPTER_SHA: $[ dependencies.arch_independent.outputs['shas.GITHUB_ACTIONS_CACHE_ADAPTER_SHA'] ]
           VCPKG_ARTIFACTS_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_ARTIFACTS_SHA'] ]
         templateContext:
           sdl:
@@ -226,7 +246,7 @@ extends:
             inlineScript: |
               az acr login --name vcpkgpmeofficialbuilders --resource-group vcpkg-tool-official-builds --subscription c0f11a1f-38f5-4908-8698-1aa5df75baf3
               mkdir -p "$(Agent.TempDirectory)/build"
-              docker run --rm --mount "type=bind,source=$(Build.Repository.LocalPath),target=/source,readonly" --mount "type=bind,source=$(Agent.TempDirectory)/build,target=/build" vcpkgpmeofficialbuilders-c7ajd0chdtfugffn.azurecr.io/vcpkg/vcpkg-build-linux-amd64:2025-07-28 sh -c "cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=/source/azure-pipelines/vcpkg-linux/toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url) -DVCPKG_FMT_URL=$(fmt-tarball-url) -DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA) -DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA) -DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION) -DVCPKG_VERSION=$(Build.SourceVersion) -S /source -B /build 2>&1 && ninja -C /build"
+              docker run --rm --mount "type=bind,source=$(Build.Repository.LocalPath),target=/source,readonly" --mount "type=bind,source=$(Agent.TempDirectory)/build,target=/build" vcpkgpmeofficialbuilders-c7ajd0chdtfugffn.azurecr.io/vcpkg/vcpkg-build-linux-amd64:2025-07-28 sh -c "cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=/source/azure-pipelines/vcpkg-linux/toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url) -DVCPKG_FMT_URL=$(fmt-tarball-url) -DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA) -DGITHUB_ACTIONS_CACHE_ADAPTER_SHA=$(GITHUB_ACTIONS_CACHE_ADAPTER_SHA) -DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA) -DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION) -DVCPKG_VERSION=$(Build.SourceVersion) -S /source -B /build 2>&1 && ninja -C /build"
               mv "$(Agent.TempDirectory)/build/vcpkg" "$(Build.ArtifactStagingDirectory)/vcpkg-glibc"
       - job: muslc_build
         displayName: 'muslc (Alpine) Build'
@@ -238,6 +258,7 @@ extends:
         variables:
           VCPKG_BASE_VERSION: $[ dependencies.arch_independent.outputs['versions.VCPKG_BASE_VERSION'] ]
           VCPKG_STANDALONE_BUNDLE_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_STANDALONE_BUNDLE_SHA'] ]
+          GITHUB_ACTIONS_CACHE_ADAPTER_SHA: $[ dependencies.arch_independent.outputs['shas.GITHUB_ACTIONS_CACHE_ADAPTER_SHA'] ]
           VCPKG_ARTIFACTS_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_ARTIFACTS_SHA'] ]
         templateContext:
           sdl:
@@ -263,7 +284,7 @@ extends:
             inlineScript: |
               az acr login --name vcpkgpmeofficialbuilders --resource-group vcpkg-tool-official-builds --subscription c0f11a1f-38f5-4908-8698-1aa5df75baf3
               mkdir -p "$(Agent.TempDirectory)/build"
-              docker run --rm --mount "type=bind,source=$(Build.Repository.LocalPath),target=/source,readonly" --mount "type=bind,source=$(Agent.TempDirectory)/build,target=/build" vcpkgpmeofficialbuilders-c7ajd0chdtfugffn.azurecr.io/vcpkg/vcpkg-build-alpine:3.16 sh -c "cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DCMAKE_CXX_FLAGS=\"-static -s -static-libgcc -static-libstdc++\" -DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url) -DVCPKG_FMT_URL=$(fmt-tarball-url) -DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA) -DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA) -DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION) -DVCPKG_VERSION=$(Build.SourceVersion) -S /source -B /build 2>&1 && ninja -C /build"
+              docker run --rm --mount "type=bind,source=$(Build.Repository.LocalPath),target=/source,readonly" --mount "type=bind,source=$(Agent.TempDirectory)/build,target=/build" vcpkgpmeofficialbuilders-c7ajd0chdtfugffn.azurecr.io/vcpkg/vcpkg-build-alpine:3.16 sh -c "cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DCMAKE_CXX_FLAGS=\"-static -s -static-libgcc -static-libstdc++\" -DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url) -DVCPKG_FMT_URL=$(fmt-tarball-url) -DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA) -DGITHUB_ACTIONS_CACHE_ADAPTER_SHA=$(GITHUB_ACTIONS_CACHE_ADAPTER_SHA) -DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA) -DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION) -DVCPKG_VERSION=$(Build.SourceVersion) -S /source -B /build 2>&1 && ninja -C /build"
               mv "$(Agent.TempDirectory)/build/vcpkg" "$(Build.ArtifactStagingDirectory)/vcpkg-muslc"
       - job: glibc_arm64_build
         displayName: 'glibc Arm64 Build'
@@ -276,6 +297,7 @@ extends:
         variables:
           VCPKG_BASE_VERSION: $[ dependencies.arch_independent.outputs['versions.VCPKG_BASE_VERSION'] ]
           VCPKG_STANDALONE_BUNDLE_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_STANDALONE_BUNDLE_SHA'] ]
+          GITHUB_ACTIONS_CACHE_ADAPTER_SHA: $[ dependencies.arch_independent.outputs['shas.GITHUB_ACTIONS_CACHE_ADAPTER_SHA'] ]
           VCPKG_ARTIFACTS_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_ARTIFACTS_SHA'] ]
         templateContext:
           sdl:
@@ -301,7 +323,7 @@ extends:
               inlineScript: |
                 az acr login --name vcpkgpmeofficialbuilders --resource-group vcpkg-tool-official-builds --subscription c0f11a1f-38f5-4908-8698-1aa5df75baf3
                 mkdir -p "$(Agent.TempDirectory)/build"
-                docker run --rm --mount "type=bind,source=$(Build.Repository.LocalPath),target=/source,readonly" --mount "type=bind,source=$(Agent.TempDirectory)/build,target=/build" vcpkgpmeofficialbuilders-c7ajd0chdtfugffn.azurecr.io/vcpkg/vcpkg-build-linux-arm64:2025-07-28 sh -c "cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=/source/azure-pipelines/vcpkg-arm64/toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url) -DVCPKG_FMT_URL=$(fmt-tarball-url) -DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA) -DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA) -DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION) -DVCPKG_VERSION=$(Build.SourceVersion) -S /source -B /build 2>&1 && ninja -C /build"
+                docker run --rm --mount "type=bind,source=$(Build.Repository.LocalPath),target=/source,readonly" --mount "type=bind,source=$(Agent.TempDirectory)/build,target=/build" vcpkgpmeofficialbuilders-c7ajd0chdtfugffn.azurecr.io/vcpkg/vcpkg-build-linux-arm64:2025-07-28 sh -c "cmake -G Ninja -DCMAKE_TOOLCHAIN_FILE=/source/azure-pipelines/vcpkg-arm64/toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url) -DVCPKG_FMT_URL=$(fmt-tarball-url) -DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA) -DGITHUB_ACTIONS_CACHE_ADAPTER_SHA=$(GITHUB_ACTIONS_CACHE_ADAPTER_SHA) -DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA) -DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION) -DVCPKG_VERSION=$(Build.SourceVersion) -S /source -B /build 2>&1 && ninja -C /build"
                 mv "$(Agent.TempDirectory)/build/vcpkg" "$(Build.ArtifactStagingDirectory)/vcpkg-glibc-arm64"
       - job: windows_and_sign
         displayName: 'Build Windows binaries and Sign'
@@ -318,6 +340,7 @@ extends:
           VCPKG_BASE_VERSION: $[ dependencies.arch_independent.outputs['versions.VCPKG_BASE_VERSION'] ]
           VCPKG_FULL_VERSION: $[ dependencies.arch_independent.outputs['versions.VCPKG_FULL_VERSION'] ]
           VCPKG_STANDALONE_BUNDLE_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_STANDALONE_BUNDLE_SHA'] ]
+          GITHUB_ACTIONS_CACHE_ADAPTER_SHA: $[ dependencies.arch_independent.outputs['shas.GITHUB_ACTIONS_CACHE_ADAPTER_SHA'] ]
           VCPKG_ARTIFACTS_SHA: $[ dependencies.arch_independent.outputs['shas.VCPKG_ARTIFACTS_SHA'] ]
         templateContext:
           sdl:
@@ -371,7 +394,7 @@ extends:
             script: |
               call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
               cmake.exe --version
-              cmake.exe -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_BUILD_TLS12_DOWNLOADER=ON -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON "-DVCPKG_FMT_URL=$(fmt-tarball-url)" "-DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url)" "-DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION)" "-DVCPKG_VERSION=$(Build.SourceVersion)" "-DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA)" "-DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA)" -B "$(Build.BinariesDirectory)\amd64" 2>&1
+              cmake.exe -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_BUILD_TLS12_DOWNLOADER=ON -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON "-DVCPKG_FMT_URL=$(fmt-tarball-url)" "-DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url)" "-DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION)" "-DVCPKG_VERSION=$(Build.SourceVersion)" "-DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA)" "-GITHUB_ACTIONS_CACHE_ADAPTER_SHA=$(GITHUB_ACTIONS_CACHE_ADAPTER_SHA)" "-DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA)" -B "$(Build.BinariesDirectory)\amd64" 2>&1
               ninja.exe -C "$(Build.BinariesDirectory)\amd64"
         - task: CmdLine@2
           displayName: "Build vcpkg arm64 with CMake"
@@ -380,7 +403,7 @@ extends:
             script: |
               call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=arm64 -host_arch=amd64
               cmake.exe --version
-              cmake.exe -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_BUILD_TLS12_DOWNLOADER=ON -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DVCPKG_PDB_SUFFIX="-arm64" "-DVCPKG_FMT_URL=$(fmt-tarball-url)" "-DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url)" "-DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION)" "-DVCPKG_VERSION=$(Build.SourceVersion)" "-DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA)" "-DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA)" -B "$(Build.BinariesDirectory)\arm64" 2>&1
+              cmake.exe -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DVCPKG_DEVELOPMENT_WARNINGS=ON -DVCPKG_WARNINGS_AS_ERRORS=ON -DVCPKG_BUILD_FUZZING=OFF -DVCPKG_BUILD_TLS12_DOWNLOADER=ON -DVCPKG_EMBED_GIT_SHA=ON -DVCPKG_OFFICIAL_BUILD=ON -DVCPKG_PDB_SUFFIX="-arm64" "-DVCPKG_FMT_URL=$(fmt-tarball-url)" "-DVCPKG_CMAKERC_URL=$(cmakerc-tarball-url)" "-DVCPKG_BASE_VERSION=$(VCPKG_BASE_VERSION)" "-DVCPKG_VERSION=$(Build.SourceVersion)" "-DVCPKG_STANDALONE_BUNDLE_SHA=$(VCPKG_STANDALONE_BUNDLE_SHA)" "-GITHUB_ACTIONS_CACHE_ADAPTER_SHA=$(GITHUB_ACTIONS_CACHE_ADAPTER_SHA)" "-DVCPKG_ARTIFACTS_SHA=$(VCPKG_ARTIFACTS_SHA)" -B "$(Build.BinariesDirectory)\arm64" 2>&1
               ninja.exe -C "$(Build.BinariesDirectory)\arm64"
         - task: NuGetToolInstaller@1
           inputs:
@@ -450,6 +473,7 @@ extends:
               move "$(Build.ArtifactStagingDirectory)\stagingGlibcArm64\vcpkg-glibc-arm64" "$(Build.ArtifactStagingDirectory)\drop\vcpkg-glibc-arm64"
               move "$(Build.ArtifactStagingDirectory)\stagingMuslc\vcpkg-muslc" "$(Build.ArtifactStagingDirectory)\drop\vcpkg-muslc"
               move "$(Build.ArtifactStagingDirectory)\stagingArchIndependent\vcpkg-standalone-bundle.tar.gz" "$(Build.ArtifactStagingDirectory)\drop\vcpkg-standalone-bundle.tar.gz"
+              move "$(Build.ArtifactStagingDirectory)\stagingArchIndependent\github-actions-cache-adapter.mjs" "$(Build.ArtifactStagingDirectory)\drop\github-actions-cache-adapter.mjs"
               move "$(Build.ArtifactStagingDirectory)\stagingArchIndependent\vcpkg-artifacts.mjs" "$(Build.ArtifactStagingDirectory)\drop\vcpkg-artifacts.mjs"
 
               move "$(Build.BinariesDirectory)\amd64\vcpkg.exe" "$(Build.ArtifactStagingDirectory)\drop\vcpkg.exe"

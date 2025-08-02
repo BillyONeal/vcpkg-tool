@@ -237,6 +237,14 @@ elseif(VCPKG_OFFICIAL_BUILD)
     message(FATAL_ERROR "VCPKG_STANDALONE_BUNDLE_SHA is required for official builds.")
 endif()
 
+if(GITHUB_ACTIONS_CACHE_ADAPTER_SHA)
+    target_compile_definitions(vcpkglib PUBLIC
+        "GITHUB_ACTIONS_CACHE_ADAPTER_SHA=${GITHUB_ACTIONS_CACHE_ADAPTER_SHA}"
+    )
+elseif(VCPKG_OFFICIAL_BUILD)
+    message(FATAL_ERROR "GITHUB_ACTIONS_CACHE_ADAPTER_SHA is required for official builds.")
+endif()
+
 if(VCPKG_ARTIFACTS_SHA)
     target_compile_definitions(vcpkglib PUBLIC
         "VCPKG_ARTIFACTS_SHA=${VCPKG_ARTIFACTS_SHA}"
@@ -245,8 +253,8 @@ elseif(VCPKG_OFFICIAL_BUILD)
     message(FATAL_ERROR "VCPKG_ARTIFACTS_SHA is required for official builds.")
 endif()
 
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/github-actions-cache-adapter" GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg-artifacts" VCPKG_ARTIFACTS_SOURCE_DIR)
-file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/github-actions-cache-adapter" VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR)
 if (VCPKG_NODEJS_DEPENDENCIES)
     # The directory constructed by this portion of the build script needs to be kept in sync with
     # that created by azure-pipelines/signing.yml
@@ -262,6 +270,56 @@ if (VCPKG_NODEJS_DEPENDENCIES)
     if (NOT NODEJS OR NOT NPM)
         message(FATAL_ERROR "node.js and npm must be installed when VCPKG_NODEJS_DEPENDENCIES is set")
     endif()
+
+    add_custom_command(
+        OUTPUT
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
+        COMMAND "${NPM}" ARGS "ci" "--include=dev"
+        WORKING_DIRECTORY
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}"
+        COMMENT
+            "Running npm install for @actions/cache adapter..."
+        MAIN_DEPENDENCY
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/package-lock.json"
+        VERBATIM
+        )
+
+    add_custom_target(npm-restore-actions-cache-adapter
+        ALL
+        DEPENDS
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
+        )
+    set_target_properties(npm-restore-actions-cache-adapter
+        PROPERTIES
+            ADDITIONAL_CLEAN_FILES "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
+        )
+
+    # === Target: github-actions-cache-adapter-target ===
+    set(GITHUB_ACTIONS_CACHE_ADAPTER_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/github-actions-cache-adapter-build")
+    set(GITHUB_ACTIONS_CACHE_ADAPTER_BINARY "${CMAKE_CURRENT_BINARY_DIR}/github-actions-cache-adapter.mjs")
+    add_custom_command(
+        OUTPUT
+            ${GITHUB_ACTIONS_CACHE_ADAPTER_BINARY}
+        COMMAND
+            "${NODEJS}" ARGS "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules/@vercel/ncc/dist/ncc/cli.js"
+                build "main.mjs"
+                --out "${GITHUB_ACTIONS_CACHE_ADAPTER_BUILD_DIR}"
+        COMMAND
+            "${CMAKE_COMMAND}" ARGS -E copy "${GITHUB_ACTIONS_CACHE_ADAPTER_BUILD_DIR}/index.mjs" "${GITHUB_ACTIONS_CACHE_ADAPTER_BINARY}"
+        WORKING_DIRECTORY
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}"
+        DEPENDS
+            npm-restore-actions-cache-adapter
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/.npmrc"
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/main.mjs"
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/package-lock.json"
+            "${GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/package.json"
+        COMMENT
+            "Building github-actions-cache-adapter..."
+        VERBATIM
+        )
+
+    add_custom_target(github-actions-cache-adapter-target ALL DEPENDS "${GITHUB_ACTIONS_CACHE_ADAPTER_BINARY}")
 
     add_custom_command(
         OUTPUT
@@ -284,29 +342,6 @@ if (VCPKG_NODEJS_DEPENDENCIES)
     set_target_properties(npm-restore-artifacts
         PROPERTIES
             ADDITIONAL_CLEAN_FILES "${VCPKG_ARTIFACTS_SOURCE_DIR}/node_modules"
-        )
-
-    add_custom_command(
-        OUTPUT
-            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
-        COMMAND "${NPM}" ARGS "ci" "--include=dev"
-        WORKING_DIRECTORY
-            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}"
-        COMMENT
-            "Running npm install for @actions/cache adapter..."
-        MAIN_DEPENDENCY
-            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/package-lock.json"
-        VERBATIM
-        )
-
-    add_custom_target(npm-restore-actions-cache-adapter
-        ALL
-        DEPENDS
-            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
-        )
-    set_target_properties(npm-restore-actions-cache-adapter
-        PROPERTIES
-            ADDITIONAL_CLEAN_FILES "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
         )
 
 # === Target: vcpkg-artifacts-target ===

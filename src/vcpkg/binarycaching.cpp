@@ -890,38 +890,53 @@ namespace
         }
     };
 
+    static Json::Object make_gha_entry(StringView key, StringView directory)
+    {
+        Json::Object obj;
+        obj.insert(JsonIdKey, Json::Value::string(key));
+        obj.insert(JsonIdDirectory, Json::Value::string(directory));
+        return obj;
+    }
+
     struct GHABinaryProvider : IReadBinaryProvider
     {
         GHABinaryProvider(const ToolCache& cache, MessageSink& sink) : node_js(cache.get_tool_path(Tools::NODE, sink))
         {
         }
 
-        void fetch(View<const InstallPlanAction*> actions, Span<RestoreResult> out_status) const override
+        void fetch(View<const InstallPlanAction*> actions, Span<RestoreResult> /* out_status*/) const override
         {
             // std::vector<std::pair<std::string, Path>> url_paths;
             // std::vector<size_t> url_indices;
-            FullyBufferedDiagnosticContext fbdc{};
+            Json::Array restore_operations;
             for (size_t idx = 0; idx < actions.size(); ++idx)
             {
                 auto&& action = *actions[idx];
-                const auto& abi = action.package_abi().value_or_exit(VCPKG_LINE_INFO);
-                // FIXME pass the list through stdin instead for 1 proc
-                auto restore_command = node_js;
-                restore_command.string_arg("restore").string_arg(abi).string_arg(
-                    action.package_dir.value_or_exit(VCPKG_LINE_INFO));
-                auto maybe_result =
-                    cmd_execute_and_capture_output(fbdc, restore_command, RedirectedProcessLaunchSettings{});
-                if (auto exit = maybe_result.get())
-                {
-                    if (exit->exit_code == 0)
-                    {
-                        out_status[idx] = RestoreResult::restored;
-                    }
-                    else
-                    {
-                        out_status[idx] = RestoreResult::unavailable;
-                    }
-                }
+                restore_operations.push_back(
+                    make_gha_entry(action.package_abi().value_or_exit(VCPKG_LINE_INFO),
+                                   action.package_dir.value_or_exit(VCPKG_LINE_INFO).native()));
+            }
+
+            Json::Object obj;
+            obj.insert(JsonIdRestore, std::move(restore_operations));
+            auto restore_command = node_js;
+            restore_command.string_arg("github-actions-cache-adapter.mjs");
+            RedirectedProcessLaunchSettings settings;
+            settings.stdin_content = Json::stringify(obj);
+            msg::write_unlocalized_text_to_stderr(Color::none, settings.stdin_content);
+            settings.echo_in_debug = EchoInDebug::Show;
+            auto maybe_result = cmd_execute_and_capture_output(console_diagnostic_context, restore_command, settings);
+            if (auto exit = maybe_result.get())
+            {
+                msg::write_unlocalized_text_to_stderr(Color::none, exit->output);
+                // if (exit->exit_code == 0)
+                //{
+                //     out_status[idx] = RestoreResult::restored;
+                // }
+                // else
+                //{
+                //     out_status[idx] = RestoreResult::unavailable;
+                // }
             }
         }
 
@@ -945,12 +960,21 @@ namespace
 
         size_t push_success(const BinaryPackageWriteInfo& request, MessageSink& msg_sink) override
         {
+            Json::Array push_operations;
+            push_operations.push_back(make_gha_entry(request.package_abi, request.package_dir));
+            Json::Object obj;
+            obj.insert(JsonIdPush, std::move(push_operations));
             PrintingDiagnosticContext pdc{msg_sink};
             auto push_command = node_js;
-            push_command.string_arg("push-success").string_arg(request.package_abi).string_arg(request.package_dir);
-            auto maybe_result = cmd_execute_and_capture_output(pdc, push_command, RedirectedProcessLaunchSettings{});
+            push_command.string_arg("github-actions-cache-adapter.mjs");
+            RedirectedProcessLaunchSettings settings;
+            settings.stdin_content = Json::stringify(obj);
+            settings.echo_in_debug = EchoInDebug::Show;
+            msg::write_unlocalized_text_to_stderr(Color::none, settings.stdin_content);
+            auto maybe_result = cmd_execute_and_capture_output(pdc, push_command, settings);
             if (auto exit = maybe_result.get())
             {
+                msg::write_unlocalized_text_to_stderr(Color::none, exit->output);
                 if (exit->exit_code == 0)
                 {
                     return 1;

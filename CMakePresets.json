@@ -6,8 +6,8 @@
             "hidden": true,
             "cacheVariables": {
                 "VCPKG_OFFICIAL_BUILD": true,
-                "VCPKG_BASE_VERSION": "2023-09-15",
-                "VCPKG_STANDALONE_BUNDLE_SHA": "8b28c1829802a133941805c68004427052588ba6eefbdf9fb6061151a92c131491df7e29470309e804450c075d2f0673515d5d8c19997148ebcb2874493d304d"
+                "VCPKG_BASE_VERSION": "2025-07-16",
+                "VCPKG_STANDALONE_BUNDLE_SHA": "76de4d8107d13522468f9e3972aaff1c1ed939b766d85fdd3abedb12a845aa57e6a9e97924af7acc3e9a074bf2563343a2003e83d7308cf97e2c932bd200b022"
             }
         },
         {
@@ -50,7 +50,7 @@
             }
         },
         {
-            "name": "artifacts",
+            "name": "node",
             "hidden": true,
             "cacheVariables": {
                 "VCPKG_NODEJS_DEPENDENCIES": true
@@ -74,10 +74,10 @@
             ]
         },
         {
-            "name": "Win-x64-Debug-WithArtifacts",
+            "name": "Win-x64-Debug-WithNode",
             "inherits": [
                 "Win-x64-Debug",
-                "artifacts"
+                "node"
             ]
         },
         {
@@ -111,7 +111,7 @@
         },
         {
             "name": "windows-ci",
-            "inherits": "Win-x64-Debug-WithArtifacts",
+            "inherits": "Win-x64-Debug-WithNode",
             "cacheVariables": {
                 "VCPKG_WARNINGS_AS_ERRORS": true
             }
@@ -128,11 +128,11 @@
             }
         },
         {
-            "name": "linux-with-artifacts",
+            "name": "linux-with-node",
             "inherits": [
                 "base",
                 "linux",
-                "artifacts"
+                "node"
             ]
         },
         {
@@ -151,7 +151,7 @@
             "inherits": [
                 "base",
                 "debug",
-                "artifacts",
+                "node",
                 "linux"
             ],
             "cacheVariables": {
@@ -172,7 +172,7 @@
             "inherits": [
                 "base",
                 "debug",
-                "artifacts",
+                "node",
                 "linux"
             ],
             "cacheVariables": {
@@ -195,7 +195,7 @@
             "inherits": [
                 "base",
                 "debug",
-                "artifacts",
+                "node",
                 "macos"
             ],
             "cacheVariables": {

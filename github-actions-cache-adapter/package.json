@@ -1,5 +1,19 @@
 {
+  "name": "github-actions-cache-adapter",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Microsoft/vcpkg-tool.git"
+  },
+  "author": "Microsoft",
+  "license": "MIT",
   "dependencies": {
     "@actions/cache": "^4.0.3"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.3"
   }
 }
