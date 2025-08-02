@@ -31,7 +31,7 @@ Param(
     [string]$StartAt,
     [Parameter(Mandatory = $false)]
     [string]$VcpkgExe,
-    [Parameter(Mandatory = $false, HelpMessage="Run artifacts tests, only usable when vcpkg was built with VCPKG_ARTIFACTS_DEVELOPMENT=ON")]
+    [Parameter(Mandatory = $false, HelpMessage="Run artifacts tests, only usable when vcpkg was built with VCPKG_NODEJS_DEPENDENCIES=ON")]
     [switch]$RunArtifactsTests
 )
 

@@ -22,7 +22,7 @@ option(VCPKG_BUILD_TLS12_DOWNLOADER "Enable building the tls12-downloader" OFF)
 option(VCPKG_BUILD_FUZZING "Option for enabling vcpkg-fuzz support" OFF)
 option(VCPKG_EMBED_GIT_SHA "Option for to fill in the Git SHA version; off by default to avoid privacy concerns out of official builds" OFF)
 option(VCPKG_ADD_SOURCELINK "Option for enabling SourceLink in debug information on Windows/MSVC builds" "${VCPKG_EMBED_GIT_SHA}")
-option(VCPKG_ARTIFACTS_DEVELOPMENT "Hard code path to artifacts TypeScript. Requires node.js and npm." OFF)
+option(VCPKG_NODEJS_DEPENDENCIES "Hard code path to artifacts TypeScript. Requires node.js and npm." OFF)
 option(VCPKG_OFFICIAL_BUILD "Option to cause immediate failure if variables required for official builds are unset." OFF)
 set(VCPKG_PDB_SUFFIX "" CACHE STRING "Append this string to the name of the PDB for shipping vcpkg binaries.")
 
@@ -246,7 +246,8 @@ elseif(VCPKG_OFFICIAL_BUILD)
 endif()
 
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg-artifacts" VCPKG_ARTIFACTS_SOURCE_DIR)
-if (VCPKG_ARTIFACTS_DEVELOPMENT)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/github-actions-cache-adapter" VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR)
+if (VCPKG_NODEJS_DEPENDENCIES)
     # The directory constructed by this portion of the build script needs to be kept in sync with
     # that created by azure-pipelines/signing.yml
 
@@ -259,7 +260,7 @@ if (VCPKG_ARTIFACTS_DEVELOPMENT)
     find_program(NODEJS "node")
     find_program(NPM "npm${NPM_SUFFIX}")
     if (NOT NODEJS OR NOT NPM)
-        message(FATAL_ERROR "node.js and npm must be installed when VCPKG_ARTIFACTS_DEVELOPMENT is set")
+        message(FATAL_ERROR "node.js and npm must be installed when VCPKG_NODEJS_DEPENDENCIES is set")
     endif()
 
     add_custom_command(
@@ -269,21 +270,44 @@ if (VCPKG_ARTIFACTS_DEVELOPMENT)
         WORKING_DIRECTORY
             "${VCPKG_ARTIFACTS_SOURCE_DIR}"
         COMMENT
-            "Running npm install..."
+            "Running npm install for artifacts..."
         MAIN_DEPENDENCY
             "${VCPKG_ARTIFACTS_SOURCE_DIR}/package-lock.json"
         VERBATIM
         )
 
-    add_custom_target(npm-restore
+    add_custom_target(npm-restore-artifacts
         ALL
         DEPENDS
             "${VCPKG_ARTIFACTS_SOURCE_DIR}/node_modules"
-            )
-    set_target_properties(npm-restore
+        )
+    set_target_properties(npm-restore-artifacts
         PROPERTIES
             ADDITIONAL_CLEAN_FILES "${VCPKG_ARTIFACTS_SOURCE_DIR}/node_modules"
-    )
+        )
+
+    add_custom_command(
+        OUTPUT
+            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
+        COMMAND "${NPM}" ARGS "ci" "--include=dev"
+        WORKING_DIRECTORY
+            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}"
+        COMMENT
+            "Running npm install for @actions/cache adapter..."
+        MAIN_DEPENDENCY
+            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/package-lock.json"
+        VERBATIM
+        )
+
+    add_custom_target(npm-restore-actions-cache-adapter
+        ALL
+        DEPENDS
+            "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
+        )
+    set_target_properties(npm-restore-actions-cache-adapter
+        PROPERTIES
+            ADDITIONAL_CLEAN_FILES "${VCPKG_GITHUB_ACTIONS_CACHE_ADAPTER_SOURCE_DIR}/node_modules"
+        )
 
 # === Target: vcpkg-artifacts-target ===
 # The suffix "-target" is added to avoid a conflict in CMake with the directory named vcpkg-artifacts and the target named vcpkg-artifacts.
@@ -333,7 +357,7 @@ if (VCPKG_ARTIFACTS_DEVELOPMENT)
         WORKING_DIRECTORY
             "${VCPKG_ARTIFACTS_SOURCE_DIR}"
         DEPENDS
-            npm-restore
+            npm-restore-artifacts
             ${VCPKG_ARTIFACTS_SOURCES}
             "${VCPKG_ARTIFACTS_SOURCE_DIR}/tsconfig.json"
             "${VCPKG_ARTIFACTS_SOURCE_DIR}/package.json"
@@ -444,7 +468,7 @@ set_property(TARGET vcpkg PROPERTY PDB_NAME "vcpkg${VCPKG_PDB_SUFFIX}")
 
 # === Target: generate-message-map ===
 set(GENERATE_MESSAGE_MAP_DEPENDENCIES vcpkg)
-if (VCPKG_ARTIFACTS_DEVELOPMENT)
+if (VCPKG_NODEJS_DEPENDENCIES)
     list(APPEND GENERATE_MESSAGE_MAP_DEPENDENCIES "${VCPKG_ARTIFACTS_SOURCE_DIR}/locales/messages.json")
 endif()
 
@@ -484,7 +508,7 @@ if (BUILD_TESTING)
     if(VCPKG_BUILD_BENCHMARKING)
         target_compile_options(vcpkg-test PRIVATE -DCATCH_CONFIG_ENABLE_BENCHMARKING)
     endif()
-    if(VCPKG_ARTIFACTS_DEVELOPMENT)
+    if(VCPKG_NODEJS_DEPENDENCIES)
         add_test(NAME artifacts COMMAND "${NODEJS}" "${VCPKG_ARTIFACTS_SOURCE_DIR}/node_modules/mocha/bin/mocha.js" "--import=tsx" WORKING_DIRECTORY "${VCPKG_ARTIFACTS_SOURCE_DIR}")
     endif()
 endif()

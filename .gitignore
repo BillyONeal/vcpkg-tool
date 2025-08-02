@@ -12,6 +12,7 @@
 CMakeLists.txt.user
 .cache
 /vcpkg-artifacts/node_modules/
+/github-actions-cache-adapter/node_modules/
 **/dist/
 /vcpkg-root
 /CMakeUserPresets.json

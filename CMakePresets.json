@@ -53,7 +53,7 @@
             "name": "artifacts",
             "hidden": true,
             "cacheVariables": {
-                "VCPKG_ARTIFACTS_DEVELOPMENT": true
+                "VCPKG_NODEJS_DEPENDENCIES": true
             }
         },
         {

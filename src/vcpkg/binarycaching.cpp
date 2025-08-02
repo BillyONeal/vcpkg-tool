@@ -890,6 +890,83 @@ namespace
         }
     };
 
+    struct GHABinaryProvider : IReadBinaryProvider
+    {
+        GHABinaryProvider(const ToolCache& cache, MessageSink& sink) : node_js(cache.get_tool_path(Tools::NODE, sink))
+        {
+        }
+
+        void fetch(View<const InstallPlanAction*> actions, Span<RestoreResult> out_status) const override
+        {
+            // std::vector<std::pair<std::string, Path>> url_paths;
+            // std::vector<size_t> url_indices;
+            FullyBufferedDiagnosticContext fbdc{};
+            for (size_t idx = 0; idx < actions.size(); ++idx)
+            {
+                auto&& action = *actions[idx];
+                const auto& abi = action.package_abi().value_or_exit(VCPKG_LINE_INFO);
+                // FIXME pass the list through stdin instead for 1 proc
+                auto restore_command = node_js;
+                restore_command.string_arg("restore").string_arg(abi).string_arg(
+                    action.package_dir.value_or_exit(VCPKG_LINE_INFO));
+                auto maybe_result =
+                    cmd_execute_and_capture_output(fbdc, restore_command, RedirectedProcessLaunchSettings{});
+                if (auto exit = maybe_result.get())
+                {
+                    if (exit->exit_code == 0)
+                    {
+                        out_status[idx] = RestoreResult::restored;
+                    }
+                    else
+                    {
+                        out_status[idx] = RestoreResult::unavailable;
+                    }
+                }
+            }
+        }
+
+        void precheck(View<const InstallPlanAction*>, Span<CacheAvailability>) const override { }
+        LocalizedString restored_message(size_t count,
+                                         std::chrono::high_resolution_clock::duration elapsed) const override
+        {
+            return msg::format(msgRestoredPackagesFromGHA, msg::count = count, msg::elapsed = ElapsedTime(elapsed));
+        }
+
+    private:
+        Command node_js;
+    };
+
+    struct GHABinaryPushProvider : IWriteBinaryProvider
+    {
+        GHABinaryPushProvider(const ToolCache& cache, MessageSink& sink)
+            : node_js(cache.get_tool_path(Tools::NODE, sink))
+        {
+        }
+
+        size_t push_success(const BinaryPackageWriteInfo& request, MessageSink& msg_sink) override
+        {
+            PrintingDiagnosticContext pdc{msg_sink};
+            auto push_command = node_js;
+            push_command.string_arg("push-success").string_arg(request.package_abi).string_arg(request.package_dir);
+            auto maybe_result = cmd_execute_and_capture_output(pdc, push_command, RedirectedProcessLaunchSettings{});
+            if (auto exit = maybe_result.get())
+            {
+                if (exit->exit_code == 0)
+                {
+                    return 1;
+                }
+            }
+
+            return 0;
+        }
+
+        bool needs_nuspec_data() const override { return false; }
+        bool needs_zip_file() const override { return false; }
+
+    private:
+        Command node_js;
+    };
+
     template<class ResultOnSuccessType>
     static ExpectedL<ResultOnSuccessType> flatten_generic(const ExpectedL<ExitCodeAndOutput>& maybe_exit,
                                                           StringView tool_name,
@@ -2015,7 +2092,17 @@ namespace
             }
             else if (segments[0].second == "x-gha")
             {
-                add_warning(msg::format(msgGhaBinaryCacheDeprecated, msg::url = docs::binarycaching_url));
+                // Scheme: x-gha[,<readwrite>]
+                if (segments.size() > 2)
+                {
+                    return add_error(
+                        msg::format(msgInvalidArgumentRequiresZeroOrOneArgument, msg::binary_source = "gha"),
+                        segments[2].first);
+                }
+
+                handle_readwrite(state->gha_read, state->gha_write, segments, 1);
+
+                state->binary_cache_providers.insert("gha");
             }
             else if (segments[0].second == "http")
             {
@@ -2611,7 +2698,7 @@ namespace vcpkg
 
             if (!s.archives_to_read.empty() || !s.url_templates_to_get.empty() || !s.gcs_read_prefixes.empty() ||
                 !s.aws_read_prefixes.empty() || !s.cos_read_prefixes.empty() || !s.upkg_templates_to_get.empty() ||
-                !s.azcopy_read_templates.empty())
+                !s.azcopy_read_templates.empty() || s.gha_read)
             {
                 ZipTool zip_tool;
                 zip_tool.setup(tools, out_sink);
@@ -2655,6 +2742,11 @@ namespace vcpkg
                     m_config.read.push_back(std::make_unique<AzCopyStorageProvider>(
                         zip_tool, fs, buildtrees, std::move(prefix), azcopy_tool));
                 }
+
+                if (s.gha_read)
+                {
+                    m_config.read.push_back(std::make_unique<GHABinaryProvider>(tools, out_sink));
+                }
             }
             if (!s.upkg_templates_to_put.empty())
             {
@@ -2690,6 +2782,10 @@ namespace vcpkg
             {
                 m_config.write.push_back(
                     std::make_unique<ObjectStoragePushProvider>(std::move(s.cos_write_prefixes), cos_tool));
+            }
+            if (s.gha_write)
+            {
+                m_config.write.push_back(std::make_unique<GHABinaryPushProvider>(tools, out_sink));
             }
 
             if (!s.sources_to_read.empty() || !s.configs_to_read.empty() || !s.sources_to_write.empty() ||
