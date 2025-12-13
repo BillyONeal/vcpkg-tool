@@ -98,15 +98,6 @@ namespace
         });
     }
 
-    const SortedVector<std::string>* find_triplet_exclusions(const ExclusionsMap& exclusions_map,
-                                                             const Triplet& triplet)
-    {
-        auto it = Util::find_if(exclusions_map.triplets, [&triplet](const TripletExclusions& exclusions) {
-            return exclusions.triplet == triplet;
-        });
-        return it == exclusions_map.triplets.end() ? nullptr : &it->exclusions;
-    }
-
     ActionPlan compute_full_plan(const VcpkgPaths& paths,
                                  const PortFileProvider& provider,
                                  const CMakeVars::CMakeVarProvider& var_provider,
@@ -267,10 +258,10 @@ namespace
                           ExclusionsMap& exclusions_map)
     {
         auto it_exclusions = settings.find(opt);
-        exclusions_map.insert(triplet,
-                              it_exclusions == settings.end()
-                                  ? SortedVector<std::string>{}
-                                  : SortedVector<std::string>(Strings::split(it_exclusions->second, ',')));
+        if (it_exclusions != settings.end())
+        {
+            exclusions_map.insert_hard(triplet, SortedVector<std::string>{Strings::split(it_exclusions->second, ',')});
+        }
     }
 
     bool print_regressions(const std::map<PackageSpec, CiResult>& ci_results,
@@ -329,9 +320,9 @@ namespace
         // the skipped ports.
         CiSpecsResult result;
         const SortedVector<std::string>* const target_triplet_exclusions =
-            find_triplet_exclusions(exclusions_map, target_triplet);
+            exclusions_map.find_exclusions(target_triplet);
         const SortedVector<std::string>* const host_triplet_exclusions =
-            (host_triplet == target_triplet) ? nullptr : find_triplet_exclusions(exclusions_map, host_triplet);
+            (host_triplet == target_triplet) ? nullptr : exclusions_map.find_exclusions(host_triplet);
         auto all_control_files = provider.load_all_control_files();
 
         // populate `var_provider` to evaluate supports expressions for all ports:

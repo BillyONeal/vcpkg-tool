@@ -40,10 +40,12 @@ namespace vcpkg
 
     struct ExclusionsMap
     {
-        std::vector<TripletExclusions> triplets;
-
-        void insert(Triplet triplet, SortedVector<std::string>&& exclusions);
+        void insert_hard(Triplet triplet, SortedVector<std::string>&& exclusions);
         bool is_excluded(const PackageSpec& spec) const;
+        const SortedVector<std::string>* find_exclusions(const Triplet& triplet) const;
+
+    private:
+        std::vector<TripletExclusions> triplets;
     };
 
     std::vector<CiBaselineLine> parse_ci_baseline(StringView text, StringView origin, ParseMessages& messages);

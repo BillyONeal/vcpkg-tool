@@ -16,7 +16,7 @@ namespace vcpkg
     {
     }
 
-    void ExclusionsMap::insert(Triplet triplet, SortedVector<std::string>&& exclusions)
+    void ExclusionsMap::insert_hard(Triplet triplet, SortedVector<std::string>&& exclusions)
     {
         for (auto& triplet_exclusions : triplets)
         {
@@ -41,6 +41,13 @@ namespace vcpkg
         }
 
         return false;
+    }
+
+    const SortedVector<std::string>* ExclusionsMap::find_exclusions(const Triplet& triplet) const
+    {
+        auto it = Util::find_if(
+            triplets, [&triplet](const TripletExclusions& exclusions) { return exclusions.triplet == triplet; });
+        return it == triplets.end() ? nullptr : &it->exclusions;
     }
 
     std::vector<CiBaselineLine> parse_ci_baseline(StringView text, StringView origin, ParseMessages& messages)
@@ -145,39 +152,30 @@ namespace vcpkg
         std::vector<PackageSpec> expected_failures;
         std::vector<PackageSpec> required_success;
         std::map<Triplet, std::vector<std::string>> added_exclusions;
-        for (const auto& triplet_entry : exclusions_map.triplets)
-        {
-            added_exclusions.emplace(
-                std::piecewise_construct, std::forward_as_tuple(triplet_entry.triplet), std::tuple<>{});
-        }
-
         for (auto& line : lines)
         {
-            auto triplet_match = added_exclusions.find(line.triplet);
-            if (triplet_match != added_exclusions.end())
+            auto& triplet_exclusion = added_exclusions[line.triplet];
+            if (line.state == CiBaselineState::Pass)
             {
-                if (line.state == CiBaselineState::Pass)
+                required_success.emplace_back(line.port_name, line.triplet);
+                continue;
+            }
+            if (line.state == CiBaselineState::Fail)
+            {
+                expected_failures.emplace_back(line.port_name, line.triplet);
+                if (skip_failures == SkipFailures::No)
                 {
-                    required_success.emplace_back(line.port_name, line.triplet);
                     continue;
                 }
-                if (line.state == CiBaselineState::Fail)
-                {
-                    expected_failures.emplace_back(line.port_name, line.triplet);
-                    if (skip_failures == SkipFailures::No)
-                    {
-                        continue;
-                    }
-                }
-
-                triplet_match->second.push_back(line.port_name);
             }
+
+            triplet_exclusion.push_back(line.port_name);
         }
 
-        for (auto& triplet_entry : exclusions_map.triplets)
+        for (auto& added_exclusions_entry : added_exclusions)
         {
-            triplet_entry.exclusions.append(
-                SortedVector<std::string>(std::move(added_exclusions.find(triplet_entry.triplet)->second)));
+            exclusions_map.insert_hard(added_exclusions_entry.first,
+                                       SortedVector<std::string>{std::move(added_exclusions_entry.second)});
         }
 
         return CiBaselineData{

@@ -203,42 +203,59 @@ bill-made-up-another-skip:x64-linux=skip)"; // note no trailing newline
         CHECK(expected_from_example_input == actual);
     }
 
-    SECTION ("Applies Skips and Fails")
+    static const SortedVector<PackageSpec> expected_expected_failures{
+        PackageSpec{"apr", arm64_windows},
+        PackageSpec{"azure-storage-cpp", arm64_windows},
+        PackageSpec{"aubio", arm_uwp},
+        PackageSpec{"aubio", x64_uwp},
+        PackageSpec{"bde", x64_linux},
+        PackageSpec{"bitserializer", x64_osx},
+        PackageSpec{"blitz", x64_uwp},
+        PackageSpec{"blitz", arm64_windows},
+        PackageSpec{"blitz", arm_uwp},
+        PackageSpec{"blosc", arm64_windows},
+        PackageSpec{"blosc", arm_uwp},
+        PackageSpec{"blosc", x64_uwp},
+        PackageSpec{"bond", arm_uwp},
+        PackageSpec{"bond", x64_osx},
+        PackageSpec{"bond", x64_uwp},
+        PackageSpec{"botan", x64_uwp},
+        PackageSpec{"breakpad", arm64_windows},
+        PackageSpec{"buck-yeh-bux", x64_linux},
+        PackageSpec{"buck-yeh-bux-mariadb-client", x64_linux},
+        PackageSpec{"caf", arm_uwp},
+        PackageSpec{"caf", x64_uwp},
+        PackageSpec{"caffe2", x86_windows},
+        PackageSpec{"caffe2", arm64_windows},
+        PackageSpec{"c-ares", arm_uwp},
+        PackageSpec{"c-ares", x64_uwp},
+        PackageSpec{"casclib", arm_uwp},
+        PackageSpec{"casclib", x64_uwp},
+    };
+
+    SECTION ("Applies Skips and Fails - No Skip Failures")
     {
         ExclusionsMap exclusions;
-        exclusions.insert(x64_uwp, {});   // example triplet
-        exclusions.insert(x64_linux, {}); // example host triplet
         auto actual = parse_and_apply_ci_baseline(expected_from_example_input, exclusions, SkipFailures::No);
-        const SortedVector<PackageSpec> expected_expected_failures{
-            PackageSpec{"aubio", x64_uwp},
-            PackageSpec{"bde", x64_linux},
-            PackageSpec{"blitz", x64_uwp},
-            PackageSpec{"blosc", x64_uwp},
-            PackageSpec{"bond", x64_uwp},
-            PackageSpec{"botan", x64_uwp},
-            PackageSpec{"buck-yeh-bux", x64_linux},
-            PackageSpec{"buck-yeh-bux-mariadb-client", x64_linux},
-            PackageSpec{"c-ares", x64_uwp},
-            PackageSpec{"caf", x64_uwp},
-            PackageSpec{"casclib", x64_uwp},
-        };
 
         CHECK(actual.expected_failures == expected_expected_failures);
-        CHECK(exclusions.triplets.size() == 2);
-        CHECK(exclusions.triplets[0].exclusions == SortedVector<std::string>{"catch-classic"});
-        CHECK(exclusions.triplets[1].exclusions ==
-              SortedVector<std::string>{"catch-classic", "bill-made-up-another-skip"});
+        auto uwp_exclusions = exclusions.find_exclusions(x64_uwp);
+        auto x64_linux_exclusions = exclusions.find_exclusions(x64_linux);
+        CHECK(*uwp_exclusions == SortedVector<std::string>{"catch-classic"});
+        CHECK(*x64_linux_exclusions == SortedVector<std::string>{"catch-classic", "bill-made-up-another-skip"});
+    }
 
-        exclusions.triplets[0].exclusions.clear();
-        exclusions.triplets[1].exclusions.clear();
-
-        actual = parse_and_apply_ci_baseline(expected_from_example_input, exclusions, SkipFailures::Yes);
+    SECTION ("Applies Skips and Fails - Yes Skip Failures")
+    {
+        ExclusionsMap exclusions;
+        auto actual = parse_and_apply_ci_baseline(expected_from_example_input, exclusions, SkipFailures::Yes);
         CHECK(actual.expected_failures == expected_expected_failures);
-        CHECK(exclusions.triplets.size() == 2);
-        CHECK(exclusions.triplets[0].exclusions ==
+        auto uwp_exclusions = exclusions.find_exclusions(x64_uwp);
+        auto x64_linux_exclusions = exclusions.find_exclusions(x64_linux);
+        CHECK(*uwp_exclusions ==
               SortedVector<std::string>{
                   "aubio", "blitz", "blosc", "bond", "botan", "c-ares", "caf", "casclib", "catch-classic"});
-        CHECK(exclusions.triplets[1].exclusions ==
+        CHECK(*x64_linux_exclusions ==
               SortedVector<std::string>{
                   "bde", "buck-yeh-bux", "buck-yeh-bux-mariadb-client", "catch-classic", "bill-made-up-another-skip"});
     }
