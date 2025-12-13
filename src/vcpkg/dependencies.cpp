@@ -1255,7 +1255,6 @@ namespace vcpkg
         std::vector<const InstallPlanAction*> new_plans;
         std::vector<const InstallPlanAction*> already_installed_plans;
         std::vector<const InstallPlanAction*> already_installed_head_plans;
-        std::vector<const InstallPlanAction*> excluded;
 
         const bool has_non_user_requested_packages =
             Util::any_of(action_plan.install_actions, [](const InstallPlanAction& action) -> bool {
