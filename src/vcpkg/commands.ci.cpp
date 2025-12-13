@@ -249,12 +249,10 @@ namespace
                 }
             }
 
-            if (Util::Sets::contains(to_keep, it->spec))
+            if (Util::Sets::contains(to_keep, it->spec) && it_known->second != BuildResult::Excluded &&
+                it_known->second != BuildResult::Unsupported)
             {
-                if (it_known->second != BuildResult::Excluded && it_known->second != BuildResult::Unsupported)
-                {
-                    to_keep.insert(it->package_dependencies.begin(), it->package_dependencies.end());
-                }
+                to_keep.insert(it->package_dependencies.begin(), it->package_dependencies.end());
             }
         }
 
