@@ -1499,15 +1499,93 @@ namespace
     {
         AzureUpkgTool(const Path& tool_path) : az_cli(tool_path) { }
 
-        Command base_cmd(const AzureUpkgSource& src,
-                         StringView package_name,
-                         StringView package_version,
-                         StringView verb) const
+        Optional<std::string> get_token(DiagnosticContext& context) const
+        {
+            Command cmd{az_cli};
+            // az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
+            cmd.string_arg("account")
+                .string_arg("get-access-token")
+                .string_arg("--query")
+                .string_arg("accessToken")
+                .string_arg("--resource")
+                .string_arg("499b84ac-1321-427f-aa17-267ca6975798")
+                .string_arg("-o")
+                .string_arg("tsv");
+
+            RedirectedProcessLaunchSettings show_in_debug_settings;
+            show_in_debug_settings.echo_in_debug = EchoInDebug::Show;
+            auto maybe_code_and_output = cmd_execute_and_capture_output(context, cmd, show_in_debug_settings);
+            if (auto code_and_output = maybe_code_and_output.get())
+            {
+                if (code_and_output->exit_code == 0)
+                {
+                    Strings::inplace_trim_end(code_and_output->output);
+                    return std::move(*code_and_output).output;
+                }
+
+                report_nonzero_exit_code_and_output(
+                    context, cmd, *code_and_output, show_in_debug_settings.echo_in_debug);
+                // az command line error message: Before you can run Azure DevOps commands, you need to
+                // run the login command(az login if using AAD/MSA identity else az devops login if using PAT
+                // token) to setup credentials.
+                if (code_and_output->output.find("you need to run the login command") != std::string::npos)
+                {
+                    context.report(DiagnosticLine{
+                        DiagKind::Error,
+                        msg::format(msgFailedVendorAuthentication,
+                                    msg::vendor = "Universal Packages",
+                                    msg::url = "https://learn.microsoft.com/cli/azure/authenticate-azure-cli")});
+                }
+            }
+
+            return nullopt;
+        }
+
+        bool download(DiagnosticContext& context,
+                      StringView token,
+                      const AzureUpkgSource& src,
+                      StringView package_name,
+                      StringView package_version,
+                      const Path& download_path) const
+        {
+            Command cmd{artifact_tool};
+            cmd.string_arg("universal")
+                .string_arg("download")
+                .string_arg("--service")
+                .string_arg(src.organization)
+                .string_arg("--patvar")
+                .string_arg(EnvironmentVariableAzureDevOpsExtArtifactToolPatvar)
+                .string_arg("--feed")
+                .string_arg(src.feed)
+                .string_arg("--package-name")
+                .string_arg(package_name)
+                .string_arg("--package-version")
+                .string_arg(package_version)
+                .string_arg("--path")
+                .string_arg(download_path);
+            if (!src.project.empty())
+            {
+                cmd.string_arg("--project").string_arg(src.project);
+            }
+
+            RedirectedProcessLaunchSettings launch_settings;
+            auto& env = launch_settings.environment.emplace(get_clean_environment());
+            env.add_entry(EnvironmentVariableAzureDevOpsExtArtifactToolPatvar, token);
+            auto maybe_result = cmd_execute_and_capture_output(context, cmd, launch_settings);
+            return check_zero_exit_code(context, cmd, maybe_result);
+        }
+
+        bool publish(DiagnosticContext& context,
+                     const AzureUpkgSource& src,
+                     StringView package_name,
+                     StringView package_version,
+                     const Path& zip_path,
+                     StringView description) const
         {
             Command cmd{az_cli};
             cmd.string_arg("artifacts")
                 .string_arg("universal")
-                .string_arg(verb)
+                .string_arg("publish")
                 .string_arg("--organization")
                 .string_arg(src.organization)
                 .string_arg("--feed")
@@ -1520,28 +1598,6 @@ namespace
             {
                 cmd.string_arg("--project").string_arg(src.project).string_arg("--scope").string_arg("project");
             }
-            return cmd;
-        }
-
-        bool download(DiagnosticContext& context,
-                      const AzureUpkgSource& src,
-                      StringView package_name,
-                      StringView package_version,
-                      const Path& download_path) const
-        {
-            Command cmd = base_cmd(src, package_name, package_version, "download");
-            cmd.string_arg("--path").string_arg(download_path);
-            return run_az_artifacts_cmd(context, cmd);
-        }
-
-        bool publish(DiagnosticContext& context,
-                     const AzureUpkgSource& src,
-                     StringView package_name,
-                     StringView package_version,
-                     const Path& zip_path,
-                     StringView description) const
-        {
-            Command cmd = base_cmd(src, package_name, package_version, "publish");
             cmd.string_arg("--description").string_arg(description).string_arg("--path").string_arg(zip_path);
             return run_az_artifacts_cmd(context, cmd);
         }
@@ -1577,6 +1633,7 @@ namespace
         }
 
         Path az_cli;
+        Path artifact_tool = "C:\\Users\\bion\\.Azure\\azuredevops\\cli\\tools\\artifacttool\\ArtifactTool_win-x64_0.2.515\\artifacttool.exe";
     };
 
     struct AzureUpkgPutBinaryProvider : public IWriteBinaryProvider
@@ -1646,25 +1703,30 @@ namespace
                           Span<Optional<ZipResource>> out_zips) const override
         {
             WarningDiagnosticContext wdc{context};
-            for (size_t i = 0; i < actions.size(); ++i)
+            auto maybe_token = m_azure_tool.get_token(wdc);
+            if (auto token = maybe_token.get())
             {
-                const auto& action = *actions[i];
-                const auto info = BinaryPackageReadInfo{action};
-                const auto ref = make_feedref(info, "");
-
-                Path temp_dir = m_buildtrees / fmt::format("upkg_download_{}", info.package_abi);
-                Path temp_zip_path = temp_dir / fmt::format("{}.zip", ref.id);
-                Path final_zip_path = m_buildtrees / fmt::format("{}.zip", ref.id);
-
-                const auto result = m_azure_tool.download(wdc, m_source, ref.id, ref.version, temp_dir);
-                if (result && fs.exists(temp_zip_path, IgnoreErrors{}) && fs.rename(wdc, temp_zip_path, final_zip_path))
+                for (size_t i = 0; i < actions.size(); ++i)
                 {
-                    out_zips[i].emplace(std::move(final_zip_path), RemoveWhen::always);
-                }
+                    const auto& action = *actions[i];
+                    const auto info = BinaryPackageReadInfo{action};
+                    const auto ref = make_feedref(info, "");
 
-                if (fs.exists(temp_dir, IgnoreErrors{}))
-                {
-                    fs.remove_all(temp_dir, IgnoreErrors{});
+                    Path temp_dir = m_buildtrees / fmt::format("upkg_download_{}", info.package_abi);
+                    Path temp_zip_path = temp_dir / fmt::format("{}.zip", ref.id);
+                    Path final_zip_path = m_buildtrees / fmt::format("{}.zip", ref.id);
+
+                    const auto result = m_azure_tool.download(wdc, *token, m_source, ref.id, ref.version, temp_dir);
+                    if (result && fs.exists(temp_zip_path, IgnoreErrors{}) &&
+                        fs.rename(wdc, temp_zip_path, final_zip_path))
+                    {
+                        out_zips[i].emplace(std::move(final_zip_path), RemoveWhen::always);
+                    }
+
+                    if (fs.exists(temp_dir, IgnoreErrors{}))
+                    {
+                        fs.remove_all(temp_dir, IgnoreErrors{});
+                    }
                 }
             }
         }

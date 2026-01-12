@@ -484,6 +484,8 @@ namespace vcpkg
     inline constexpr StringLiteral EnvironmentVariableAndroidNdkHome = "ANDROID_NDK_HOME";
     inline constexpr StringLiteral EnvironmentVariableAppData = "APPDATA";
     inline constexpr StringLiteral EnvironmentVariableAppveyor = "APPVEYOR";
+    inline constexpr StringLiteral EnvironmentVariableAzureDevOpsExtArtifactToolPatvar =
+        "AZURE_DEVOPS_EXT_ARTIFACTTOOL_PATVAR";
     inline constexpr StringLiteral EnvironmentVariableBuildId = "BUILD_ID";
     inline constexpr StringLiteral EnvironmentVariableBuildNumber = "BUILD_NUMBER";
     inline constexpr StringLiteral EnvironmentVariableBuildRepositoryId = "BUILD_REPOSITORY_ID";
