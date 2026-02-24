@@ -54,6 +54,17 @@ namespace vcpkg
         }
     };
 
+    constexpr char path_separator_char =
+#if defined(_WIN32)
+        ';'
+#else
+        ':'
+#endif
+        ;
+
+    inline constexpr char path_separator_buf[] = {path_separator_char, '\0'};
+    inline constexpr StringLiteral path_separator{path_separator_buf};
+
     bool is_symlink(FileType s);
     bool is_regular_file(FileType s);
     bool is_directory(FileType s);
@@ -103,6 +114,8 @@ namespace vcpkg
         // reads any remaining chunks of the file; used to implement read_to_end
         void read_to_end_suffix(
             std::string& output, std::error_code& ec, char* buffer, size_t buffer_size, size_t last_read);
+        uint64_t size(LineInfo li) const;
+        uint64_t size(std::error_code& ec) const;
     };
 
     struct WriteFilePointer : FilePointer
@@ -333,6 +346,8 @@ namespace vcpkg
         int64_t last_write_time(const Path& target, LineInfo li) const noexcept;
 
         virtual bool last_write_time(DiagnosticContext& context, const Path& target, int64_t new_time) const = 0;
+
+        virtual bool set_executable(DiagnosticContext& context, const Path& target) const = 0;
 
         using ReadOnlyFilesystem::current_path;
         virtual void current_path(const Path& new_current_path, std::error_code&) const = 0;

@@ -104,7 +104,6 @@ namespace vcpkg
     inline constexpr StringLiteral JsonIdUrl = "url";
     inline constexpr StringLiteral JsonIdVcpkgAssetSources = "vcpkg-asset-sources";
     inline constexpr StringLiteral JsonIdVcpkgConfiguration = "vcpkg-configuration";
-    inline constexpr StringLiteral JsonIdVcpkgDisableMetrics = "vcpkg-disable-metrics";
     inline constexpr StringLiteral JsonIdVcpkgDotJson = "vcpkg.json";
     inline constexpr StringLiteral JsonIdVcpkgDownloads = "vcpkg-downloads";
     inline constexpr StringLiteral JsonIdVcpkgRoot = "vcpkg-root";
@@ -591,4 +590,9 @@ namespace vcpkg
     inline constexpr StringLiteral StatusInstalled = "installed";
     inline constexpr StringLiteral StatusNotInstalled = "not-installed";
     inline constexpr StringLiteral StatusPurge = "purge";
+
+    // App Insights JSON response fields
+    inline constexpr StringLiteral AppInsightsResponseItemsReceived = "itemsReceived";
+    inline constexpr StringLiteral AppInsightsResponseItemsAccepted = "itemsAccepted";
+    inline constexpr StringLiteral AppInsightsResponseErrors = "errors";
 }
