@@ -15,6 +15,32 @@ namespace
 {
     using namespace vcpkg;
 
+#if defined(_WIN32)
+    void remove_dotnet_package_artifacts(const Filesystem& fs,
+                                         const Path& package_dir,
+                                         StringView package_id,
+                                         StringView version)
+    {
+        const auto lowercase_id = Strings::ascii_to_lowercase(package_id);
+        const auto exact_id = package_id.to_string();
+        const auto version_string = version.to_string();
+
+        std::array<Path, 6> paths_to_remove = {
+            package_dir / ".nupkg.metadata",
+            package_dir / ".signature.p7s",
+            package_dir / fmt::format("{}.{}.nupkg", lowercase_id, version_string),
+            package_dir / fmt::format("{}.{}.nupkg.sha512", lowercase_id, version_string),
+            package_dir / fmt::format("{}.{}.nupkg", exact_id, version_string),
+            package_dir / fmt::format("{}.{}.nupkg.sha512", exact_id, version_string),
+        };
+
+        for (const auto& path : paths_to_remove)
+        {
+            (void)fs.remove(path, IgnoreErrors{});
+        }
+    }
+#endif // ^^^ _WIN32
+
     bool postprocess_extract_archive(DiagnosticContext& context,
                                      Optional<ExitCodeAndOutput>&& maybe_exit_and_output,
                                      const Path& tool,
@@ -49,8 +75,8 @@ namespace
                              const Path& archive,
                              const Path& to_path)
     {
-        const auto* nuget_exe = tools.get_tool_path(context, fs, Tools::NUGET);
-        if (!nuget_exe)
+        const auto* dotnet_exe = tools.get_tool_path(context, fs, Tools::DOTNET);
+        if (!dotnet_exe)
         {
             return false;
         }
@@ -71,24 +97,40 @@ namespace
         StringView nugetid{stem.begin(), dot_after_name};
         StringView version{dot_after_name + 1, stem.end()};
 
-        auto cmd = Command{*nuget_exe}
-                       .string_arg("install")
-                       .string_arg(nugetid)
-                       .string_arg("-Version")
-                       .string_arg(version)
-                       .string_arg("-OutputDirectory")
-                       .string_arg(to_path)
-                       .string_arg("-Source")
-                       .string_arg(archive.parent_path())
-                       .string_arg("-nocache")
-                       .string_arg("-DirectDownload")
-                       .string_arg("-NonInteractive")
-                       .string_arg("-ForceEnglishOutput")
-                       .string_arg("-PackageSaveMode")
-                       .string_arg("nuspec");
+        auto download_root = to_path + ".dotnet-download";
+        fs.remove_all(download_root, VCPKG_LINE_INFO);
+        fs.create_directories(download_root, VCPKG_LINE_INFO);
 
-        Optional<ExitCodeAndOutput> maybe_exit_and_output = cmd_execute_and_capture_output(context, cmd);
-        return postprocess_extract_archive(context, std::move(maybe_exit_and_output), *nuget_exe, archive);
+        auto cmd = Command{*dotnet_exe}
+                       .string_arg("package")
+                       .string_arg("download")
+                       .string_arg(fmt::format("{}@{}", nugetid, version))
+                       .string_arg("--output")
+                       .string_arg(download_root)
+                       .string_arg("--source")
+                       .string_arg(archive.parent_path())
+                       .string_arg("--verbosity")
+                       .string_arg("normal");
+
+        RedirectedProcessLaunchSettings settings;
+        settings.environment = get_clean_environment();
+        settings.environment->add_entry("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
+        settings.environment->add_entry("DOTNET_NOLOGO", "1");
+        settings.environment->add_entry("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1");
+        auto maybe_exit_and_output = cmd_execute_and_capture_output(context, cmd, settings);
+        if (!postprocess_extract_archive(context, std::move(maybe_exit_and_output), *dotnet_exe, archive))
+        {
+            return false;
+        }
+
+        auto exact_case_path = download_root / nugetid.to_string() / version.to_string();
+        auto lowercase_path = download_root / Strings::ascii_to_lowercase(nugetid) / version.to_string();
+        const auto& extracted_path = fs.exists(exact_case_path, IgnoreErrors{}) ? exact_case_path : lowercase_path;
+        remove_dotnet_package_artifacts(fs, extracted_path, nugetid, version);
+        fs.remove_all(to_path, VCPKG_LINE_INFO);
+        const bool renamed = fs.rename(context, extracted_path, to_path);
+        fs.remove_all(download_root, IgnoreErrors{});
+        return renamed;
     }
 
     bool win32_extract_msi(DiagnosticContext& context, const Path& archive, const Path& to_path)

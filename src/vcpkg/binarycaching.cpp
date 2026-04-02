@@ -630,35 +630,63 @@ namespace
 
     struct NuGetSource
     {
-        StringLiteral option;
-        std::string value;
+        std::string option;
+        std::vector<std::string> values;
+
+        void apply(Command& cmd) const
+        {
+            for (const auto& value : values)
+            {
+                cmd.string_arg(option).string_arg(value);
+            }
+        }
     };
 
-    NuGetSource nuget_sources_arg(View<std::string> sources) { return {"-Source", Strings::join(";", sources)}; }
-    NuGetSource nuget_configfile_arg(const Path& config_path) { return {"-ConfigFile", config_path.native()}; }
+    NuGetSource nuget_sources_arg(View<std::string> sources)
+    {
+        return {"--source", std::vector<std::string>(sources.begin(), sources.end())};
+    }
+    NuGetSource nuget_configfile_arg(const Path& config_path)
+    {
+        return {"--configfile", {config_path.native()}};
+    }
+
+    void remove_dotnet_package_artifacts(const Filesystem& fs,
+                                         const Path& package_dir,
+                                         StringView package_id,
+                                         StringView version)
+    {
+        const auto lowercase_id = Strings::ascii_to_lowercase(package_id);
+        const auto exact_id = package_id.to_string();
+        const auto version_string = version.to_string();
+
+        std::array<Path, 6> paths_to_remove = {
+            package_dir / ".nupkg.metadata",
+            package_dir / ".signature.p7s",
+            package_dir / fmt::format("{}.{}.nupkg", lowercase_id, version_string),
+            package_dir / fmt::format("{}.{}.nupkg.sha512", lowercase_id, version_string),
+            package_dir / fmt::format("{}.{}.nupkg", exact_id, version_string),
+            package_dir / fmt::format("{}.{}.nupkg.sha512", exact_id, version_string),
+        };
+
+        for (const auto& path : paths_to_remove)
+        {
+            (void)fs.remove(path, IgnoreErrors{});
+        }
+    }
 
     struct NuGetToolTools
     {
-        Path nuget_tool;
-#ifndef _WIN32
-        Path mono_tool;
-#endif
+        Path dotnet_tool;
     };
 
     Optional<NuGetToolTools> get_nuget_tool_tools(DiagnosticContext& context,
                                                   const Filesystem& fs,
                                                   const ToolCache& cache)
     {
-        if (auto nuget_tool = cache.get_tool_path(context, fs, Tools::NUGET))
+        if (auto dotnet_tool = cache.get_tool_path(context, fs, Tools::DOTNET))
         {
-#ifdef _WIN32
-            return NuGetToolTools{*nuget_tool};
-#else
-            if (auto mono_tool = cache.get_tool_path(context, fs, Tools::MONO))
-            {
-                return NuGetToolTools{*nuget_tool, *mono_tool};
-            }
-#endif
+            return NuGetToolTools{*dotnet_tool};
         }
 
         return nullopt;
@@ -671,10 +699,7 @@ namespace
             , m_interactive(shared.nuget_interactive)
             , m_use_nuget_cache(shared.use_nuget_cache)
         {
-#ifndef _WIN32
-            m_cmd.string_arg(std::move(nuget_tools.mono_tool));
-#endif
-            m_cmd.string_arg(std::move(nuget_tools.nuget_tool));
+            m_cmd.string_arg(std::move(nuget_tools.dotnet_tool));
         }
 
         bool push(DiagnosticContext& context, const Path& nupkg_path, const NuGetSource& src) const
@@ -698,54 +723,72 @@ namespace
             return false;
         }
         bool install(DiagnosticContext& context,
-                     StringView packages_config,
+                     View<FeedReference> refs,
                      const Path& out_dir,
                      const NuGetSource& src) const
         {
-            return run_nuget_commandline(context, install_cmd(packages_config, out_dir, src));
+            return run_nuget_commandline(context, install_cmd(refs, out_dir, src));
         }
 
     private:
-        Command subcommand(StringLiteral sub) const
+        Command command() const
         {
             auto cmd = m_cmd;
-            cmd.string_arg(sub).string_arg("-ForceEnglishOutput").string_arg("-Verbosity").string_arg("detailed");
-            if (!m_interactive) cmd.string_arg("-NonInteractive");
             return cmd;
         }
 
-        Command install_cmd(StringView packages_config, const Path& out_dir, const NuGetSource& src) const
+        Command install_cmd(View<FeedReference> refs, const Path& out_dir, const NuGetSource& src) const
         {
-            auto cmd = subcommand("install");
-            cmd.string_arg(packages_config)
-                .string_arg("-OutputDirectory")
+            auto cmd = command().string_arg("package").string_arg("download");
+            for (const auto& ref : refs)
+            {
+                cmd.string_arg(fmt::format("{}@{}", ref.id, ref.version));
+            }
+
+            cmd.string_arg("--output")
                 .string_arg(out_dir)
-                .string_arg("-ExcludeVersion")
-                .string_arg("-PreRelease")
-                .string_arg("-PackageSaveMode")
-                .string_arg("nupkg");
-            if (!m_use_nuget_cache) cmd.string_arg("-DirectDownload").string_arg("-NoCache");
-            cmd.string_arg(src.option).string_arg(src.value);
+                .string_arg("--prerelease")
+                .string_arg("--verbosity")
+                .string_arg("normal");
+            if (m_interactive) cmd.string_arg("--interactive");
+            src.apply(cmd);
             return cmd;
         }
 
         Command pack_cmd(const Path& nuspec_path, const Path& out_dir) const
         {
-            return subcommand("pack")
+            auto cmd = command()
+                           .string_arg("pack")
                 .string_arg(nuspec_path)
-                .string_arg("-OutputDirectory")
+                .string_arg("--output")
                 .string_arg(out_dir)
-                .string_arg("-NoDefaultExcludes");
+                .string_arg("--verbosity")
+                .string_arg("normal");
+            if (m_interactive) cmd.string_arg("--interactive");
+            return cmd;
         }
 
         Command push_cmd(const Path& nupkg_path, const NuGetSource& src) const
         {
-            return subcommand("push")
+            auto cmd = command()
+                           .string_arg("nuget")
+                           .string_arg("push")
                 .string_arg(nupkg_path)
-                .string_arg("-Timeout")
+                .string_arg("--timeout")
                 .string_arg(m_timeout)
-                .string_arg(src.option)
-                .string_arg(src.value);
+                .string_arg("--force-english-output");
+            if (m_interactive) cmd.string_arg("--interactive");
+            src.apply(cmd);
+            return cmd;
+        }
+
+        static Environment make_dotnet_environment()
+        {
+            auto environment = get_clean_environment();
+            environment.add_entry("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
+            environment.add_entry("DOTNET_NOLOGO", "1");
+            environment.add_entry("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1");
+            return environment;
         }
 
         bool run_nuget_commandline(DiagnosticContext& context, const Command& cmd) const
@@ -755,7 +798,9 @@ namespace
                 // note that this must cmd_execute not cmd_execute_and_capture_output because we need
                 // our console, stdin, stdout, and stderr to be inherited directly by the interactive
                 // nuget process.
-                auto maybe_exit_code = cmd_execute(context, cmd);
+                ProcessLaunchSettings settings;
+                settings.environment = make_dotnet_environment();
+                auto maybe_exit_code = cmd_execute(context, cmd, settings);
                 if (check_zero_exit_code(context, cmd, maybe_exit_code))
                 {
                     return true;
@@ -768,6 +813,7 @@ namespace
 
             RedirectedProcessLaunchSettings settings;
             settings.echo_in_debug = EchoInDebug::Show;
+            settings.environment = make_dotnet_environment();
             AttemptDiagnosticContext adc{context};
             auto maybe_code_and_output = cmd_execute_and_capture_output(adc, cmd, settings);
             if (auto code_and_output = maybe_code_and_output.get())
@@ -805,7 +851,7 @@ namespace
                 {
                     AttemptDiagnosticContext retry_adc{context};
                     auto retry_cmd = cmd;
-                    retry_cmd.string_arg("-ApiKey").string_arg("AzureDevOps");
+                    retry_cmd.string_arg("--api-key").string_arg("AzureDevOps");
                     auto maybe_retry_code_and_output = cmd_execute_and_capture_output(retry_adc, retry_cmd, settings);
                     if (check_zero_exit_code(retry_adc, retry_cmd, maybe_retry_code_and_output, settings.echo_in_debug))
                     {
@@ -859,25 +905,6 @@ namespace
 
         NuGetSource m_src;
 
-        static std::string generate_packages_config(View<FeedReference> refs)
-        {
-            XmlSerializer xml;
-            xml.emit_declaration().line_break();
-            xml.open_tag("packages").line_break();
-
-            for (auto&& ref : refs)
-            {
-                xml.start_complex_open_tag("package")
-                    .text_attr("id", ref.id)
-                    .text_attr("version", ref.version)
-                    .finish_self_closing_complex_tag()
-                    .line_break();
-            }
-
-            xml.close_tag("packages").line_break();
-            return std::move(xml.buf);
-        }
-
         // Prechecking is too expensive with NuGet, so it is not implemented
         void precheck(DiagnosticContext&,
                       const Filesystem&,
@@ -897,39 +924,35 @@ namespace
                    View<const InstallPlanAction*> actions,
                    Span<RestoreResult> out_status) const override
         {
-            auto packages_config = m_buildtrees / "packages.config";
+            auto download_root = m_buildtrees / "nuget-downloads";
             auto refs =
                 Util::fmap(actions, [this](const InstallPlanAction* p) { return make_nugetref(*p, m_nuget_prefix); });
             WarningDiagnosticContext wdc{context};
-            if (!fs.write_contents(wdc, packages_config, generate_packages_config(refs)))
+            if (!clean_prepare_dir(wdc, fs, download_root))
             {
                 return;
             }
 
-            (void)m_cmd.install(wdc, packages_config, m_packages, m_src);
+            (void)m_cmd.install(wdc, refs, download_root, m_src);
             for (size_t i = 0; i < actions.size(); ++i)
             {
-                // nuget.exe provides the nupkg file and the unpacked folder
-                const auto nupkg_path = m_packages / refs[i].id / refs[i].id + ".nupkg";
-                if (fs.exists(nupkg_path, IgnoreErrors{}))
+                const auto exact_case_path = download_root / refs[i].id / refs[i].version;
+                const auto lowercase_path = download_root / Strings::ascii_to_lowercase(refs[i].id) / refs[i].version;
+                const auto& path_from = fs.exists(exact_case_path, IgnoreErrors{}) ? exact_case_path : lowercase_path;
+                if (fs.exists(path_from, IgnoreErrors{}))
                 {
-                    (void)fs.remove(wdc, nupkg_path);
+                    remove_dotnet_package_artifacts(fs, path_from, refs[i].id, refs[i].version);
                     const auto nuget_dir = actions[i]->spec.dir();
-                    if (nuget_dir == refs[i].id)
+                    const auto path_to = m_packages / nuget_dir;
+                    (void)fs.remove_all(path_to, IgnoreErrors{});
+                    if (fs.rename(wdc, path_from, path_to))
                     {
                         out_status[i] = RestoreResult::restored;
                     }
-                    else
-                    {
-                        const auto path_from = m_packages / refs[i].id;
-                        const auto path_to = m_packages / nuget_dir;
-                        if (fs.rename(wdc, path_from, path_to))
-                        {
-                            out_status[i] = RestoreResult::restored;
-                        }
-                    }
                 }
             }
+
+            (void)fs.remove_all(download_root, IgnoreErrors{});
         }
     };
 
