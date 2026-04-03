@@ -1,0 +1,8 @@
+{
+  "name": "derived-skip-fatal-depends-on-fail-fatal",
+  "version": "1.0.0",
+  "description": "ci cross product fixture derived-skip-fatal-depends-on-fail-fatal",
+  "dependencies": [
+    "base-fail-fatal"
+  ]
+}

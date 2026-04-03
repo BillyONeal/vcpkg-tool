@@ -1,0 +1,8 @@
+{
+  "name": "derived-blank-empty-depends-on-fail-fatal",
+  "version": "1.0.0",
+  "description": "ci cross product fixture derived-blank-empty-depends-on-fail-fatal",
+  "dependencies": [
+    "base-fail-fatal"
+  ]
+}

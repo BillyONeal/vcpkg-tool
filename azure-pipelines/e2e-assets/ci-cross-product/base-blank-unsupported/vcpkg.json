@@ -1,0 +1,6 @@
+{
+  "name": "base-blank-unsupported",
+  "version": "1.0.0",
+  "description": "ci cross product fixture base-blank-unsupported",
+  "supports": "native & !native"
+}

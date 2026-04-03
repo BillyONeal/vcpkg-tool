@@ -1,0 +1,6 @@
+{
+  "name": "base-skip-unsupported",
+  "version": "1.0.0",
+  "description": "ci cross product fixture base-skip-unsupported",
+  "supports": "native & !native"
+}

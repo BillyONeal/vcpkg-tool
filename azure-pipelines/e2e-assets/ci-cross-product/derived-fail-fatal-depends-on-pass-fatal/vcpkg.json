@@ -1,0 +1,8 @@
+{
+  "name": "derived-fail-fatal-depends-on-pass-fatal",
+  "version": "1.0.0",
+  "description": "ci cross product fixture derived-fail-fatal-depends-on-pass-fatal",
+  "dependencies": [
+    "base-pass-fatal"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "derived-blank-unsupported-depends-on-pass-empty",
+  "version": "1.0.0",
+  "description": "ci cross product fixture derived-blank-unsupported-depends-on-pass-empty",
+  "supports": "native & !native",
+  "dependencies": [
+    "base-pass-empty"
+  ]
+}

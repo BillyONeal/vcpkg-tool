@@ -1,0 +1,9 @@
+{
+  "name": "derived-pass-unsupported-depends-on-pass-unsupported",
+  "version": "1.0.0",
+  "description": "ci cross product fixture derived-pass-unsupported-depends-on-pass-unsupported",
+  "supports": "native & !native",
+  "dependencies": [
+    "base-pass-unsupported"
+  ]
+}

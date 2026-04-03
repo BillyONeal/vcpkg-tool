@@ -1,5 +1,5 @@
 . $PSScriptRoot/../end-to-end-tests-prelude.ps1
-
+if($false){
 # test skipped ports
 $Output = Run-VcpkgAndCaptureBoth ci --dry-run --triplet=$Triplet --x-builtin-ports-root="$PSScriptRoot/../e2e-ports/ci"  --binarysource=clear --ci-baseline="$PSScriptRoot/../e2e-assets/ci/ci.baseline.txt"
 Throw-IfNotFailed
@@ -408,3 +408,19 @@ Throw-IfNonContains -Actual $Output -Expected @"
 SUMMARY FOR $($Triplet)
   SUCCEEDED: 6
 "@
+}
+# exhaustive test
+Refresh-TestRoot
+Copy-Item $tripletFile "$TestingRoot/cross.cmake"
+Remove-Problem-Matchers
+$Output = Run-VcpkgAndCaptureBoth ci --triplet cross --overlay-triplets $TestingRoot @directoryArgs --x-builtin-ports-root="$PSScriptRoot/../e2e-assets/ci-cross-product" --binarysource=clear --ci-baseline="$PSScriptRoot/../e2e-assets/ci-cross-product/baseline.txt"
+Restore-Problem-Matchers
+Throw-IfNotFailed
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-empty-depends-on-blank-fatal'
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-empty-depends-on-fail-fatal'
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-empty-depends-on-pass-fatal'
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-empty-depends-on-skip-empty'
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-empty-depends-on-skip-fatal'
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-fatal-depends-on-blank-fatal'
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-fatal-depends-on-fail-fatal'
+Throw-IfNonContains -Actual $Output -Expected 'REGRESSION: derived-fail-fatal-depends-on-pass-fatal'

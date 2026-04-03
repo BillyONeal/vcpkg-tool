@@ -1,0 +1,9 @@
+{
+  "name": "derived-pass-unsupported-depends-on-skip-fatal",
+  "version": "1.0.0",
+  "description": "ci cross product fixture derived-pass-unsupported-depends-on-skip-fatal",
+  "supports": "native & !native",
+  "dependencies": [
+    "base-skip-fatal"
+  ]
+}

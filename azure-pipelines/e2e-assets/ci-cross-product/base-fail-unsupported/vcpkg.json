@@ -1,0 +1,6 @@
+{
+  "name": "base-fail-unsupported",
+  "version": "1.0.0",
+  "description": "ci cross product fixture base-fail-unsupported",
+  "supports": "native & !native"
+}
