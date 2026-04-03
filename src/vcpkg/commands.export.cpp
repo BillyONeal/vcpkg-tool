@@ -170,21 +170,19 @@ namespace
         const auto nuspec_file_path = paths.buildsystems / "tmp" / "vcpkg.export.nuspec";
         fs.write_contents(nuspec_file_path, nuspec_file_content, VCPKG_LINE_INFO);
 
-        // -NoDefaultExcludes is needed for ".vcpkg-root"
         Command cmd;
-#ifndef _WIN32
-        cmd.string_arg(paths.get_tool_path_required(Tools::MONO));
-#endif
-        cmd.string_arg(paths.get_tool_path_required(Tools::NUGET))
+        cmd.string_arg(paths.get_tool_path_required(Tools::DOTNET))
             .string_arg("pack")
             .string_arg(nuspec_file_path)
-            .string_arg("-OutputDirectory")
+            .string_arg("--output")
             .string_arg(output_dir)
-            .string_arg("-NoDefaultExcludes");
+            .string_arg("--nologo")
+            .string_arg("--verbosity")
+            .string_arg("normal");
 
         RedirectedProcessLaunchSettings settings;
         settings.environment = get_clean_environment();
-        return flatten(cmd_execute_and_capture_output(cmd, settings), Tools::NUGET)
+        return flatten(cmd_execute_and_capture_output(cmd, settings), Tools::DOTNET)
             .map([&](Unit) { return output_dir / (nuget_id + "." + nuget_version + ".nupkg"); })
             .value_or_exit(VCPKG_LINE_INFO);
     }

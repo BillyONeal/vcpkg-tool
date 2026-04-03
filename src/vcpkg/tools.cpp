@@ -556,6 +556,25 @@ namespace vcpkg
         }
     };
 
+    struct DotnetProvider : ToolProvider
+    {
+        virtual bool is_abi_sensitive() const override { return false; }
+        virtual StringView tool_data_name() const override { return Tools::DOTNET; }
+        virtual std::vector<StringView> system_exe_stems() const override { return {Tools::DOTNET}; }
+        virtual std::array<int, 3> default_min_version() const override { return {10, 0, 0}; }
+
+        virtual Optional<std::string> get_version(DiagnosticContext& context,
+                                                  const Filesystem&,
+                                                  const ToolCache&,
+                                                  const Path& exe_path) const override
+        {
+            return run_to_extract_version(context,
+                                          Tools::DOTNET,
+                                          exe_path,
+                                          Command(exe_path).string_arg("--version"));
+        }
+    };
+
     struct NodeProvider : ToolProvider
     {
         virtual bool is_abi_sensitive() const override { return false; }
@@ -1230,6 +1249,7 @@ namespace vcpkg
                     if (tool == Tools::NINJA) return get_path(inner_context, fs, NinjaProvider());
                     if (tool == Tools::POWERSHELL_CORE) return get_path(inner_context, fs, PowerShellCoreProvider());
                     if (tool == Tools::NUGET) return get_path(inner_context, fs, NuGetProvider());
+                    if (tool == Tools::DOTNET) return get_path(inner_context, fs, DotnetProvider());
                     if (tool == Tools::NODE) return get_path(inner_context, fs, NodeProvider());
                     if (tool == Tools::MONO) return get_path(inner_context, fs, MonoProvider());
                     if (tool == Tools::GSUTIL) return get_path(inner_context, fs, GsutilProvider());

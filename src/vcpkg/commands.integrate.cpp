@@ -361,7 +361,7 @@ namespace vcpkg
 #if defined(WIN32)
         auto& fs = paths.get_filesystem();
 
-        const Path& nuget_exe = paths.get_tool_path_required(Tools::NUGET);
+        const Path& dotnet_exe = paths.get_tool_path_required(Tools::DOTNET);
 
         const auto tmp_dir = fs.create_or_get_temp_directory(VCPKG_LINE_INFO);
         const auto targets_file_path = tmp_dir / "vcpkg.nuget.targets";
@@ -377,15 +377,18 @@ namespace vcpkg
             nuspec_file_path, create_nuspec_file_contents(paths.root, nuget_id, nupkg_version), VCPKG_LINE_INFO);
 
         // Using all forward slashes for the command line
-        auto cmd = Command(nuget_exe)
-                       .string_arg("pack")
-                       .string_arg("-OutputDirectory")
+        auto cmd = Command(dotnet_exe)
+                   .string_arg("pack")
+                   .string_arg("--output")
                        .string_arg(paths.original_cwd)
-                       .string_arg(nuspec_file_path);
+                   .string_arg(nuspec_file_path)
+                   .string_arg("--nologo")
+                   .string_arg("--verbosity")
+                   .string_arg("normal");
         RedirectedProcessLaunchSettings settings;
         settings.environment = get_clean_environment();
 
-        const auto maybe_nuget_output = flatten(cmd_execute_and_capture_output(cmd, settings), Tools::NUGET);
+        const auto maybe_nuget_output = flatten(cmd_execute_and_capture_output(cmd, settings), Tools::DOTNET);
 
         if (!maybe_nuget_output)
         {
