@@ -435,7 +435,9 @@ namespace vcpkg
         }
 
         std::vector<GitLSTreeEntry> port_git_trees =
-            paths.get_builtin_ports_directory_trees(console_diagnostic_context).value_or_exit(VCPKG_LINE_INFO);
+            get_git_directory_trees(
+                console_diagnostic_context, fs, paths.get_tool_path_required(Tools::GIT), builtin_ports_directory)
+                .value_or_exit(VCPKG_LINE_INFO);
 
         if (!parsed_args.command_arguments.empty())
         {

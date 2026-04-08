@@ -14,6 +14,7 @@
 #include <vcpkg/paragraphs.h>
 #include <vcpkg/registries-parsing.h>
 #include <vcpkg/sourceparagraph.h>
+#include <vcpkg/tools.h>
 #include <vcpkg/vcpkgpaths.h>
 #include <vcpkg/versiondeserializers.h>
 #include <vcpkg/versions.h>
@@ -116,8 +117,11 @@ namespace
                     return std::move(maybe_up_to_date).error();
                 }
 
-                auto maybe_tree = m_paths.git_find_object_id_for_remote_registry_path(lock_entry->commit_id(),
-                                                                                      FileVersions.to_string());
+                const auto git_dirs = get_registries_git_directories(m_paths.registries_cache());
+                const auto& git_exe = m_paths.get_tool_path_required(Tools::GIT);
+
+                auto maybe_tree =
+                    git_find_object_id_for_remote_registry_path(git_exe, git_dirs, lock_entry->commit_id(), FileVersions.to_string());
                 auto tree = maybe_tree.get();
                 if (!tree)
                 {
@@ -129,7 +133,7 @@ namespace
                         .append_raw(maybe_tree.error());
                 }
 
-                auto maybe_path = m_paths.git_extract_tree_from_remote_registry(*tree);
+                auto maybe_path = git_extract_tree_from_remote_registry(m_paths.get_filesystem(), git_exe, git_dirs, *tree);
                 auto path = maybe_path.get();
                 if (!path)
                 {
@@ -175,8 +179,11 @@ namespace
 
             if (!m_stale_versions_tree.has_value())
             {
+                const auto git_dirs = get_registries_git_directories(m_paths.registries_cache());
+                const auto& git_exe = m_paths.get_tool_path_required(Tools::GIT);
+
                 auto maybe_tree =
-                    m_paths.git_find_object_id_for_remote_registry_path(entry->commit_id(), FileVersions.to_string());
+                    git_find_object_id_for_remote_registry_path(git_exe, git_dirs, entry->commit_id(), FileVersions.to_string());
                 auto tree = maybe_tree.get();
                 if (!tree)
                 {
@@ -184,7 +191,7 @@ namespace
                     return get_unstale_stale_versions_tree_path();
                 }
 
-                auto maybe_path = m_paths.git_extract_tree_from_remote_registry(*tree);
+                auto maybe_path = git_extract_tree_from_remote_registry(m_paths.get_filesystem(), git_exe, git_dirs, *tree);
                 auto path = maybe_path.get();
                 if (!path)
                 {
@@ -435,17 +442,20 @@ namespace
         return Unit{};
     }
 
-    static ExpectedL<Path> git_checkout_baseline(const VcpkgPaths& paths, StringView commit_sha)
+    static ExpectedL<Path> git_checkout_baseline(const Filesystem& fs,
+                                                 const Path& git_exe,
+                                                 const Path& baselines_output,
+                                                 const Path& builtin_registry_versions,
+                                                 StringView commit_sha)
     {
-        const Filesystem& fs = paths.get_filesystem();
-        const auto destination_parent = paths.baselines_output() / commit_sha;
+        const auto destination_parent = baselines_output / commit_sha;
         auto destination = destination_parent / FileBaselineDotJson;
         if (!fs.exists(destination, IgnoreErrors{}))
         {
             const auto destination_tmp = destination_parent / "baseline.json.tmp";
             auto treeish = Strings::concat(commit_sha, ":versions/baseline.json");
-            auto maybe_contents =
-                paths.versions_dot_git_dir().then([&](Path&& dot_git) { return paths.git_show(treeish, dot_git); });
+            auto maybe_contents = find_dot_git_dir(fs, builtin_registry_versions)
+                                      .then([&](Path&& dot_git) { return git_show(git_exe, treeish, dot_git); });
 
             if (auto contents = maybe_contents.get())
             {
@@ -602,7 +612,11 @@ namespace
     ExpectedL<Optional<Version>> BuiltinGitRegistry::get_baseline_version(StringView port_name) const
     {
         return lookup_in_maybe_baseline(m_baseline.get([this]() -> ExpectedL<Baseline> {
-            return git_checkout_baseline(m_paths, m_baseline_identifier)
+            return git_checkout_baseline(m_paths.get_filesystem(),
+                                         m_paths.get_tool_path_required(Tools::GIT),
+                                         m_paths.baselines_output(),
+                                         m_paths.builtin_registry_versions,
+                                         m_baseline_identifier)
                 .then([&](Path&& path) { return load_baseline_versions(m_paths.get_filesystem(), path); })
                 .map_error([&](LocalizedString&& error) {
                     return std::move(error).append(msgWhileCheckingOutBaseline,
@@ -752,7 +766,10 @@ namespace
             }
 
             auto path_to_baseline = Path(FileVersions) / FileBaselineDotJson;
-            auto maybe_contents = m_paths.git_show_from_remote_registry(m_baseline_identifier, path_to_baseline);
+            const auto git_dirs = get_registries_git_directories(m_paths.registries_cache());
+            const auto& git_exe = m_paths.get_tool_path_required(Tools::GIT);
+
+            auto maybe_contents = git_show_from_remote_registry(git_exe, git_dirs, m_baseline_identifier, path_to_baseline);
             if (!maybe_contents)
             {
                 auto& maybe_lock_entry = get_lock_entry();
@@ -768,13 +785,13 @@ namespace
                     return std::move(maybe_up_to_date).error();
                 }
 
-                maybe_contents = m_paths.git_show_from_remote_registry(m_baseline_identifier, path_to_baseline);
+                maybe_contents = git_show_from_remote_registry(git_exe, git_dirs, m_baseline_identifier, path_to_baseline);
             }
 
             if (!maybe_contents)
             {
                 msg::println(msgFetchingBaselineInfo, msg::package_name = m_repo);
-                auto maybe_err = m_paths.git_fetch(m_repo, m_baseline_identifier);
+                auto maybe_err = git_fetch(m_paths.get_filesystem(), git_exe, git_dirs, m_repo, m_baseline_identifier);
                 if (!maybe_err)
                 {
                     get_global_metrics_collector().track_define(DefineMetric::RegistriesErrorCouldNotFindBaseline);
@@ -783,7 +800,7 @@ namespace
                         .append(maybe_err.error());
                 }
 
-                maybe_contents = m_paths.git_show_from_remote_registry(m_baseline_identifier, path_to_baseline);
+                maybe_contents = git_show_from_remote_registry(git_exe, git_dirs, m_baseline_identifier, path_to_baseline);
             }
 
             if (!maybe_contents)
@@ -865,14 +882,20 @@ namespace
             return format_version_git_entry_missing(port_name, version, port_version_entries);
         }
 
-        return m_paths.versions_dot_git_dir()
+        return find_dot_git_dir(m_paths.get_filesystem(), m_paths.builtin_registry_versions)
             .then([&, this](Path&& dot_git) {
-                return m_paths.git_checkout_port(port_name, it->git_tree, dot_git).map_error([](LocalizedString&& err) {
-                    return std::move(err)
-                        .append_raw('\n')
-                        .append_raw(NotePrefix)
-                        .append(msgSeeURL, msg::url = docs::troubleshoot_versioning_url);
-                });
+                return git_checkout_port(m_paths.get_filesystem(),
+                                         m_paths.get_tool_path_required(Tools::GIT),
+                                         m_paths.versions_output(),
+                                         port_name,
+                                         it->git_tree,
+                                         dot_git)
+                    .map_error([](LocalizedString&& err) {
+                        return std::move(err)
+                            .append_raw('\n')
+                            .append_raw(NotePrefix)
+                            .append(msgSeeURL, msg::url = docs::troubleshoot_versioning_url);
+                    });
             })
             .then([this, &it](Path&& p) -> ExpectedL<SourceControlFileAndLocation> {
                 return Paragraphs::try_load_port_required(
@@ -962,7 +985,10 @@ namespace
             return format_version_git_entry_missing(port_name, version, last_loaded);
         }
 
-        return parent.m_paths.git_extract_tree_from_remote_registry(it->git_tree)
+        return git_extract_tree_from_remote_registry(parent.m_paths.get_filesystem(),
+                                                     parent.m_paths.get_tool_path_required(Tools::GIT),
+                                                     get_registries_git_directories(parent.m_paths.registries_cache()),
+                                                     it->git_tree)
             .then([this, &it](Path&& p) -> ExpectedL<SourceControlFileAndLocation> {
                 return Paragraphs::try_load_port_required(
                            parent.m_paths.get_filesystem(),
@@ -1069,7 +1095,11 @@ namespace vcpkg
         if (it == range.second)
         {
             msg::println(msgFetchingRegistryInfo, msg::url = repo, msg::value = reference);
-            auto maybe_commit = paths.git_fetch_from_remote_registry(repo, reference);
+            auto maybe_commit = git_fetch_from_remote_registry(paths.get_filesystem(),
+                                                               paths.get_tool_path_required(Tools::GIT),
+                                                               get_registries_git_directories(paths.registries_cache()),
+                                                               repo,
+                                                               reference);
             if (auto commit = maybe_commit.get())
             {
                 it = lockdata.emplace(repo.to_string(), EntryData{reference.to_string(), *commit, false});
@@ -1091,7 +1121,11 @@ namespace vcpkg
             StringView reference(data->second.reference);
             msg::println(msgFetchingRegistryInfo, msg::url = repo, msg::value = reference);
 
-            auto maybe_commit_id = paths.git_fetch_from_remote_registry(repo, reference);
+            auto maybe_commit_id = git_fetch_from_remote_registry(paths.get_filesystem(),
+                                                                  paths.get_tool_path_required(Tools::GIT),
+                                                                  get_registries_git_directories(paths.registries_cache()),
+                                                                  repo,
+                                                                  reference);
             if (const auto commit_id = maybe_commit_id.get())
             {
                 data->second.commit_id = *commit_id;

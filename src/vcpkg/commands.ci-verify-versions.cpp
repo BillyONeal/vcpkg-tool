@@ -11,6 +11,7 @@
 #include <vcpkg/commands.ci-verify-versions.h>
 #include <vcpkg/paragraphs.h>
 #include <vcpkg/registries.h>
+#include <vcpkg/tools.h>
 #include <vcpkg/vcpkgcmdarguments.h>
 #include <vcpkg/vcpkgpaths.h>
 
@@ -32,14 +33,17 @@ namespace
 
     bool verify_git_tree(MessageSink& errors_sink,
                          MessageSink& success_sink,
-                         const VcpkgPaths& paths,
+                         const Filesystem& fs,
+                         const Path& git_exe,
+                         const Path& versions_output,
+                         const Path& dot_git_dir,
                          const std::string& port_name,
                          const Path& versions_file_path,
                          const GitVersionDbEntry& version_entry)
     {
         bool success = true;
-        auto maybe_extracted_tree = paths.versions_dot_git_dir().then(
-            [&](Path&& dot_git) { return paths.git_checkout_port(port_name, version_entry.git_tree, dot_git); });
+        auto maybe_extracted_tree =
+            git_checkout_port(fs, git_exe, versions_output, port_name, version_entry.git_tree, dot_git_dir);
         auto extracted_tree = maybe_extracted_tree.get();
         if (!extracted_tree)
         {
@@ -55,7 +59,7 @@ namespace
         }
 
         auto load_result = Paragraphs::try_load_port_required(
-            paths.get_filesystem(),
+            fs,
             port_name,
             PortLocation(*extracted_tree,
                          Paragraphs::builtin_git_tree_spdx_location(version_entry.git_tree),
@@ -521,10 +525,26 @@ namespace vcpkg
 
         bool verbose = Util::Sets::contains(parsed_args.switches, SwitchVerbose);
         bool verify_git_trees = Util::Sets::contains(parsed_args.switches, SwitchVerifyGitTrees);
+        auto& fs = paths.get_filesystem();
+        const auto& git_exe = paths.get_tool_path_required(Tools::GIT);
+        Path dot_git_dir;
+        Path versions_output = paths.versions_output();
+        if (verify_git_trees)
+        {
+            auto maybe_dot_git_dir = git_absolute_git_dir(console_diagnostic_context, fs, git_exe, GitRepoLocator{GitRepoLocatorKind::CurrentDirectory, paths.builtin_registry_versions});
+            if (auto pdot_git_dir = maybe_dot_git_dir.get())
+            {
+                dot_git_dir = std::move(*pdot_git_dir);
+            }
+            else
+            {
+                Checks::exit_fail(VCPKG_LINE_INFO);
+            }
+        }
 
         auto port_git_trees =
-            paths.get_builtin_ports_directory_trees(console_diagnostic_context).value_or_exit(VCPKG_LINE_INFO);
-        auto& fs = paths.get_filesystem();
+            get_git_directory_trees(console_diagnostic_context, fs, git_exe, paths.builtin_ports_directory())
+                .value_or_exit(VCPKG_LINE_INFO);
         auto versions_database =
             load_all_git_versions_files(fs, paths.builtin_registry_versions).value_or_exit(VCPKG_LINE_INFO);
         auto baseline = get_builtin_baseline(paths).value_or_exit(VCPKG_LINE_INFO);
@@ -588,7 +608,10 @@ namespace vcpkg
                 {
                     success &= verify_git_tree(errors_sink,
                                                success_sink,
-                                               paths,
+                                               fs,
+                                               git_exe,
+                                               versions_output,
+                                               dot_git_dir,
                                                port_name,
                                                versions_cache_entry.second.versions_file_path,
                                                version_entry);

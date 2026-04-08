@@ -7,6 +7,7 @@
 
 #include <vcpkg/configuration.h>
 #include <vcpkg/documentation.h>
+#include <vcpkg/tools.h>
 #include <vcpkg/vcpkgpaths.h>
 
 namespace
@@ -673,11 +674,17 @@ namespace
 
 namespace vcpkg
 {
-    static ExpectedL<Optional<std::string>> get_baseline_from_git_repo(const VcpkgPaths& paths,
+    static ExpectedL<Optional<std::string>> get_baseline_from_git_repo(const Filesystem& fs,
+                                                                       const Path& git_exe,
+                                                                       const Path& registries_cache,
                                                                        StringView url,
                                                                        std::string reference)
     {
-        auto res = paths.git_fetch_from_remote_registry(url, reference);
+        auto res = git_fetch_from_remote_registry(fs,
+                                                  git_exe,
+                                                  get_registries_git_directories(registries_cache),
+                                                  url,
+                                                  reference);
         if (auto p = res.get())
         {
             return Optional<std::string>(std::move(*p));
@@ -694,13 +701,21 @@ namespace vcpkg
     {
         if (kind == JsonIdGit)
         {
-            return get_baseline_from_git_repo(paths, repo.value_or_exit(VCPKG_LINE_INFO), reference.value_or("HEAD"));
+            return get_baseline_from_git_repo(paths.get_filesystem(),
+                                              paths.get_tool_path_required(Tools::GIT),
+                                              paths.registries_cache(),
+                                              repo.value_or_exit(VCPKG_LINE_INFO),
+                                              reference.value_or("HEAD"));
         }
         else if (kind == JsonIdBuiltin)
         {
             if (paths.use_git_default_registry())
             {
-                return get_baseline_from_git_repo(paths, builtin_registry_git_url, reference.value_or("HEAD"));
+                return get_baseline_from_git_repo(paths.get_filesystem(),
+                                                  paths.get_tool_path_required(Tools::GIT),
+                                                  paths.registries_cache(),
+                                                  builtin_registry_git_url,
+                                                  reference.value_or("HEAD"));
             }
             else
             {
