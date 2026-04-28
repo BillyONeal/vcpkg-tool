@@ -8,6 +8,7 @@
 #include <vcpkg/base/system.process.h>
 #include <vcpkg/base/util.h>
 
+#include <vcpkg/baseline-manipulation.h>
 #include <vcpkg/commands.add-version.h>
 #include <vcpkg/documentation.h>
 #include <vcpkg/paragraphs.h>
@@ -82,22 +83,6 @@ namespace
 
         return false;
     }
-
-    Json::Object serialize_baseline(const std::map<std::string, Version, std::less<>>& baseline)
-    {
-        Json::Object port_entries_obj;
-        for (auto&& kv_pair : baseline)
-        {
-            Json::Object baseline_version_obj;
-            insert_version_to_json_object(baseline_version_obj, kv_pair.second, JsonIdBaseline);
-            port_entries_obj.insert(kv_pair.first, std::move(baseline_version_obj));
-        }
-
-        Json::Object baseline_obj;
-        baseline_obj.insert(JsonIdDefault, std::move(port_entries_obj));
-        return baseline_obj;
-    }
-
     Json::Object serialize_versions(const std::vector<GitVersionDbEntry>& versions)
     {
         Json::Array versions_array;
@@ -113,15 +98,6 @@ namespace
         output_object.insert(JsonIdVersions, std::move(versions_array));
         return output_object;
     }
-
-    static void write_json_file(const Filesystem& fs, const Json::Object& obj, const Path& output_path)
-    {
-        auto new_path = output_path + ".tmp";
-        fs.create_directories(output_path.parent_path(), VCPKG_LINE_INFO);
-        fs.write_contents(new_path, Json::stringify(obj), VCPKG_LINE_INFO);
-        fs.rename(new_path, output_path, VCPKG_LINE_INFO);
-    }
-
     static void write_versions_file(const Filesystem& fs,
                                     const std::vector<GitVersionDbEntry>& versions,
                                     const Path& output_path)

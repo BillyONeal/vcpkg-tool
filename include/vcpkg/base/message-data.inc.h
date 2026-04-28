@@ -49,6 +49,15 @@ DECLARE_MESSAGE(AddVersionIgnoringOptionAll,
                 (msg::option),
                 "The -- before {option} must be preserved as they're part of the help message for the user.",
                 "ignoring --{option} since a port name argument was provided")
+DECLARE_MESSAGE(DeindexPortBaselineMissingEntry,
+                (msg::package_name, msg::path),
+                "",
+                "{package_name} is not present in {path}")
+DECLARE_MESSAGE(DeindexPortRemovedBaselineEntry,
+                (msg::package_name, msg::path),
+                "",
+                "removed {package_name} from {path}")
+DECLARE_MESSAGE(DeindexPortRemovedPortDirectory, (msg::path), "", "removed builtin port directory {path}")
 DECLARE_MESSAGE(AddVersionInstructions,
                 (msg::package_name),
                 "",
@@ -595,6 +604,14 @@ DECLARE_MESSAGE(CmdAddVersionOptOverwriteVersion, (), "", "Overwrites git-tree o
 DECLARE_MESSAGE(CmdAddVersionOptSkipFormatChk, (), "", "Skips the formatting check of vcpkg.json files")
 DECLARE_MESSAGE(CmdAddVersionOptSkipVersionFormatChk, (), "", "Skips the version format check")
 DECLARE_MESSAGE(CmdAddVersionOptVerbose, (), "", "Prints success messages rather than only errors")
+DECLARE_MESSAGE(CmdDeindexPortExample1,
+                (),
+                "This is a command line, only the <>s part should be localized",
+                "vcpkg x-deindex-port <port name>")
+DECLARE_MESSAGE(CmdDeindexPortSynopsis,
+                (),
+                "",
+                "Removes a port from the builtin ports directory and baseline")
 DECLARE_MESSAGE(CmdBootstrapStandaloneSynopsis, (), "", "Bootstraps a vcpkg root from only a vcpkg binary")
 DECLARE_MESSAGE(CmdBuildExternalExample1,
                 (),

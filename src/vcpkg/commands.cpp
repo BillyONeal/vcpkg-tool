@@ -14,6 +14,7 @@
 #include <vcpkg/commands.contact.h>
 #include <vcpkg/commands.create.h>
 #include <vcpkg/commands.deactivate.h>
+#include <vcpkg/commands.deindex-port.h>
 #include <vcpkg/commands.depend-info.h>
 #include <vcpkg/commands.download.h>
 #include <vcpkg/commands.edit.h>
@@ -89,6 +90,7 @@ namespace vcpkg
         {CommandCiVerifyVersionsMetadata, command_ci_verify_versions_and_exit},
         {CommandCreateMetadata, command_create_and_exit},
         {CommandDeactivateMetadata, command_deactivate_and_exit},
+        {CommandDeindexPortMetadata, command_deindex_port_and_exit},
         {CommandEditMetadata, command_edit_and_exit},
         {CommandFetchMetadata, command_fetch_and_exit},
         {CommandGenerateMsbuildPropsMetadata, command_generate_msbuild_props_and_exit},
@@ -193,6 +195,7 @@ namespace vcpkg
         format_command_usage_entry(table, CommandAddMetadata);
         format_command_usage_entry(table, CommandAddVersionMetadata);
         format_command_usage_entry(table, CommandCreateMetadata);
+        format_command_usage_entry(table, CommandDeindexPortMetadata);
         format_command_usage_entry(table, CommandEditMetadata);
         format_command_usage_entry(table, CommandEnvMetadata);
         format_command_usage_entry(table, CommandFormatManifestMetadata);
