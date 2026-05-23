@@ -8,6 +8,7 @@
 #include <vcpkg/base/stringview.h>
 #include <vcpkg/base/unicode.h>
 
+#include <cstdint>
 #include <string>
 
 namespace vcpkg
@@ -121,8 +122,8 @@ namespace vcpkg
 
         StringView m_text;
         Optional<StringView> m_origin;
-        int m_row;
-        int m_column;
+        std::uint32_t m_row;
+        std::uint32_t m_column;
         Unicode::Utf8Decoder m_it;
         Unicode::Utf8Decoder m_start_of_line;
     };

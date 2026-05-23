@@ -2,6 +2,7 @@
 
 #include <vcpkg/base/checks.h>
 
+#include <cstdint>
 #include <stddef.h>
 
 namespace vcpkg::Unicode
@@ -175,7 +176,7 @@ namespace vcpkg
     {
         Unicode::Utf8Decoder it;
         Unicode::Utf8Decoder start_of_line;
-        int row;
-        int column;
+        std::uint32_t row;
+        std::uint32_t column;
     };
 }

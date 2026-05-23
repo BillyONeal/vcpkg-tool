@@ -2,12 +2,13 @@
 #include <vcpkg/base/parse.h>
 #include <vcpkg/base/util.h>
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 
 namespace vcpkg
 {
-    static void advance_rowcol(char32_t ch, int& row, int& column)
+    static void advance_rowcol(char32_t ch, std::uint32_t& row, std::uint32_t& column)
     {
         if (row == 0)
         {
@@ -249,7 +250,7 @@ namespace vcpkg
         m_it = encoded;
         if (m_column != 0)
         {
-            m_column += static_cast<int>(text.size());
+            m_column += static_cast<std::uint32_t>(text.size());
         }
 
         return true;
@@ -282,7 +283,7 @@ namespace vcpkg
         m_it = encoded;
         if (m_column != 0)
         {
-            m_column += static_cast<int>(keyword_content.size());
+            m_column += static_cast<std::uint32_t>(keyword_content.size());
         }
 
         return true;

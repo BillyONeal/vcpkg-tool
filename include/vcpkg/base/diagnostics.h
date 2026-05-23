@@ -7,6 +7,7 @@
 #include <vcpkg/base/messages.h>
 #include <vcpkg/base/optional.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -17,8 +18,8 @@ namespace vcpkg
     struct TextRowCol
     {
         // '0' indicates that line and column information is unknown; '1' is the first row/column
-        int row = 0;
-        int column = 0;
+        std::uint32_t row = 0;
+        std::uint32_t column = 0;
     };
 
     struct DiagnosticLine
