@@ -56,7 +56,7 @@ namespace vcpkg::Unicode
         return utf8_errc::NoError;
     }
 
-    utf8_errc utf8_decode_code_point(const char*& first, const char* last, char32_t& out) noexcept
+    utf8_errc utf8_decode_code_point_slow(const char*& first, const char* last, char32_t& out) noexcept
     {
         if (first == last)
         {
@@ -124,7 +124,27 @@ namespace vcpkg::Unicode
                 | ((static_cast<unsigned char>(first[1]) & 0b0011'1111u) << 6)
                 |  (static_cast<unsigned char>(first[2]) & 0b0011'1111u);
             // clang-format on
+
             first += 3;
+            if (utf16_is_leading_surrogate_code_point(out) && last - first >= 3)
+            {
+                const auto next_first = static_cast<unsigned char>(first[0]);
+                const auto next_second = static_cast<unsigned char>(first[1]);
+                const auto next_third = static_cast<unsigned char>(first[2]);
+                if (next_first == 0xEDu && check_trailing(next_second) == utf8_errc::NoError &&
+                    check_trailing(next_third) == utf8_errc::NoError)
+                {
+                    const char32_t next_code_point = ((next_first & 0b0000'1111u) << 12) |
+                                                     ((next_second & 0b0011'1111u) << 6) | (next_third & 0b0011'1111u);
+                    if (utf16_is_trailing_surrogate_code_point(next_code_point))
+                    {
+                        out = end_of_file;
+                        first = last;
+                        return utf8_errc::PairedSurrogates;
+                    }
+                }
+            }
+
             return utf8_errc::NoError;
         }
 
@@ -172,14 +192,26 @@ namespace vcpkg::Unicode
 
     bool utf8_is_valid_string(const char* first, const char* last) noexcept
     {
-        utf8_errc err;
-        Utf8Decoder dec(first, last, err);
-        while (!dec.is_eof())
+        for (;;)
         {
-            err = dec.next();
-        }
+            if (first == last)
+            {
+                return true;
+            }
 
-        return err == utf8_errc::NoError;
+            if (!(*first & 0b1000'0000))
+            {
+                // ascii fast path
+                ++first;
+                continue;
+            }
+
+            char32_t unused;
+            if (utf8_decode_code_point(first, last, unused) != utf8_errc::NoError)
+            {
+                return false;
+            }
+        }
     }
 
     char32_t utf16_surrogates_to_code_point(char32_t leading, char32_t trailing) noexcept
@@ -233,14 +265,6 @@ namespace vcpkg::Unicode
             current_ = end_of_file;
             pointer_to_current_ = last;
             return err;
-        }
-
-        if (utf16_is_trailing_surrogate_code_point(code_point) && utf16_is_leading_surrogate_code_point(current_))
-        {
-            current_ = end_of_file;
-            pointer_to_current_ = last;
-            next_ = last;
-            return utf8_errc::PairedSurrogates;
         }
 
         current_ = code_point;

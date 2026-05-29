@@ -8,8 +8,6 @@
 
 namespace vcpkg
 {
-    StringView::StringView(const std::string& s) noexcept : m_ptr(s.data()), m_size(s.size()) { }
-
     bool StringView::ends_with(StringView pattern) const noexcept
     {
         if (m_size < pattern.size()) return false;

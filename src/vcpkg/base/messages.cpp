@@ -38,6 +38,14 @@ namespace vcpkg
 
     LocalizedString&& LocalizedString::append_raw(char c) && { return std::move(append_raw(c)); }
 
+    LocalizedString& LocalizedString::append_raw(std::size_t c, char ch) &
+    {
+        m_data.append(c, ch);
+        return *this;
+    }
+
+    LocalizedString&& LocalizedString::append_raw(std::size_t c, char ch) && { return std::move(append_raw(c, ch)); }
+
     LocalizedString& LocalizedString::append_raw(StringView s) &
     {
         m_data.append(s.begin(), s.size());

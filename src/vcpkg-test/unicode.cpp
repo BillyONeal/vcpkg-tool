@@ -1,9 +1,11 @@
 #include <vcpkg-test/util.h>
 
+#include <vcpkg/base/stringview.h>
 #include <vcpkg/base/unicode.h>
 
 #include <iterator>
 
+using namespace vcpkg;
 using namespace vcpkg::Unicode;
 
 TEST_CASE ("Utf8Decoder valid", "[unicode]")
@@ -109,6 +111,48 @@ TEST_CASE ("Utf8Decoder invalid", "[unicode]")
     }
 
     REQUIRE(uut.is_eof());
+}
+
+TEST_CASE ("utf8_decode_code_point handles paired surrogate prefixes", "[unicode]")
+{
+    StringLiteral wtf8 = "\xED\xA0\xBC\xED\xBF\x88";
+
+    char32_t decoded;
+
+    for (size_t prefix_length = 1; prefix_length <= 2; ++prefix_length)
+    {
+        auto first = wtf8.begin();
+        const auto last = first + prefix_length;
+        REQUIRE(utf8_decode_code_point(first, last, decoded) == utf8_errc::UnexpectedEof);
+        REQUIRE(decoded == end_of_file);
+        REQUIRE(first == last);
+    }
+
+    {
+        auto first = wtf8.begin();
+        const auto last = first + 3;
+        REQUIRE(utf8_decode_code_point(first, last, decoded) == utf8_errc::NoError);
+        REQUIRE(decoded == 0xD83C);
+        REQUIRE(first == last);
+    }
+
+    for (size_t prefix_length = 4; prefix_length <= 5; ++prefix_length)
+    {
+        auto first = wtf8.begin();
+        const auto last = first + prefix_length;
+        first += 3; // skip valid leading surrogate
+        REQUIRE(utf8_decode_code_point(first, last, decoded) == utf8_errc::UnexpectedEof);
+        REQUIRE(decoded == end_of_file);
+        REQUIRE(first == last);
+    }
+
+    {
+        auto first = wtf8.begin();
+        const auto last = first + 6;
+        REQUIRE(utf8_decode_code_point(first, last, decoded) == utf8_errc::PairedSurrogates);
+        REQUIRE(decoded == end_of_file);
+        REQUIRE(first == last);
+    }
 }
 
 TEST_CASE ("Utf8Decoder empty current", "[unicode]")

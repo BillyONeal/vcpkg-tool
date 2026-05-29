@@ -26,7 +26,7 @@ namespace vcpkg
     std::vector<ControlGroup> parse_cgroup_file(StringView text, StringView origin)
     {
         using P = ParserBase;
-        constexpr auto is_separator_or_lineend = [](auto ch) { return ch == ':' || P::is_lineend(ch); };
+        constexpr auto is_not_separator_or_lineend = [](char32_t ch) { return ch != ':' && !P::is_lineend(ch); };
 
         ParserBase parser{text, origin, {1, 1}};
         parser.skip_whitespace();
@@ -34,7 +34,7 @@ namespace vcpkg
         std::vector<ControlGroup> ret;
         while (!parser.at_eof())
         {
-            auto id = parser.match_until(is_separator_or_lineend);
+            auto id = parser.match_while(is_not_separator_or_lineend);
             auto maybe_numeric_id = Strings::strto<long>(id);
             if (!maybe_numeric_id || P::is_lineend(parser.cur()))
             {
@@ -43,7 +43,7 @@ namespace vcpkg
             }
 
             parser.next();
-            auto subsystems = parser.match_until(is_separator_or_lineend);
+            auto subsystems = parser.match_while(is_not_separator_or_lineend);
             if (P::is_lineend(parser.cur()))
             {
                 ret.clear();

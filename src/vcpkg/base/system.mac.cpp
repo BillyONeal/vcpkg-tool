@@ -97,7 +97,7 @@ namespace vcpkg
         // getmac /V /NH /FO CSV
         // outputs each interface on its own comma-separated line
         // "connection name","network adapter","physical address","transport name"
-        auto is_quote = [](auto ch) -> bool { return ch == '"'; };
+        auto is_not_quote = [](char32_t ch) -> bool { return ch != '"'; };
 
         auto parser = ParserBase(line, "getmac output", {0, 0});
 
@@ -105,25 +105,25 @@ namespace vcpkg
 
         // ignore "connection name"
         if (parser.require_character('"')) return false;
-        parser.match_until(is_quote);
+        parser.match_while(is_not_quote);
         if (parser.require_character('"')) return false;
         if (parser.require_character(',')) return false;
 
         // ignore "network adapter"
         if (parser.require_character('"')) return false;
-        parser.match_until(is_quote);
+        parser.match_while(is_not_quote);
         if (parser.require_character('"')) return false;
         if (parser.require_character(',')) return false;
 
         // get "physical address"
         if (parser.require_character('"')) return false;
-        out = parser.match_until(is_quote).to_string();
+        out = parser.match_while(is_not_quote).to_string();
         if (parser.require_character('"')) return false;
         if (parser.require_character(',')) return false;
 
         // ignore "transport name"
         if (parser.require_character('"')) return false;
-        parser.match_until(is_quote);
+        parser.match_while(is_not_quote);
         if (parser.require_character('"')) return false;
 
         parser.skip_whitespace();

@@ -2,12 +2,14 @@
 
 #include <vcpkg/base/checks.h>
 
-#include <cstdint>
 #include <stddef.h>
+
+#include <cstdint>
 
 namespace vcpkg::Unicode
 {
-    constexpr static char32_t end_of_file = 0xFFFF'FFFF;
+    constexpr static char32_t end_of_file = 0xFFFF'FFFFu;
+    constexpr static char32_t error_occurred = 0xFFFF'FFFEu;
 
     enum class utf8_errc
     {
@@ -23,7 +25,26 @@ namespace vcpkg::Unicode
     // If possible, decodes one codepoint from the beginning of [first, last). If successful advances first after the
     // last decoded encoding unit, stores the codepoint in out, and returns utf8_errc::NoError.
     // Otherwise, advances first to last, stores end_of_file in out, and returns one of the utf8_errc values.
-    utf8_errc utf8_decode_code_point(const char*& first, const char* last, char32_t& out) noexcept;
+    utf8_errc utf8_decode_code_point_slow(const char*& first, const char* last, char32_t& out) noexcept;
+
+    inline utf8_errc utf8_decode_code_point(const char*& first, const char* last, char32_t& out) noexcept
+    {
+        if (first == last)
+        {
+            out = end_of_file;
+            return utf8_errc::NoError;
+        }
+
+        auto code_unit = static_cast<unsigned char>(*first);
+        if (code_unit < 0b1000'0000u)
+        {
+            out = code_unit;
+            ++first;
+            return utf8_errc::NoError;
+        }
+
+        return utf8_decode_code_point_slow(first, last, out);
+    }
 
     // uses the C++20 definition
     /*
@@ -65,6 +86,8 @@ namespace vcpkg::Unicode
 
         return utf8_append_big_code_point(str, code_point);
     }
+
+    utf8_errc utf8_decode_code_point(const char*& first, const char* last, char32_t& out) noexcept;
 
     bool utf8_is_valid_string(const char* first, const char* last) noexcept;
 

@@ -22,7 +22,7 @@ namespace vcpkg
 
         if (ch == '\t')
         {
-            column = ((column + 7) & ~7) + 1; // round to next 8-width tab stop
+            column = column_round_tabstop(column);
         }
         else if (ch == '\n')
         {
@@ -33,6 +33,53 @@ namespace vcpkg
         {
             ++column;
         }
+    }
+
+    // append whitespace intended to be printed under "matching_text" to place content "after" it on the next line
+    static void append_matching_whitespace_caret(LocalizedString& target, StringView matching_text)
+    {
+        auto first = matching_text.begin();
+        const auto last = matching_text.end();
+        while (first != last)
+        {
+            const auto first_byte = static_cast<unsigned char>(*first);
+            if (!(first_byte & 0b1000'0000))
+            {
+                // ascii fast path
+                ++first;
+                if (first_byte == '\t')
+                {
+                    target.append_raw('\t');
+                }
+                else
+                {
+                    target.append_raw(' ');
+                }
+
+                continue;
+            }
+
+            char32_t ch;
+            if (Unicode::utf8_decode_code_point(first, last, ch) != Unicode::utf8_errc::NoError)
+            {
+                Checks::unreachable(VCPKG_LINE_INFO);
+            }
+
+            if (ch == '\t')
+            {
+                target.append_raw('\t');
+            }
+            else if (Unicode::is_double_width_code_point(ch))
+            {
+                target.append_raw(2, ' ');
+            }
+            else
+            {
+                target.append_raw(' ');
+            }
+        }
+
+        target.append_raw('^');
     }
 
     void append_caret_line(LocalizedString& res,
@@ -46,45 +93,18 @@ namespace vcpkg
             (void)line_end.next();
         }
 
-        StringView line = StringView{
-            start_of_line.pointer_to_current(),
-            line_end.pointer_to_current(),
-        };
+        auto print_line_before_caret =
+            LocalizedString{}
+                .append_indent()
+                .append(msg::format(msgFormattedParseMessageExpressionPrefix))
+                .append_raw(' ')
+                .append_raw(StringView{start_of_line.pointer_to_current(), cursor.pointer_to_current()});
 
-        LocalizedString line_prefix = msg::format(msgFormattedParseMessageExpressionPrefix);
-        size_t line_prefix_space = 1; // for the space after the prefix
-        Unicode::utf8_errc utf8_error;
-        Unicode::Utf8Decoder decode_line_prefix(line_prefix, utf8_error); // ignore errors since it's content we control
-        while (!decode_line_prefix.is_eof())
-        {
-            char32_t ch = *decode_line_prefix;
-            line_prefix_space += 1 + Unicode::is_double_width_code_point(ch);
-            (void)decode_line_prefix.next();
-        }
+        res.append(print_line_before_caret)
+            .append_raw(StringView{cursor.pointer_to_current(), line_end.pointer_to_current()})
+            .append_raw('\n');
 
-        res.append_indent().append(line_prefix).append_raw(' ').append_raw(line).append_raw('\n');
-
-        std::string caret_string;
-        caret_string.append(line_prefix_space, ' ');
-        // note *cursor is excluded because it is where the ^ goes
-        for (auto it = start_of_line; it != cursor;)
-        {
-            if (*it == '\t')
-                caret_string.push_back('\t');
-            else if (Unicode::is_double_width_code_point(*it))
-                caret_string.append(2, ' ');
-            else
-                caret_string.push_back(' ');
-
-            if (it.next() != Unicode::utf8_errc::NoError)
-            {
-                break;
-            }
-        }
-
-        caret_string.push_back('^');
-
-        res.append_indent().append_raw(caret_string);
+        append_matching_whitespace_caret(res, print_line_before_caret);
     }
 
     static void append_caret_line(LocalizedString& res, const SourceLoc& loc)
@@ -204,7 +224,6 @@ namespace vcpkg
         return match_while([](char32_t ch) { return ch == ' ' || ch == '\t'; });
     }
 
-    void ParserBase::skip_to_eof() { m_it.skip_to_eof(); }
     void ParserBase::skip_newline()
     {
         if (cur() == '\r') next();
@@ -327,7 +346,7 @@ namespace vcpkg
         }
 
         // Avoid error loops by skipping to the end
-        skip_to_eof();
+        m_it.skip_to_eof();
     }
 
     void ParserBase::add_warning(LocalizedString&& message)
@@ -391,5 +410,245 @@ namespace vcpkg
         }
 
         return res;
+    }
+
+    bool ParseEnumerator::at_eof() const noexcept { return m_position.next_index == m_doc->m_text.size(); }
+    char32_t ParseEnumerator::next(DiagnosticContext& context)
+    {
+        if (at_eof())
+        {
+            return Unicode::end_of_file;
+        }
+
+        const auto ch = m_doc->m_text[m_position.next_index];
+        if (ch == '\t')
+        {
+            ++m_position.next_index;
+            m_position.column = column_round_tabstop(m_position.column); // round to next 8-width tab stop
+            return '\t';
+        }
+
+        if (ch == '\n')
+        {
+            ++m_position.next_index;
+            m_position.column = 1;
+            m_position.row++;
+            m_position.row_start = m_position.next_index;
+            return '\n';
+        }
+
+        if (!(ch & 0b1000'0000))
+        {
+            // ascii fast path
+            ++m_position.next_index;
+            ++m_position.column;
+            return static_cast<char32_t>(ch);
+        }
+
+        auto first = m_doc->m_text.data() + m_position.next_index;
+        const auto last = m_doc->m_text.data() + m_doc->m_text.size();
+        char32_t result;
+        const auto decode_error = Unicode::utf8_decode_code_point(first, last, result);
+        if (decode_error == Unicode::utf8_errc::NoError)
+        {
+            m_position.next_index = static_cast<ParseIndex>(first - m_doc->m_text.data());
+            ++m_position.column;
+            return result;
+        }
+
+        report_error_with_caret_line(context, Unicode::message(decode_error));
+        m_position.next_index = static_cast<ParseIndex>(m_doc->m_text.size());
+        return Unicode::error_occurred;
+    }
+
+    StringView ParseEnumerator::skip_whitespace() noexcept { return match_while_ascii(ParserBase::is_whitespace); }
+
+    StringView ParseEnumerator::skip_tabs_spaces() noexcept
+    {
+        return match_while_ascii([](char ch) { return ch == ' ' || ch == '\t'; });
+    }
+
+    void ParseEnumerator::skip_newline() noexcept
+    {
+        if (at_eof())
+        {
+            return;
+        }
+
+        if (m_doc->m_text[m_position.next_index] == '\r')
+        {
+            ++m_position.next_index;
+            if (!at_eof() && m_doc->m_text[m_position.next_index] == '\n')
+            {
+                ++m_position.next_index;
+            }
+
+            m_position.column = 1;
+            m_position.row++;
+            m_position.row_start = m_position.next_index;
+        }
+        else if (m_doc->m_text[m_position.next_index] == '\n')
+        {
+            ++m_position.next_index;
+            m_position.column = 1;
+            m_position.row++;
+            m_position.row_start = m_position.next_index;
+        }
+    }
+
+    bool ParseEnumerator::skip_line(DiagnosticContext& context)
+    {
+        while (!at_eof())
+        {
+            const auto ch = m_doc->m_text[m_position.next_index];
+            if (ch == '\r' || ch == '\n')
+            {
+                skip_newline();
+                return true;
+            }
+
+            if (ch == '\t')
+            {
+                ++m_position.next_index;
+                m_position.column = column_round_tabstop(m_position.column);
+                continue;
+            }
+
+            if (!(ch & 0b1000'0000u))
+            {
+                // ascii fast path
+                ++m_position.next_index;
+                ++m_position.column;
+                continue;
+            }
+
+            auto first = m_doc->m_text.data() + m_position.next_index;
+            const auto last = m_doc->m_text.data() + m_doc->m_text.size();
+            char32_t result;
+            const auto decode_error = Unicode::utf8_decode_code_point(first, last, result);
+            if (decode_error != Unicode::utf8_errc::NoError)
+            {
+                report_error_with_caret_line(context, Unicode::message(decode_error));
+                m_position.next_index = static_cast<ParseIndex>(m_doc->m_text.size());
+                return false;
+            }
+
+            m_position.next_index = static_cast<ParseIndex>(first - m_doc->m_text.data());
+            ++m_position.column;
+        }
+
+        return true;
+    }
+
+    bool ParseEnumerator::require_character(DiagnosticContext& context, char ch)
+    {
+        if (!at_eof() && m_doc->m_text[m_position.next_index] == ch)
+        {
+            ++m_position.next_index;
+            ++m_position.column;
+            return true;
+        }
+
+        report_error_with_caret_line(context, msg::format(msgExpectedCharacterHere, msg::expected = ch));
+        m_position.next_index = static_cast<ParseIndex>(m_doc->m_text.size());
+        return false;
+    }
+
+    bool ParseEnumerator::try_match_character(char ch) noexcept
+    {
+        if (!at_eof() && m_doc->m_text[m_position.next_index] == ch)
+        {
+            ++m_position.next_index;
+            ++m_position.column;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool ParseEnumerator::require_keyword(DiagnosticContext& context, StringLiteral keyword)
+    {
+        if (try_match_keyword(keyword))
+        {
+            return true;
+        }
+
+        report_error_with_caret_line(context, msg::format(msgExpectedTextHere, msg::expected = keyword));
+        m_position.next_index = static_cast<ParseIndex>(m_doc->m_text.size());
+        return false;
+    }
+
+    bool ParseEnumerator::try_match_keyword(StringLiteral keyword) noexcept
+    {
+        const auto keyword_size = static_cast<ParseIndex>(keyword.size());
+        const auto remaining_size = static_cast<ParseIndex>(m_doc->m_text.size() - m_position.next_index);
+        // check if the keyword matches and is followed by a word boundary (end of file or whitespace)
+        if (remaining_size >= keyword_size &&
+            std::equal(keyword.begin(), keyword.end(), m_doc->m_text.data() + m_position.next_index) &&
+            (remaining_size == keyword_size ||
+             ParserBase::is_whitespace(m_doc->m_text[m_position.next_index + keyword_size])))
+        {
+            m_position.next_index += keyword_size;
+            m_position.column += keyword_size;
+            return true;
+        }
+
+        return false;
+    }
+
+    void ParseEnumerator::report_error_with_caret_line(DiagnosticContext& context, LocalizedString&& message) const
+    {
+        const auto line_prefix = get_line_prefix();
+        const auto line_suffix = get_error_line_suffix_size();
+        message.append_raw('\n')
+            .append_raw(StringView{line_prefix.data(), line_prefix.size() + line_suffix})
+            .append_raw('\n');
+        append_matching_whitespace_caret(message, line_prefix);
+        if (auto origin = m_doc->m_origin.get())
+        {
+            context.report(DiagnosticLine{
+                DiagKind::Error, *origin, TextRowCol{m_position.row, m_position.column}, std::move(message)});
+        }
+        else
+        {
+            context.report(DiagnosticLine{DiagKind::Error, std::move(message)});
+        }
+    }
+
+    StringView ParseEnumerator::get_line_prefix() const noexcept
+    {
+        return StringView{m_doc->m_text.data() + m_position.row_start, m_position.next_index - m_position.row_start};
+    }
+
+    ParseIndex ParseEnumerator::get_error_line_suffix_size() const noexcept
+    {
+        const auto first = m_doc->m_text.data() + m_position.next_index;
+        const auto last = m_doc->m_text.data() + m_doc->m_text.size();
+        auto current = first;
+
+        while (current != last)
+        {
+            const auto first_byte = *current;
+            if (!(first_byte & 0b1000'0000u))
+            {
+                if (first_byte == '\r' || first_byte == '\n')
+                {
+                    break;
+                }
+
+                ++current;
+                continue;
+            }
+
+            char32_t ch;
+            const auto decode_first = current;
+            if (Unicode::utf8_decode_code_point(current, last, ch) != Unicode::utf8_errc::NoError)
+            {
+                current = decode_first;
+                break;
+            }
+        }
+
+        return static_cast<ParseIndex>(current - first);
     }
 }

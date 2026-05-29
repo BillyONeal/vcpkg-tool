@@ -86,6 +86,8 @@ namespace vcpkg
 
         LocalizedString& append_raw(char c) &;
         LocalizedString&& append_raw(char c) &&;
+        LocalizedString& append_raw(std::size_t c, char ch) &;
+        LocalizedString&& append_raw(std::size_t c, char ch) &&;
         LocalizedString& append_raw(StringView s) &;
         LocalizedString&& append_raw(StringView s) &&;
         template<class T, class = decltype(std::declval<const T&>().to_string(std::declval<std::string&>()))>
