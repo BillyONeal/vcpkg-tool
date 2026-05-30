@@ -127,16 +127,116 @@ namespace vcpkg
         Unicode::Utf8Decoder m_start_of_line;
     };
 
+    struct ParsePosition;
+    struct StackedParseEnumerator;
+    struct StackedEscapeParseDocument;
+    struct ParseEnumerator;
     struct ParsedDocument;
 
     using ParseIndex = std::uint32_t;
 
     struct ParsePosition
     {
-        ParseIndex next_index = 0;
-        ParseIndex column = 1;
-        ParseIndex row = 1;
-        ParseIndex row_start = 0;
+        ParseIndex next_index;
+        ParseIndex column;
+        ParseIndex row;
+        ParseIndex row_start;
+    };
+
+    struct StackedParseEnumerator
+    {
+        bool at_eof() const noexcept;
+        char32_t next() noexcept;
+
+        // consume ascii characters while `p` returns true, and return the consumed characters as a StringView
+        //
+        // if a non-ascii character is encountered, that is interpreted as `p` returning false and will not be included
+        // in the result
+        //
+        // (this restriction avoids needing to decode UTF-8 into the "future" or handle UTF-8 decoding errors)
+        //
+        // Pred is called with `char`s
+        template<class Pred>
+        StringView match_while_ascii(Pred p) noexcept;
+
+        // consume unicode or ascii characters while `p` returns true, and return the consumed characters as a
+        // StringView
+        //
+        // if a non-ascii character is encountered, that is interpreted as `p` returning true and will be included in
+        // the result
+        //
+        // (this restriction avoids needing to decode UTF-8 into the "future" or handle UTF-8 decoding errors)
+        //
+        // Pred is called with `char`s
+        template<class Pred>
+        StringView match_while_ascii_passthrough(Pred p) noexcept;
+
+        // ch must be in the ascii subset and may not be whitespace
+        bool require_character(DiagnosticContext&, char ch);
+        bool try_match_character(char ch) noexcept;
+
+        // "text" must be in the ascii subset, and may not contain whitespace
+        bool require_text(DiagnosticContext&, StringLiteral text);
+        bool try_match_text(StringLiteral text) noexcept;
+
+        // "keyword" must be in the ascii subset, and may not contain whitespace
+        bool require_keyword(DiagnosticContext&, StringLiteral keyword);
+        bool try_match_keyword(StringLiteral keyword) noexcept;
+
+        // records an error into `context` with a subsequent line with the original text, and a subsequent ^ caret line
+        // pointing to the current position
+        void report_error_with_caret_line(DiagnosticContext& context, LocalizedString&& message) const;
+
+        StackedParseEnumerator(const StackedParseEnumerator&) = default;
+        StackedParseEnumerator& operator=(const StackedParseEnumerator&) = default;
+
+    private:
+        friend StackedEscapeParseDocument;
+        StackedParseEnumerator(const StackedEscapeParseDocument& doc) noexcept;
+        ParsePosition source_position() const noexcept;
+        void advance_encoded(ParseIndex count) noexcept;
+
+        const StackedEscapeParseDocument* m_doc;
+        ParseIndex m_decoded_next;
+        ParseIndex m_source_next;
+        ParseIndex m_next_escape;
+    };
+
+    struct StackedEscapeParseDocument
+    {
+        StackedParseEnumerator enumerator() const noexcept;
+        const std::string& text() const& noexcept { return m_decoded_text; }
+        std::string&& text() && noexcept { return std::move(m_decoded_text); }
+        std::string&& move_text() noexcept { return std::move(m_decoded_text); }
+        ParsePosition last_source_position() const noexcept;
+
+        // records an error into `context` with a subsequent line with the original text, and a subsequent ^ caret line
+        // pointing to the current position
+        void report_error_with_caret_line(DiagnosticContext& context, LocalizedString&& message) const;
+        // records an error into `context` with a subsequent line with the original text, and a subsequent ^ caret line
+        // pointing to the end delimiter consumed by ParseEnumerator::match_escaped
+        void report_error_with_caret_line_end_delimiter(DiagnosticContext& context, LocalizedString&& message) const;
+
+        StackedEscapeParseDocument(const StackedEscapeParseDocument&) = delete;
+        StackedEscapeParseDocument& operator=(const StackedEscapeParseDocument&) = delete;
+
+        // invalidates StackedParseEnumerators
+        StackedEscapeParseDocument(StackedEscapeParseDocument&&) = default;
+        StackedEscapeParseDocument& operator=(StackedEscapeParseDocument&&) = default;
+
+    private:
+        friend ParseEnumerator;
+        friend StackedParseEnumerator;
+        friend ParsedDocument;
+        StackedEscapeParseDocument(const ParsedDocument* parent_doc,
+                                   ParsePosition start_position,
+                                   std::string&& decoded_text,
+                                   std::vector<ParseIndex>&& escape_positions);
+
+        const ParsedDocument* m_parent_doc;
+        ParsePosition m_start_position;
+        std::string m_decoded_text;
+        std::vector<ParseIndex> m_escape_positions;
     };
 
     // This is an "enumerator" rather than an iterator because it doesn't know what the "current" value is and
@@ -177,9 +277,22 @@ namespace vcpkg
         bool require_character(DiagnosticContext&, char ch);
         bool try_match_character(char ch) noexcept;
 
+        // "text" must be in the ascii subset, and may not contain whitespace
+        bool require_text(DiagnosticContext&, StringLiteral text);
+        bool try_match_text(StringLiteral text) noexcept;
+
         // "keyword" must be in the ascii subset, and may not contain whitespace
         bool require_keyword(DiagnosticContext&, StringLiteral keyword);
         bool try_match_keyword(StringLiteral keyword) noexcept;
+
+        // match a string with escape sequences, where `escape_char` is the character that introduces an escape
+        // sequence, and `terminal` is the character that terminates the string (and may not be present in the content
+        // except as an escape sequence) escape_char and terminal must be in the ascii subset, and may not be whitespace
+        Optional<StackedEscapeParseDocument> match_escaped(DiagnosticContext& context, char escape_char, char terminal);
+        Optional<StackedEscapeParseDocument> match_escaped(DiagnosticContext& context,
+                                                           char32_t& matched_terminal,
+                                                           char escape_char,
+                                                           StringView terminals);
 
         // records an error into `context` with a subsequent line with the original text, and a subsequent ^ caret line
         // pointing to the current position
@@ -195,25 +308,25 @@ namespace vcpkg
         ParseIndex get_error_line_suffix_size() const noexcept;
 
         friend ParsedDocument;
-        ParseEnumerator(const ParsedDocument& doc) : m_doc(&doc) { }
+        ParseEnumerator(const ParsedDocument& doc);
 
         const ParsedDocument* m_doc;
-        ParsePosition m_position;
+        ParsePosition m_position = {0, 1, 1, 0};
     };
 
     struct ParsedDocument
     {
-        ParsedDocument(StringView text, Optional<StringView> origin)
-            : m_text(text.data(), text.size()), m_origin(origin)
-        {
-        }
+        ParsedDocument(StringView text, Optional<StringView> origin);
 
         ParsedDocument(const ParsedDocument&) = delete;
         ParsedDocument& operator=(const ParsedDocument&) = delete;
 
-        ParseEnumerator enumerator() const { return ParseEnumerator(*this); }
+        ParseEnumerator enumerator() const;
+        Optional<StackedEscapeParseDocument> stacked(DiagnosticContext& context) const;
 
     private:
+        friend StackedEscapeParseDocument;
+        friend StackedParseEnumerator;
         friend ParseEnumerator;
 
         std::string m_text;
@@ -224,6 +337,51 @@ namespace vcpkg
     {
         // round to next 8-width tab stop
         return column = ((column + 7u) & ~7u) + 1u;
+    }
+
+    template<class Pred>
+    StringView StackedParseEnumerator::match_while_ascii(Pred p) noexcept
+    {
+        const auto first = m_decoded_next;
+        while (!at_eof())
+        {
+            const auto ch = m_doc->m_decoded_text[m_decoded_next];
+            if ((ch & 0b1000'0000u) || !p(ch))
+            {
+                break;
+            }
+
+            advance_encoded(1);
+        }
+
+        return StringView{m_doc->m_decoded_text.data() + first, m_decoded_next - first};
+    }
+
+    template<class Pred>
+    StringView StackedParseEnumerator::match_while_ascii_passthrough(Pred p) noexcept
+    {
+        const auto first = m_decoded_next;
+        while (!at_eof())
+        {
+            ParseIndex len = 1;
+            const auto ch = m_doc->m_decoded_text[m_decoded_next];
+            if ((ch & 0b1000'0000u))
+            {
+                // note that we know the input is valid UTF-8
+                while ((0b1100'0000u & m_doc->m_decoded_text[m_decoded_next]) == 0b1000'0000u)
+                {
+                    ++len;
+                }
+            }
+            else if (!p(ch))
+            {
+                break;
+            }
+
+            advance_encoded(1);
+        }
+
+        return StringView{m_doc->m_decoded_text.data() + first, m_decoded_next - first};
     }
 
     template<class Pred>

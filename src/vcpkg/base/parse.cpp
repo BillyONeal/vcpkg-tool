@@ -112,6 +112,113 @@ namespace vcpkg
         append_caret_line(res, loc.it, loc.start_of_line);
     }
 
+    static char32_t decode_known_valid_utf8(ParseIndex& next_index, StringView text) noexcept
+    {
+        const auto ch = text[next_index];
+        if (!(ch & 0b1000'0000))
+        {
+            ++next_index;
+            return static_cast<unsigned char>(ch);
+        }
+
+        auto first = text.data() + next_index;
+        const auto last = text.data() + text.size();
+        char32_t result;
+        if (Unicode::utf8_decode_code_point(first, last, result) != Unicode::utf8_errc::NoError)
+        {
+            Checks::unreachable(VCPKG_LINE_INFO);
+        }
+
+        next_index = static_cast<ParseIndex>(first - text.data());
+        return result;
+    }
+
+    static ParseIndex get_error_line_suffix_size(StringView text, ParseIndex next_index) noexcept
+    {
+        const auto first = text.data() + next_index;
+        const auto last = text.data() + text.size();
+        auto current = first;
+
+        while (current != last)
+        {
+            const auto first_byte = *current;
+            if (!(first_byte & 0b1000'0000u))
+            {
+                if (first_byte == '\r' || first_byte == '\n')
+                {
+                    break;
+                }
+
+                ++current;
+                continue;
+            }
+
+            char32_t ch;
+            const auto decode_first = current;
+            if (Unicode::utf8_decode_code_point(current, last, ch) != Unicode::utf8_errc::NoError)
+            {
+                current = decode_first;
+                break;
+            }
+        }
+
+        return static_cast<ParseIndex>(current - first);
+    }
+
+    static void report_error_with_caret_line(DiagnosticContext& context,
+                                             StringView text,
+                                             Optional<StringView> source_origin,
+                                             const ParsePosition& position,
+                                             LocalizedString&& message)
+    {
+        const auto line_prefix = StringView{text.data() + position.row_start, position.next_index - position.row_start};
+        const auto line_suffix = get_error_line_suffix_size(text, position.next_index);
+        message.append_raw('\n')
+            .append_raw(StringView{line_prefix.data(), line_prefix.size() + line_suffix})
+            .append_raw('\n');
+        append_matching_whitespace_caret(message, line_prefix);
+        if (auto origin = source_origin.get())
+        {
+            context.report(DiagnosticLine{
+                DiagKind::Error, *origin, TextRowCol{position.row, position.column}, std::move(message)});
+        }
+        else
+        {
+            context.report(DiagnosticLine{DiagKind::Error, std::move(message)});
+        }
+    }
+
+    // advances position by one code point, and updates row and column information. text[position.next_index] must be
+    // valid UTF-8
+    static void advance_position_known_valid(StringView text, ParsePosition& position) noexcept
+    {
+        const auto ch = static_cast<unsigned char>(text[position.next_index]);
+        if (ch == '\t')
+        {
+            ++position.next_index;
+            position.column = column_round_tabstop(position.column);
+        }
+        else if (ch == '\n')
+        {
+            ++position.next_index;
+            position.column = 1;
+            ++position.row;
+            position.row_start = position.next_index;
+        }
+        else if (!(ch & 0b1000'0000u))
+        {
+            ++position.next_index;
+            ++position.column;
+        }
+        else
+        {
+            ParseIndex next_index = position.next_index;
+            decode_known_valid_utf8(next_index, text);
+            position.next_index = next_index;
+            ++position.column;
+        }
+    }
+
     void ParseMessages::print_errors_or_warnings() const
     {
         for (const auto& line : m_lines)
@@ -412,6 +519,187 @@ namespace vcpkg
         return res;
     }
 
+    StackedParseEnumerator::StackedParseEnumerator(const StackedEscapeParseDocument& doc) noexcept
+        : m_doc(&doc), m_decoded_next(0), m_source_next(doc.m_start_position.next_index), m_next_escape(0)
+    {
+    }
+
+    bool StackedParseEnumerator::at_eof() const noexcept { return m_decoded_next == m_doc->m_decoded_text.size(); }
+
+    char32_t StackedParseEnumerator::next() noexcept
+    {
+        if (at_eof())
+        {
+            return Unicode::end_of_file;
+        }
+
+        auto next_decoded = m_decoded_next;
+        const auto result = decode_known_valid_utf8(next_decoded, m_doc->m_decoded_text);
+        advance_encoded(next_decoded - m_decoded_next);
+        return result;
+    }
+
+    ParsePosition StackedParseEnumerator::source_position() const noexcept
+    {
+        auto position = m_doc->m_start_position;
+
+        while (position.next_index != m_source_next)
+        {
+            advance_position_known_valid(m_doc->m_parent_doc->m_text, position);
+        }
+
+        return position;
+    }
+
+    void StackedParseEnumerator::advance_encoded(ParseIndex count) noexcept
+    {
+        for (; count != 0; --count)
+        {
+            if (m_next_escape < m_doc->m_escape_positions.size() &&
+                m_source_next == m_doc->m_escape_positions[m_next_escape])
+            {
+                ++m_source_next;
+                ++m_next_escape;
+            }
+
+            ++m_decoded_next;
+            ++m_source_next;
+        }
+    }
+
+    void StackedParseEnumerator::report_error_with_caret_line(DiagnosticContext& context,
+                                                              LocalizedString&& message) const
+    {
+        ::vcpkg::report_error_with_caret_line(
+            context, m_doc->m_parent_doc->m_text, m_doc->m_parent_doc->m_origin, source_position(), std::move(message));
+    }
+
+    bool StackedParseEnumerator::require_character(DiagnosticContext& context, char ch)
+    {
+        if (m_decoded_next != m_doc->m_decoded_text.size() && m_doc->m_decoded_text[m_decoded_next] == ch)
+        {
+            advance_encoded(1);
+            return true;
+        }
+
+        report_error_with_caret_line(context, msg::format(msgExpectedCharacterHere, msg::expected = ch));
+        m_decoded_next = static_cast<ParseIndex>(m_doc->m_decoded_text.size());
+        m_source_next = static_cast<ParseIndex>(m_doc->m_parent_doc->m_text.size());
+        return false;
+    }
+
+    bool StackedParseEnumerator::try_match_character(char ch) noexcept
+    {
+        if (m_decoded_next != m_doc->m_decoded_text.size() && m_doc->m_decoded_text[m_decoded_next] == ch)
+        {
+            advance_encoded(1);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool StackedParseEnumerator::require_text(DiagnosticContext& context, StringLiteral text)
+    {
+        if (try_match_text(text))
+        {
+            return true;
+        }
+
+        report_error_with_caret_line(context, msg::format(msgExpectedTextHere, msg::expected = text));
+        m_decoded_next = static_cast<ParseIndex>(m_doc->m_decoded_text.size());
+        m_source_next = static_cast<ParseIndex>(m_doc->m_parent_doc->m_text.size());
+        return false;
+    }
+
+    bool StackedParseEnumerator::try_match_text(StringLiteral text) noexcept
+    {
+        const auto text_size = static_cast<ParseIndex>(text.size());
+        const auto remaining_size = static_cast<ParseIndex>(m_doc->m_decoded_text.size() - m_decoded_next);
+        if (remaining_size >= text_size &&
+            std::equal(text.begin(), text.end(), m_doc->m_decoded_text.data() + m_decoded_next))
+        {
+            advance_encoded(text_size);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool StackedParseEnumerator::require_keyword(DiagnosticContext& context, StringLiteral keyword)
+    {
+        if (try_match_keyword(keyword))
+        {
+            return true;
+        }
+
+        report_error_with_caret_line(context, msg::format(msgExpectedTextHere, msg::expected = keyword));
+        m_decoded_next = static_cast<ParseIndex>(m_doc->m_decoded_text.size());
+        m_source_next = static_cast<ParseIndex>(m_doc->m_parent_doc->m_text.size());
+        return false;
+    }
+
+    bool StackedParseEnumerator::try_match_keyword(StringLiteral keyword) noexcept
+    {
+        const auto first = m_decoded_next;
+        const auto keyword_size = static_cast<ParseIndex>(keyword.size());
+        const auto remaining_size = static_cast<ParseIndex>(m_doc->m_decoded_text.size() - first);
+
+        if (remaining_size < keyword_size ||
+            !std::equal(keyword.begin(), keyword.end(), m_doc->m_decoded_text.data() + first) ||
+            (remaining_size != keyword_size && !ParserBase::is_whitespace(m_doc->m_decoded_text[first + keyword_size])))
+        {
+            return false;
+        }
+
+        advance_encoded(keyword_size);
+        return true;
+    }
+
+    StackedParseEnumerator StackedEscapeParseDocument::enumerator() const noexcept
+    {
+        return StackedParseEnumerator(*this);
+    }
+
+    ParsePosition StackedEscapeParseDocument::last_source_position() const noexcept
+    {
+        auto position = m_start_position;
+        const auto source_end = m_start_position.next_index + static_cast<ParseIndex>(m_decoded_text.size()) +
+                                static_cast<ParseIndex>(m_escape_positions.size());
+
+        while (position.next_index != source_end)
+        {
+            advance_position_known_valid(m_parent_doc->m_text, position);
+        }
+
+        return position;
+    }
+
+    void StackedEscapeParseDocument::report_error_with_caret_line(DiagnosticContext& context,
+                                                                  LocalizedString&& message) const
+    {
+        vcpkg::report_error_with_caret_line(
+            context, m_parent_doc->m_text, m_parent_doc->m_origin, m_start_position, std::move(message));
+    }
+
+    void StackedEscapeParseDocument::report_error_with_caret_line_end_delimiter(DiagnosticContext& context,
+                                                                                LocalizedString&& message) const
+    {
+        vcpkg::report_error_with_caret_line(
+            context, m_parent_doc->m_text, m_parent_doc->m_origin, last_source_position(), std::move(message));
+    }
+
+    StackedEscapeParseDocument::StackedEscapeParseDocument(const ParsedDocument* parent_doc,
+                                                           ParsePosition start_position,
+                                                           std::string&& decoded_text,
+                                                           std::vector<ParseIndex>&& escape_positions)
+        : m_parent_doc(parent_doc)
+        , m_start_position(start_position)
+        , m_decoded_text(std::move(decoded_text))
+        , m_escape_positions(std::move(escape_positions))
+    {
+    }
+
     bool ParseEnumerator::at_eof() const noexcept { return m_position.next_index == m_doc->m_text.size(); }
     char32_t ParseEnumerator::next(DiagnosticContext& context)
     {
@@ -566,6 +854,33 @@ namespace vcpkg
         return false;
     }
 
+    bool ParseEnumerator::require_text(DiagnosticContext& context, StringLiteral text)
+    {
+        if (try_match_text(text))
+        {
+            return true;
+        }
+
+        report_error_with_caret_line(context, msg::format(msgExpectedTextHere, msg::expected = text));
+        m_position.next_index = static_cast<ParseIndex>(m_doc->m_text.size());
+        return false;
+    }
+
+    bool ParseEnumerator::try_match_text(StringLiteral text) noexcept
+    {
+        const auto text_size = static_cast<ParseIndex>(text.size());
+        const auto remaining_size = static_cast<ParseIndex>(m_doc->m_text.size() - m_position.next_index);
+        if (remaining_size >= text_size &&
+            std::equal(text.begin(), text.end(), m_doc->m_text.data() + m_position.next_index))
+        {
+            m_position.next_index += text_size;
+            m_position.column += text_size;
+            return true;
+        }
+
+        return false;
+    }
+
     bool ParseEnumerator::require_keyword(DiagnosticContext& context, StringLiteral keyword)
     {
         if (try_match_keyword(keyword))
@@ -594,6 +909,65 @@ namespace vcpkg
         }
 
         return false;
+    }
+
+    Optional<StackedEscapeParseDocument> ParseEnumerator::match_escaped(DiagnosticContext& context,
+                                                                        char escape_char,
+                                                                        char terminal)
+    {
+        const char terminals[] = {terminal};
+        char32_t matched_terminal;
+        return match_escaped(context, matched_terminal, escape_char, StringView{terminals, 1});
+    }
+
+    Optional<StackedEscapeParseDocument> ParseEnumerator::match_escaped(DiagnosticContext& context,
+                                                                        char32_t& matched_terminal,
+                                                                        char escape_char,
+                                                                        StringView terminals)
+    {
+        const auto start_position = m_position;
+        std::string decoded_text;
+        std::vector<ParseIndex> escape_positions;
+        ParseIndex append_from = m_position.next_index;
+        ParseIndex append_until = m_position.next_index;
+        matched_terminal = Unicode::end_of_file;
+
+        while (!at_eof())
+        {
+            if (terminals.contains(m_doc->m_text[m_position.next_index]))
+            {
+                append_until = m_position.next_index;
+                matched_terminal = static_cast<unsigned char>(m_doc->m_text[m_position.next_index]);
+                ++m_position.next_index;
+                ++m_position.column;
+                break;
+            }
+
+            if (m_doc->m_text[m_position.next_index] == escape_char)
+            {
+                decoded_text.append(m_doc->m_text.data() + append_from, m_position.next_index - append_from);
+                escape_positions.push_back(m_position.next_index);
+                ++m_position.next_index;
+                ++m_position.column;
+                if (at_eof())
+                {
+                    report_error_with_caret_line(context, msg::format(msgUnexpectedEOFAfterEscape));
+                    return nullopt;
+                }
+
+                append_from = m_position.next_index;
+            }
+
+            if (next(context) == Unicode::error_occurred)
+            {
+                return nullopt;
+            }
+
+            append_until = m_position.next_index;
+        }
+
+        decoded_text.append(m_doc->m_text.data() + append_from, append_until - append_from);
+        return StackedEscapeParseDocument{m_doc, start_position, std::move(decoded_text), std::move(escape_positions)};
     }
 
     void ParseEnumerator::report_error_with_caret_line(DiagnosticContext& context, LocalizedString&& message) const
@@ -650,5 +1024,35 @@ namespace vcpkg
         }
 
         return static_cast<ParseIndex>(current - first);
+    }
+
+    ParseEnumerator::ParseEnumerator(const ParsedDocument& doc) : m_doc(&doc) { }
+
+    ParsedDocument::ParsedDocument(StringView text, Optional<StringView> origin)
+        : m_text(text.data(), text.size()), m_origin(origin)
+    {
+    }
+
+    ParseEnumerator ParsedDocument::enumerator() const { return ParseEnumerator(*this); }
+
+    Optional<StackedEscapeParseDocument> ParsedDocument::stacked(DiagnosticContext& context) const
+    {
+        auto parser = enumerator();
+        for (;;)
+        {
+            const auto ch = parser.next(context);
+            if (ch == Unicode::error_occurred)
+            {
+                return nullopt;
+            }
+
+            if (ch == Unicode::end_of_file)
+            {
+                break;
+            }
+        }
+
+        return StackedEscapeParseDocument{
+            this, ParsePosition{0, 1, 1, 0}, std::string(m_text), std::vector<ParseIndex>{}};
     }
 }

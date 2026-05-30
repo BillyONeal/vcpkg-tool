@@ -6,4 +6,6 @@ namespace vcpkg
     struct SourceLoc;
     struct ParseMessages;
     struct ParserBase;
+    struct StackedParseEnumerator;
+    struct StackedEscapeParseDocument;
 }

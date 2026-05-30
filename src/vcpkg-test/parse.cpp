@@ -14,6 +14,27 @@ static std::string marker_at(const ParseEnumerator& parser)
     return context.to_string();
 }
 
+static std::string stacked_require_character_error_at(StackedParseEnumerator& parser, char ch)
+{
+    FullyBufferedDiagnosticContext context;
+    REQUIRE_FALSE(parser.require_character(context, ch));
+    return context.to_string();
+}
+
+static std::string stacked_require_text_error_at(StackedParseEnumerator& parser, StringLiteral text)
+{
+    FullyBufferedDiagnosticContext context;
+    REQUIRE_FALSE(parser.require_text(context, text));
+    return context.to_string();
+}
+
+static std::string stacked_marker_last_at(const StackedEscapeParseDocument& doc)
+{
+    FullyBufferedDiagnosticContext context;
+    doc.report_error_with_caret_line_end_delimiter(context, LocalizedString::from_raw("marker"));
+    return context.to_string();
+}
+
 TEST_CASE ("ParsedDocument owns copied input", "[parse]")
 {
     std::string source = "a\xED\xA0\xBC";
@@ -327,4 +348,270 @@ TEST_CASE ("ParsedEnumerator character and keyword helpers update line and colum
                                      "key!\n"
                                      "^");
     }
+
+    {
+        ParsedDocument doc(StringView{"key!"}, StringView{"parse.txt"});
+        auto parser = doc.enumerator();
+        FullyBufferedDiagnosticContext context;
+
+        REQUIRE(parser.require_text(context, "key"));
+        REQUIRE(context.empty());
+        REQUIRE(marker_at(parser) == "parse.txt:1:4: error: marker\n"
+                                     "key!\n"
+                                     "   ^");
+    }
+}
+
+TEST_CASE ("ParseEnumerator match_escaped returns stacked enumerator over decoded text", "[parse]")
+{
+    ParsedDocument doc(StringView{"alpha` beta`! rest!tail"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    auto stacked = maybe_stacked_doc.get()->enumerator();
+
+    REQUIRE(stacked.try_match_keyword("alpha"));
+    REQUIRE(stacked.try_match_character(' '));
+    REQUIRE(stacked.try_match_keyword("beta!"));
+    REQUIRE(stacked.try_match_character(' '));
+    REQUIRE(stacked.try_match_keyword("rest"));
+    REQUIRE(context.empty());
+    REQUIRE(stacked.at_eof());
+    REQUIRE(parser.next(context) == U't');
+    REQUIRE(context.empty());
+}
+
+TEST_CASE ("StackedParseEnumerator text helpers match decoded text", "[parse]")
+{
+    ParsedDocument doc(StringView{"alpha`!omegaX!tail"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    auto stacked = maybe_stacked_doc.get()->enumerator();
+
+    REQUIRE(stacked.try_match_text("alpha!"));
+    REQUIRE_FALSE(stacked.try_match_keyword("omega"));
+    REQUIRE(stacked.require_text(context, "omega"));
+    REQUIRE(stacked.try_match_character('X'));
+    REQUIRE(context.empty());
+    REQUIRE(stacked.at_eof());
+    REQUIRE(parser.next(context) == U't');
+    REQUIRE(context.empty());
+}
+
+TEST_CASE ("ParseEnumerator match_escaped accepts eof as terminal", "[parse]")
+{
+    ParsedDocument doc(StringView{"key value"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    REQUIRE(parser.at_eof());
+    auto stacked = maybe_stacked_doc.get()->enumerator();
+
+    REQUIRE(stacked.try_match_keyword("key"));
+    REQUIRE(stacked.try_match_character(' '));
+    REQUIRE(stacked.try_match_keyword("value"));
+    REQUIRE(stacked.at_eof());
+}
+
+TEST_CASE ("ParseEnumerator match_escaped reports matched terminal", "[parse]")
+{
+    ParsedDocument doc(StringView{"alpha`!beta;tail"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+    char32_t matched_terminal = Unicode::end_of_file;
+
+    auto maybe_match = parser.match_escaped(context, matched_terminal, '`', "!;");
+
+    REQUIRE(maybe_match.has_value());
+    REQUIRE(context.empty());
+    REQUIRE(matched_terminal == U';');
+
+    auto stacked = maybe_match.get()->enumerator();
+    REQUIRE(stacked.try_match_text("alpha!beta"));
+    REQUIRE(stacked.at_eof());
+    REQUIRE(parser.next(context) == U't');
+    REQUIRE(context.empty());
+}
+
+TEST_CASE ("ParseEnumerator match_escaped reports no terminal at eof", "[parse]")
+{
+    ParsedDocument doc(StringView{"alpha`!beta"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+    char32_t matched_terminal = U'!';
+
+    auto maybe_match = parser.match_escaped(context, matched_terminal, '`', "!;");
+
+    REQUIRE(maybe_match.has_value());
+    REQUIRE(context.empty());
+    REQUIRE(matched_terminal == Unicode::end_of_file);
+    REQUIRE(parser.at_eof());
+
+    auto stacked = maybe_match.get()->enumerator();
+    REQUIRE(stacked.try_match_text("alpha!beta"));
+    REQUIRE(stacked.at_eof());
+}
+
+TEST_CASE ("StackedParseEnumerator reports source positions through escapes and Unicode", "[parse]")
+{
+    ParsedDocument doc(StringView{"one` two\n\xC3\xA9 three"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    auto stacked = maybe_stacked_doc.get()->enumerator();
+
+    REQUIRE(stacked.try_match_keyword("one"));
+    REQUIRE(stacked.try_match_character(' '));
+    REQUIRE(stacked.try_match_keyword("two"));
+    REQUIRE(stacked.next() == U'\n');
+    REQUIRE(stacked.next() == U'\xE9');
+    REQUIRE(stacked_require_character_error_at(stacked, '!') == "parse.txt:2:2: error: expected '!' here\n"
+                                                                "\xC3\xA9 three\n"
+                                                                " ^");
+}
+
+TEST_CASE ("StackedParseEnumerator reports source positions after escapes", "[parse]")
+{
+    ParsedDocument doc(StringView{"one` two three"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    auto stacked = maybe_stacked_doc.get()->enumerator();
+
+    REQUIRE(stacked.try_match_keyword("one"));
+    REQUIRE(stacked.try_match_character(' '));
+    REQUIRE(stacked.try_match_keyword("two"));
+    REQUIRE(stacked_require_character_error_at(stacked, '!') == "parse.txt:1:9: error: expected '!' here\n"
+                                                                "one` two three\n"
+                                                                "        ^");
+}
+
+TEST_CASE ("StackedParseEnumerator require_text reports source positions after escapes", "[parse]")
+{
+    ParsedDocument doc(StringView{"one` two three"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    auto stacked = maybe_stacked_doc.get()->enumerator();
+
+    REQUIRE(stacked.try_match_text("one two"));
+    REQUIRE(stacked_require_text_error_at(stacked, "!") == "parse.txt:1:9: error: expected '!' here\n"
+                                                           "one` two three\n"
+                                                           "        ^");
+}
+
+TEST_CASE ("StackedEscapeParseDocument report_error_with_caret_line_last points at EOF when the match ends at EOF",
+           "[parse]")
+{
+    {
+        ParsedDocument doc(StringView{"one` two three"}, StringView{"parse.txt"});
+        FullyBufferedDiagnosticContext context;
+        auto parser = doc.enumerator();
+
+        auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+        REQUIRE(maybe_stacked_doc.has_value());
+        REQUIRE(context.empty());
+        REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:1:15: error: marker\n"
+                                                                    "one` two three\n"
+                                                                    "              ^");
+    }
+
+    {
+        ParsedDocument doc(StringView{"one` two\n\xC3\xA9 three"}, StringView{"parse.txt"});
+        FullyBufferedDiagnosticContext context;
+        auto parser = doc.enumerator();
+
+        auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+        REQUIRE(maybe_stacked_doc.has_value());
+        REQUIRE(context.empty());
+        REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:2:8: error: marker\n"
+                                                                    "\xC3\xA9 three\n"
+                                                                    "       ^");
+    }
+}
+
+TEST_CASE ("StackedEscapeParseDocument report_error_with_caret_line_last points at the consumed end delimiter",
+           "[parse]")
+{
+    ParsedDocument doc(StringView{"readwrite,extra"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', ',');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:1:10: error: marker\n"
+                                                                "readwrite,extra\n"
+                                                                "         ^");
+}
+
+TEST_CASE ("ParseEnumerator match_escaped reports invalid UTF-8 while proving decoded text", "[parse]")
+{
+    ParsedDocument doc(StringView{"ok`! \xFF"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE_FALSE(maybe_stacked_doc.has_value());
+    REQUIRE(parser.at_eof());
+    REQUIRE(context.to_string() == "parse.txt:1:6: error: invalid code unit\n"
+                                   "ok`! \n"
+                                   "     ^");
+}
+
+TEST_CASE ("ParsedDocument stacked returns whole input as a stacked document", "[parse]")
+{
+    ParsedDocument doc(StringView{"one\n\xC3\xA9 two"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+
+    auto maybe_stacked_doc = doc.stacked(context);
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    REQUIRE(maybe_stacked_doc.get()->text() == "one\n\xC3\xA9 two");
+    REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:2:6: error: marker\n"
+                                                                "\xC3\xA9 two\n"
+                                                                "     ^");
+}
+
+TEST_CASE ("ParsedDocument stacked reports invalid UTF-8", "[parse]")
+{
+    ParsedDocument doc(StringView{"ok \xFF"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+
+    auto maybe_stacked_doc = doc.stacked(context);
+
+    REQUIRE_FALSE(maybe_stacked_doc.has_value());
+    REQUIRE(context.to_string() == "parse.txt:1:4: error: invalid code unit\n"
+                                   "ok \n"
+                                   "   ^");
 }

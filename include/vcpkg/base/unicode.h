@@ -36,7 +36,7 @@ namespace vcpkg::Unicode
         }
 
         auto code_unit = static_cast<unsigned char>(*first);
-        if (code_unit < 0b1000'0000u)
+        if (!(code_unit & 0b1000'0000u))
         {
             out = code_unit;
             ++first;
