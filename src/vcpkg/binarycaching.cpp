@@ -1538,7 +1538,7 @@ namespace
     }
 
     static Optional<CacheAccessControl> parse_asset_access_value(DiagnosticContext& context,
-                                                                const StackedEscapeParseDocument& access)
+                                                                 const StackedEscapeParseDocument& access)
     {
         if (access.text() == "read")
         {
@@ -2794,10 +2794,10 @@ namespace vcpkg
     std::string BinaryCacheProviderEntry::to_string() const { return adapt_to_string(*this); }
 
     static Optional<CacheAccessControl> parse_access_terminal(DiagnosticContext& context,
-                                                             ParseEnumerator& e,
-                                                             char32_t matched_terminal,
-                                                             StringLiteral binary_source,
-                                                             const msg::MessageT<msg::binary_source_t>& overlong_error)
+                                                              ParseEnumerator& e,
+                                                              char32_t matched_terminal,
+                                                              StringLiteral binary_source,
+                                                              const msg::MessageT<msg::binary_source_t>& overlong_error)
     {
         Optional<CacheAccessControl> result;
         if (matched_terminal != ',')
@@ -3052,7 +3052,7 @@ namespace vcpkg
     }
 
     static Optional<CacheAccessControl> parse_access_value(DiagnosticContext& context,
-                                                          const StackedEscapeParseDocument& access)
+                                                           const StackedEscapeParseDocument& access)
     {
         if (access.text() == "readwrite")
         {

@@ -194,6 +194,7 @@ namespace vcpkg
         friend StackedEscapeParseDocument;
         StackedParseEnumerator(const StackedEscapeParseDocument& doc) noexcept;
         ParsePosition source_position() const noexcept;
+        void advance_encoded() noexcept;
         void advance_encoded(ParseIndex count) noexcept;
 
         const StackedEscapeParseDocument* m_doc;

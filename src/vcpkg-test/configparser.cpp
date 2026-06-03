@@ -496,8 +496,9 @@ TEST_CASE ("BinaryConfigParser default provider", "[binaryconfigparser]")
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
-        CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::Read, DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              CacheAccessControl::Read,
+                                                              DEFAULT_ABSOLUTE_PATH});
     }
     {
         auto parsed = parse_binary_provider_configs_or_exit("default,readwrite", {});
@@ -585,8 +586,9 @@ TEST_CASE ("BinaryConfigParser multiple providers", "[binaryconfigparser]")
         auto parsed = parse_binary_provider_configs_or_exit("clear;default,read", {});
 
         REQUIRE(parsed.providers.size() == 1);
-        CHECK(parsed.providers[0] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::Read, DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              CacheAccessControl::Read,
+                                                              DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
@@ -1203,8 +1205,9 @@ TEST_CASE ("BinaryConfigParser COS provider", "[binaryconfigparser]")
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
-        CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::COS, CacheAccessControl::ReadWrite, "cos://my-bucket/"});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
+                                                              CacheAccessControl::ReadWrite,
+                                                              "cos://my-bucket/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
     }
     {

@@ -320,14 +320,14 @@ TEST_CASE ("api_stable_format(stacked,non_ascii_passthrough)", "[strings]")
         ParsedDocument doc("caf\xC3\xA9{x}na\xC3\xAFve", StringView{"format.txt"});
         auto maybe_fmt = doc.stacked(bdc);
         REQUIRE(maybe_fmt.has_value());
-        auto res = api_stable_format(
-            bdc,
-            *maybe_fmt.get(),
-            [](DiagnosticContext&, std::string& out, StringView t, const StackedParseEnumerator&) {
-                CHECK(t == "x");
-                Strings::append(out, "REPLACED");
-                return true;
-            });
+        auto res =
+            api_stable_format(bdc,
+                              *maybe_fmt.get(),
+                              [](DiagnosticContext&, std::string& out, StringView t, const StackedParseEnumerator&) {
+                                  CHECK(t == "x");
+                                  Strings::append(out, "REPLACED");
+                                  return true;
+                              });
         REQUIRE(bdc.empty());
         REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "caf\xC3\xA9REPLACEDna\xC3\xAFve");
     }
@@ -338,10 +338,8 @@ TEST_CASE ("api_stable_format(stacked,non_ascii_passthrough)", "[strings]")
         auto maybe_fmt = doc.stacked(bdc);
         REQUIRE(maybe_fmt.has_value());
         auto res = api_stable_format(
-            bdc,
-            *maybe_fmt.get(),
-            [](DiagnosticContext&, std::string&, StringView, const StackedParseEnumerator&) {
-                CHECK(false);  // callback should not be called
+            bdc, *maybe_fmt.get(), [](DiagnosticContext&, std::string&, StringView, const StackedParseEnumerator&) {
+                CHECK(false); // callback should not be called
                 return true;
             });
         REQUIRE(bdc.empty());

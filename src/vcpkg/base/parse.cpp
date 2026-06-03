@@ -212,9 +212,7 @@ namespace vcpkg
         }
         else
         {
-            ParseIndex next_index = position.next_index;
-            decode_known_valid_utf8(next_index, text);
-            position.next_index = next_index;
+            decode_known_valid_utf8(position.next_index, text);
             ++position.column;
         }
     }
@@ -551,19 +549,25 @@ namespace vcpkg
         return position;
     }
 
+    void StackedParseEnumerator::advance_encoded() noexcept
+    {
+        const auto has_escape = m_next_escape < m_doc->m_escape_positions.size() &&
+                                m_source_next == m_doc->m_escape_positions[m_next_escape];
+        ++m_decoded_next;
+        m_source_next += 1u + static_cast<ParseIndex>(has_escape);
+        m_next_escape += has_escape;
+    }
+
     void StackedParseEnumerator::advance_encoded(ParseIndex count) noexcept
     {
-        for (; count != 0; --count)
-        {
-            if (m_next_escape < m_doc->m_escape_positions.size() &&
-                m_source_next == m_doc->m_escape_positions[m_next_escape])
-            {
-                ++m_source_next;
-                ++m_next_escape;
-            }
+        m_decoded_next += count;
+        m_source_next += count;
 
-            ++m_decoded_next;
+        while (m_next_escape < m_doc->m_escape_positions.size() &&
+               m_doc->m_escape_positions[m_next_escape] < m_source_next)
+        {
             ++m_source_next;
+            ++m_next_escape;
         }
     }
 
@@ -578,7 +582,7 @@ namespace vcpkg
     {
         if (m_decoded_next != m_doc->m_decoded_text.size() && m_doc->m_decoded_text[m_decoded_next] == ch)
         {
-            advance_encoded(1);
+            advance_encoded();
             return true;
         }
 
@@ -592,7 +596,7 @@ namespace vcpkg
     {
         if (m_decoded_next != m_doc->m_decoded_text.size() && m_doc->m_decoded_text[m_decoded_next] == ch)
         {
-            advance_encoded(1);
+            advance_encoded();
             return true;
         }
 

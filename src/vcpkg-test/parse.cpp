@@ -407,6 +407,24 @@ TEST_CASE ("StackedParseEnumerator text helpers match decoded text", "[parse]")
     REQUIRE(context.empty());
 }
 
+TEST_CASE ("StackedParseEnumerator advance paths cover both overloads", "[parse]")
+{
+    ParsedDocument doc(StringView{"a`b`cd`ef"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    REQUIRE(maybe_stacked_doc.has_value());
+    REQUIRE(context.empty());
+    auto stacked = maybe_stacked_doc.get()->enumerator();
+
+    REQUIRE(stacked.try_match_text("abcd"));
+    REQUIRE(stacked.try_match_character('e'));
+    REQUIRE(stacked.try_match_character('f'));
+    REQUIRE(stacked.at_eof());
+}
+
 TEST_CASE ("ParseEnumerator match_escaped accepts eof as terminal", "[parse]")
 {
     ParsedDocument doc(StringView{"key value"}, StringView{"parse.txt"});
