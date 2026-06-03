@@ -368,7 +368,7 @@ namespace vcpkg
             if ((ch & 0b1000'0000u))
             {
                 // note that we know the input is valid UTF-8
-                while ((0b1100'0000u & m_doc->m_decoded_text[m_decoded_next]) == 0b1000'0000u)
+                while ((0b1100'0000u & m_doc->m_decoded_text[m_decoded_next + len]) == 0b1000'0000u)
                 {
                     ++len;
                 }
@@ -378,7 +378,7 @@ namespace vcpkg
                 break;
             }
 
-            advance_encoded(1);
+            advance_encoded(len);
         }
 
         return StringView{m_doc->m_decoded_text.data() + first, m_decoded_next - first};

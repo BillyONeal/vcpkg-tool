@@ -87,8 +87,6 @@ namespace vcpkg::Unicode
         return utf8_append_big_code_point(str, code_point);
     }
 
-    utf8_errc utf8_decode_code_point(const char*& first, const char* last, char32_t& out) noexcept;
-
     bool utf8_is_valid_string(const char* first, const char* last) noexcept;
 
     constexpr bool utf16_is_leading_surrogate_code_point(char32_t code_point) noexcept

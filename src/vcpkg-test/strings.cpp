@@ -310,6 +310,45 @@ TEST_CASE ("api_stable_format(stacked,append_f)", "[strings]")
     }
 }
 
+TEST_CASE ("api_stable_format(stacked,non_ascii_passthrough)", "[strings]")
+{
+    // Regression test for infinite loop on non-ASCII in match_while_ascii_passthrough
+    // Non-ASCII should be passed through without hanging when not in a variable placeholder
+    {
+        FullyBufferedDiagnosticContext bdc{};
+        // Format string with non-ASCII UTF-8: "café{x}naïve"
+        ParsedDocument doc("caf\xC3\xA9{x}na\xC3\xAFve", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res = api_stable_format(
+            bdc,
+            *maybe_fmt.get(),
+            [](DiagnosticContext&, std::string& out, StringView t, const StackedParseEnumerator&) {
+                CHECK(t == "x");
+                Strings::append(out, "REPLACED");
+                return true;
+            });
+        REQUIRE(bdc.empty());
+        REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "caf\xC3\xA9REPLACEDna\xC3\xAFve");
+    }
+    {
+        FullyBufferedDiagnosticContext bdc{};
+        // Format string with only non-ASCII, no variables
+        ParsedDocument doc("d\xC3\xA9j\xC3\xA0 vu", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res = api_stable_format(
+            bdc,
+            *maybe_fmt.get(),
+            [](DiagnosticContext&, std::string&, StringView, const StackedParseEnumerator&) {
+                CHECK(false);  // callback should not be called
+                return true;
+            });
+        REQUIRE(bdc.empty());
+        REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "d\xC3\xA9j\xC3\xA0 vu");
+    }
+}
+
 TEST_CASE ("lex compare less", "[strings]")
 {
     REQUIRE(Strings::case_insensitive_ascii_less("a", "b"));
