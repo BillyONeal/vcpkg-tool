@@ -91,8 +91,13 @@ namespace vcpkg
     {
         // Note that we must NOT make a VcpkgPaths because that will chdir
         auto parsed = args.parse_arguments(CommandDownloadMetadata);
-        auto asset_cache_settings =
-            parse_download_configuration(args.asset_sources_template()).value_or_exit(VCPKG_LINE_INFO);
+        auto maybe_asset_cache_settings =
+            parse_download_configuration(console_diagnostic_context, args.asset_sources_template());
+        auto asset_cache_settings = maybe_asset_cache_settings.get();
+        if (!asset_cache_settings)
+        {
+            Checks::exit_fail(VCPKG_LINE_INFO);
+        }
 
         const Path file = parsed.command_arguments[0];
         const StringView display_path = file.is_absolute() ? file.filename() : file.native();
@@ -119,7 +124,7 @@ namespace vcpkg
                 Checks::unreachable(VCPKG_LINE_INFO);
             }
 
-            if (!store_to_asset_cache(console_diagnostic_context, asset_cache_settings, file, actual_hash))
+            if (!store_to_asset_cache(console_diagnostic_context, *asset_cache_settings, file, actual_hash))
             {
                 Checks::exit_fail(VCPKG_LINE_INFO);
             }
@@ -146,7 +151,7 @@ namespace vcpkg
             if (download_file_asset_cached(
                     console_diagnostic_context,
                     Util::Sets::contains(parsed.switches, SwitchZMachineReadableProgress) ? out_sink : null_sink,
-                    asset_cache_settings,
+                    *asset_cache_settings,
                     fs,
                     urls,
                     headers,

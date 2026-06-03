@@ -271,7 +271,7 @@ TEST_CASE ("JSON track newlines", "[json]")
     auto res = Json::parse("{\n,", "filename");
     REQUIRE(!res);
     REQUIRE(res.error() ==
-            LocalizedString::from_raw(R"(filename:2:1: error: Unexpected character; expected property name
+            LocalizedString::from_raw(R"(filename:2:1: error: unexpected character; expected property name
   on expression: ,
                  ^)"));
 }
@@ -290,7 +290,7 @@ TEST_CASE ("JSON support unicode characters in errors", "[json]")
     // unicode characters w/ bytes >1
     auto res = Json::parse(R"json("Δx/Δt" "")json", "filename");
     REQUIRE(!res);
-    CHECK(res.error() == LocalizedString::from_raw(R"(filename:1:9: error: Unexpected character; expected EOF
+    CHECK(res.error() == LocalizedString::from_raw(R"(filename:1:9: error: unexpected character; expected EOF
   on expression: "Δx/Δt" ""
                          ^)"));
 
@@ -298,7 +298,7 @@ TEST_CASE ("JSON support unicode characters in errors", "[json]")
     // note that the A is full width
     res = Json::parse(R"json("姐姐aＡ" "")json", "filename");
     REQUIRE(!res);
-    CHECK(res.error() == LocalizedString::from_raw(R"(filename:1:8: error: Unexpected character; expected EOF
+    CHECK(res.error() == LocalizedString::from_raw(R"(filename:1:8: error: unexpected character; expected EOF
   on expression: "姐姐aＡ" ""
                            ^)"));
 
@@ -306,7 +306,7 @@ TEST_CASE ("JSON support unicode characters in errors", "[json]")
     // (this test should be fixed once the underlying bug is fixed)
     res = Json::parse(R"json("é" "")json", "filename");
     REQUIRE(!res);
-    CHECK(res.error() == LocalizedString::from_raw(R"(filename:1:6: error: Unexpected character; expected EOF
+    CHECK(res.error() == LocalizedString::from_raw(R"(filename:1:6: error: unexpected character; expected EOF
   on expression: "é" ""
                       ^)"));
 }

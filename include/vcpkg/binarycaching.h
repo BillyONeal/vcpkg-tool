@@ -331,7 +331,8 @@ namespace vcpkg
         void push_thread_main();
     };
 
-    ExpectedL<AssetCachingSettings> parse_download_configuration(const Optional<std::string>& arg);
+    Optional<AssetCachingSettings> parse_download_configuration(DiagnosticContext& context,
+                                                                const Optional<std::string>& arg);
 
     std::string generate_nuget_packages_config(const ActionPlan& action, StringView prefix);
 

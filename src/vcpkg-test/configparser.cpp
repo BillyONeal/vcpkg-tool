@@ -1,5 +1,6 @@
 #include <vcpkg-test/util.h>
 
+#include <vcpkg/base/contractual-constants.h>
 #include <vcpkg/base/diagnostics.h>
 #include <vcpkg/base/message_sinks.h>
 #include <vcpkg/base/util.h>
@@ -83,10 +84,10 @@ namespace
         return parse_binary_provider_env_and_args_or_exit(env_string, std::move(args));
     }
 
-    std::string format_binary_provider_parse_error(Optional<StringView> origin,
-                                                   StringView source_text,
-                                                   std::size_t column,
-                                                   StringView message)
+    std::string format_config_parse_error(Optional<StringView> origin,
+                                          StringView source_text,
+                                          std::size_t column,
+                                          StringView message)
     {
         std::string result;
         if (const auto actual_origin = origin.get())
@@ -111,14 +112,14 @@ namespace
     void require_binary_provider_parse_error(StringView arg, std::size_t column, StringView expected_message)
     {
         auto diagnostics = parse_binary_provider_arg_error(arg);
-        REQUIRE_LINES(diagnostics, format_binary_provider_parse_error(nullopt, arg, column, expected_message));
+        REQUIRE_LINES(diagnostics, format_config_parse_error(nullopt, arg, column, expected_message));
     }
 
     void require_binary_provider_parse_env_error(StringView env_string, std::size_t column, StringView expected_message)
     {
         auto diagnostics = parse_binary_provider_env_error(env_string);
         REQUIRE_LINES(diagnostics,
-                      format_binary_provider_parse_error(
+                      format_config_parse_error(
                           format_environment_variable("VCPKG_BINARY_SOURCES"), env_string, column, expected_message));
     }
 
@@ -131,8 +132,44 @@ namespace
 
         const auto source_text = args.back();
         auto diagnostics = parse_binary_provider_env_and_args_error(env_string, std::move(args));
-        REQUIRE_LINES(diagnostics, format_binary_provider_parse_error(nullopt, source_text, column, expected_message));
+        REQUIRE_LINES(diagnostics, format_config_parse_error(nullopt, source_text, column, expected_message));
     }
+
+    AssetCachingSettings parse_asset_configuration_or_exit(Optional<std::string> arg)
+    {
+        SinkBufferedDiagnosticContext context{null_sink};
+        auto result = parse_download_configuration(context, arg);
+        auto diagnostics = std::move(context).to_string();
+        REQUIRE(diagnostics == "");
+        return result.value_or_exit(VCPKG_LINE_INFO);
+    }
+
+    std::string parse_asset_configuration_error(const std::string& arg)
+    {
+        SinkBufferedDiagnosticContext context{null_sink};
+        auto result = parse_download_configuration(context, arg);
+        auto diagnostics = std::move(context).to_string();
+        INFO(diagnostics);
+        REQUIRE(!result.has_value());
+        return diagnostics;
+    }
+
+    std::string format_asset_configuration_parse_error(StringView source_text,
+                                                       std::size_t column,
+                                                       StringView expected_message)
+    {
+        return format_config_parse_error(
+            format_environment_variable(EnvironmentVariableXVcpkgAssetSources), source_text, column, expected_message);
+    }
+
+    void require_asset_configuration_parse_error(const std::string& arg,
+                                                 std::size_t column,
+                                                 StringView expected_message)
+    {
+        auto diagnostics = parse_asset_configuration_error(arg);
+        REQUIRE_LINES(diagnostics, format_asset_configuration_parse_error(arg, column, expected_message));
+    }
+
 }
 
 TEST_CASE ("BinaryConfigParser empty", "[binaryconfigparser]")
@@ -588,7 +625,7 @@ TEST_CASE ("BinaryConfigParser multiple providers", "[binaryconfigparser]")
 
 TEST_CASE ("BinaryConfigParser escaping", "[binaryconfigparser]")
 {
-    constexpr StringLiteral trailing_backtick_error = "Unexpected EOF after escape character";
+    constexpr StringLiteral trailing_backtick_error = "unexpected EOF after escape character";
 
     {
         require_binary_provider_parse_error(";;;;;;;`", col_after(";;;;;;;`"), trailing_backtick_error);
@@ -1345,20 +1382,20 @@ TEST_CASE ("BinaryConfigParser Universal Packages provider", "[binaryconfigparse
 
 TEST_CASE ("AssetConfigParser azurl provider", "[assetconfigparser]")
 {
-    CHECK(parse_download_configuration({}));
-    CHECK(!parse_download_configuration("x-azurl"));
-    CHECK(!parse_download_configuration("x-azurl,"));
-    CHECK(parse_download_configuration("x-azurl,value"));
-    CHECK(parse_download_configuration("x-azurl,value,"));
-    CHECK(!parse_download_configuration("x-azurl,value,,"));
-    CHECK(!parse_download_configuration("x-azurl,value,,invalid"));
-    CHECK(parse_download_configuration("x-azurl,value,,read"));
-    CHECK(parse_download_configuration("x-azurl,value,,readwrite"));
-    CHECK(!parse_download_configuration("x-azurl,value,,readwrite,"));
-    CHECK(parse_download_configuration("x-azurl,https://abc/123,?foo"));
-    CHECK(parse_download_configuration("x-azurl,https://abc/123,foo"));
-    CHECK(parse_download_configuration("x-azurl,ftp://magic,none"));
-    CHECK(parse_download_configuration("x-azurl,ftp://magic,none"));
+    CHECK(parse_asset_configuration_or_exit(nullopt).m_read_url_template == nullopt);
+
+    require_asset_configuration_parse_error(
+        "x-azurl", col_after("x-azurl"), "unexpected arguments: asset config 'azurl' requires a base url");
+    require_asset_configuration_parse_error(
+        "x-azurl,", col_after("x-azurl,"), "unexpected arguments: asset config 'azurl' requires a base url");
+    require_asset_configuration_parse_error(
+        "x-azurl,value,,", col_after("x-azurl,value,,"), "expected 'read', 'readwrite', or 'write'");
+    require_asset_configuration_parse_error(
+        "x-azurl,value,,invalid", col_after("x-azurl,value,,"), "expected 'read', 'readwrite', or 'write'");
+    require_asset_configuration_parse_error(
+        "x-azurl,value,,readwrite,",
+        col_after("x-azurl,value,,readwrite,"),
+        "unexpected arguments: asset config 'azurl' requires fewer than 4 arguments");
 
     {
         AssetCachingSettings empty;
@@ -1366,46 +1403,40 @@ TEST_CASE ("AssetConfigParser azurl provider", "[assetconfigparser]")
         CHECK(empty.m_read_headers.empty());
     }
     {
-        AssetCachingSettings dm =
-            parse_download_configuration("x-azurl,https://abc/123,foo").value_or_exit(VCPKG_LINE_INFO);
+        AssetCachingSettings dm = parse_asset_configuration_or_exit("x-azurl,https://abc/123,foo");
         CHECK(dm.m_read_url_template == "https://abc/123/<SHA>?foo");
         CHECK(dm.m_read_headers.empty());
         CHECK(dm.m_write_url_template == nullopt);
     }
     {
-        AssetCachingSettings dm =
-            parse_download_configuration("x-azurl,https://abc/123/,foo").value_or_exit(VCPKG_LINE_INFO);
+        AssetCachingSettings dm = parse_asset_configuration_or_exit("x-azurl,https://abc/123/,foo");
         CHECK(dm.m_read_url_template == "https://abc/123/<SHA>?foo");
         CHECK(dm.m_read_headers.empty());
         CHECK(dm.m_write_url_template == nullopt);
         CHECK(dm.m_secrets == std::vector<std::string>{"foo"});
     }
     {
-        AssetCachingSettings dm =
-            parse_download_configuration("x-azurl,https://abc/123,?foo").value_or_exit(VCPKG_LINE_INFO);
+        AssetCachingSettings dm = parse_asset_configuration_or_exit("x-azurl,https://abc/123,?foo");
         CHECK(dm.m_read_url_template == "https://abc/123/<SHA>?foo");
         CHECK(dm.m_read_headers.empty());
         CHECK(dm.m_write_url_template == nullopt);
         CHECK(dm.m_secrets == std::vector<std::string>{"?foo"});
     }
     {
-        AssetCachingSettings dm =
-            parse_download_configuration("x-azurl,https://abc/123").value_or_exit(VCPKG_LINE_INFO);
+        AssetCachingSettings dm = parse_asset_configuration_or_exit("x-azurl,https://abc/123");
         CHECK(dm.m_read_url_template == "https://abc/123/<SHA>");
         CHECK(dm.m_read_headers.empty());
         CHECK(dm.m_write_url_template == nullopt);
     }
     {
-        AssetCachingSettings dm =
-            parse_download_configuration("x-azurl,https://abc/123,,readwrite").value_or_exit(VCPKG_LINE_INFO);
+        AssetCachingSettings dm = parse_asset_configuration_or_exit("x-azurl,https://abc/123,,readwrite");
         CHECK(dm.m_read_url_template == "https://abc/123/<SHA>");
         CHECK(dm.m_read_headers.empty());
         CHECK(dm.m_write_url_template == "https://abc/123/<SHA>");
         Test::check_ranges(dm.m_write_headers, azure_blob_headers());
     }
     {
-        AssetCachingSettings dm =
-            parse_download_configuration("x-azurl,https://abc/123,foo,readwrite").value_or_exit(VCPKG_LINE_INFO);
+        AssetCachingSettings dm = parse_asset_configuration_or_exit("x-azurl,https://abc/123,foo,readwrite");
         CHECK(dm.m_read_url_template == "https://abc/123/<SHA>?foo");
         CHECK(dm.m_read_headers.empty());
         CHECK(dm.m_write_url_template == "https://abc/123/<SHA>?foo");
@@ -1413,8 +1444,7 @@ TEST_CASE ("AssetConfigParser azurl provider", "[assetconfigparser]")
         CHECK(dm.m_secrets == std::vector<std::string>{"foo"});
     }
     {
-        AssetCachingSettings dm =
-            parse_download_configuration("x-script,powershell {SHA} {URL}").value_or_exit(VCPKG_LINE_INFO);
+        AssetCachingSettings dm = parse_asset_configuration_or_exit("x-script,powershell {SHA} {URL}");
         CHECK(!dm.m_read_url_template.has_value());
         CHECK(dm.m_read_headers.empty());
         CHECK(!dm.m_write_url_template.has_value());
@@ -1426,9 +1456,10 @@ TEST_CASE ("AssetConfigParser azurl provider", "[assetconfigparser]")
 
 TEST_CASE ("AssetConfigParser clear provider", "[assetconfigparser]")
 {
-    CHECK(parse_download_configuration("clear"));
-    CHECK(!parse_download_configuration("clear,"));
-    CHECK(parse_download_configuration("x-azurl,value;clear"));
+    CHECK(parse_asset_configuration_or_exit("clear").m_read_url_template == nullopt);
+    require_asset_configuration_parse_error(
+        "clear,", col_after("clear"), "unexpected arguments: 'clear' does not accept arguments");
+    CHECK(parse_asset_configuration_or_exit("x-azurl,value;clear").m_read_url_template == nullopt);
     auto value_or = [](auto o, auto v) {
         if (o)
             return std::move(*o.get());
@@ -1438,16 +1469,22 @@ TEST_CASE ("AssetConfigParser clear provider", "[assetconfigparser]")
 
     AssetCachingSettings empty;
 
-    CHECK(value_or(parse_download_configuration("x-azurl,https://abc/123,foo;clear"), empty).m_read_url_template ==
-          nullopt);
-    CHECK(value_or(parse_download_configuration("clear;x-azurl,https://abc/123/,foo"), empty).m_read_url_template ==
-          "https://abc/123/<SHA>?foo");
+    CHECK(
+        value_or(Optional<AssetCachingSettings>{parse_asset_configuration_or_exit("x-azurl,https://abc/123,foo;clear")},
+                 empty)
+            .m_read_url_template == nullopt);
+    CHECK(value_or(
+              Optional<AssetCachingSettings>{parse_asset_configuration_or_exit("clear;x-azurl,https://abc/123/,foo")},
+              empty)
+              .m_read_url_template == "https://abc/123/<SHA>?foo");
 }
 
 TEST_CASE ("AssetConfigParser x-block-origin provider", "[assetconfigparser]")
 {
-    CHECK(parse_download_configuration("x-block-origin"));
-    CHECK(!parse_download_configuration("x-block-origin,"));
+    CHECK(parse_asset_configuration_or_exit("x-block-origin").m_block_origin);
+    require_asset_configuration_parse_error("x-block-origin,",
+                                            col_after("x-block-origin"),
+                                            "unexpected arguments: 'x-block-origin' does not accept arguments");
     auto value_or = [](auto o, auto v) {
         if (o)
             return std::move(*o.get());
@@ -1457,7 +1494,37 @@ TEST_CASE ("AssetConfigParser x-block-origin provider", "[assetconfigparser]")
 
     AssetCachingSettings empty;
 
-    CHECK(!value_or(parse_download_configuration({}), empty).m_block_origin);
-    CHECK(value_or(parse_download_configuration("x-block-origin"), empty).m_block_origin);
-    CHECK(!value_or(parse_download_configuration("x-block-origin;clear"), empty).m_block_origin);
+    CHECK(!value_or(Optional<AssetCachingSettings>{parse_asset_configuration_or_exit(nullopt)}, empty).m_block_origin);
+    CHECK(value_or(Optional<AssetCachingSettings>{parse_asset_configuration_or_exit("x-block-origin")}, empty)
+              .m_block_origin);
+    CHECK(!value_or(Optional<AssetCachingSettings>{parse_asset_configuration_or_exit("x-block-origin;clear")}, empty)
+               .m_block_origin);
+}
+
+TEST_CASE ("AssetConfigParser other errors", "[assetconfigparser]")
+{
+    require_asset_configuration_parse_error(
+        "x-script",
+        col_after("x-script"),
+        "expected arguments: asset config 'x-script' requires exactly the exec template as an argument");
+    require_asset_configuration_parse_error(
+        "x-script,powershell,extra",
+        col_after("x-script,powershell,"),
+        "expected arguments: asset config 'x-script' requires exactly the exec template as an argument");
+    require_asset_configuration_parse_error(
+        "unacceptable",
+        1,
+        "unknown asset provider type: valid source types are 'x-azurl', 'x-script', 'x-block-origin', and 'clear'");
+    require_asset_configuration_parse_error("x-azurl,https://abc/123;x-azurl,https://def/456",
+                                            col_after("x-azurl,https://abc/123;x-azurl,"),
+                                            "a maximum of one asset read url can be specified");
+    require_asset_configuration_parse_error("x-azurl,https://abc/123,,write;x-azurl,https://def/456,,write",
+                                            col_after("x-azurl,https://abc/123,,write;x-azurl,"),
+                                            "a maximum of one asset write url can be specified");
+    require_asset_configuration_parse_error(
+        "x-script,powershell `", col_after("x-script,powershell `"), "unexpected EOF after escape character");
+
+    auto diagnostics = parse_asset_configuration_error("x-script,\xFF");
+    REQUIRE_LINES(diagnostics,
+                  format_asset_configuration_parse_error("x-script,", col_after("x-script,"), "invalid code unit"));
 }

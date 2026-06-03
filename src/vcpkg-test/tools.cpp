@@ -316,7 +316,7 @@ TEST_CASE ("parse_tool_data errors", "[tools]")
         FullyBufferedDiagnosticContext fbdc;
         auto empty = parse_tool_data(fbdc, "", "empty.json");
         REQUIRE(!empty.has_value());
-        CHECK(fbdc.to_string() == R"(empty.json:1:1: error: Unexpected EOF; expected value
+        CHECK(fbdc.to_string() == R"(empty.json:1:1: error: unexpected EOF; expected value
   on expression: 
                  ^)");
     }

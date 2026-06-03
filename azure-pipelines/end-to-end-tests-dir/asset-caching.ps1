@@ -471,7 +471,9 @@ if (-not ($actual -match $expected)) {
 $env:X_VCPKG_ASSET_SOURCES = "clear;x-script,some-script.ps1 {sha512};x-block-origin"
 $expected = @(
 "^Trying to download download-result\.txt using asset cache script",
-"error: the script template some-script\.ps1 {sha512} requires a SHA, but no SHA is known for attempted download of $downloadTargetUrlRegex",
+"error: the script template requires a SHA, but no SHA is known for attempted download of $downloadTargetUrlRegex",
+"some-script\.ps1 {sha512}",
+"                \^",
 "error: there were no asset cache hits, and x-block-origin blocks trying the authoritative source $downloadTargetUrlRegex",
 "$"
 ) -join "`n"
@@ -486,7 +488,9 @@ if (-not ($actual -match $expected)) {
 $env:X_VCPKG_ASSET_SOURCES = "clear;x-script,some-script.ps1 {sha};x-block-origin"
 $expected = @(
 "^Trying to download download-result\.txt using asset cache script",
-"error: the script template some-script.ps1 {sha} contains unknown replacement sha",
+"error: the script template contains unknown replacement sha",
+"some-script\.ps1 {sha}",
+"                \^",
 "note: if you want this on the literal command line, use {{sha}}",
 "error: there were no asset cache hits, and x-block-origin blocks trying the authoritative source $downloadTargetUrlRegex",
 "$"

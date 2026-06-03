@@ -36,161 +36,6 @@ namespace
     // The length of an ABI in the binary cache
     static constexpr size_t ABI_LENGTH = 64;
 
-    struct ConfigSegmentsParser : ParserBase
-    {
-        using ParserBase::ParserBase;
-
-        void parse_segments(std::vector<std::pair<SourceLoc, std::string>>& out_segments);
-        std::vector<std::vector<std::pair<SourceLoc, std::string>>> parse_all_segments();
-
-        template<class T>
-        void handle_readwrite(std::vector<T>& read,
-                              std::vector<T>& write,
-                              T&& t,
-                              const std::vector<std::pair<SourceLoc, std::string>>& segments,
-                              size_t segment_idx)
-        {
-            if (segment_idx >= segments.size())
-            {
-                read.push_back(std::move(t));
-                return;
-            }
-
-            auto& mode = segments[segment_idx].second;
-
-            if (mode == "read")
-            {
-                read.push_back(std::move(t));
-            }
-            else if (mode == "write")
-            {
-                write.push_back(std::move(t));
-            }
-            else if (mode == "readwrite")
-            {
-                read.push_back(t);
-                write.push_back(std::move(t));
-            }
-            else
-            {
-                return add_error(msg::format(msgExpectedReadWriteReadWrite), segments[segment_idx].first);
-            }
-        }
-
-        void handle_readwrite(bool& read,
-                              bool& write,
-                              const std::vector<std::pair<SourceLoc, std::string>>& segments,
-                              size_t segment_idx)
-        {
-            if (segment_idx >= segments.size())
-            {
-                read = true;
-                return;
-            }
-
-            auto& mode = segments[segment_idx].second;
-
-            if (mode == "read")
-            {
-                read = true;
-            }
-            else if (mode == "write")
-            {
-                write = true;
-            }
-            else if (mode == "readwrite")
-            {
-                read = true;
-                write = true;
-            }
-            else
-            {
-                return add_error(msg::format(msgExpectedReadWriteReadWrite), segments[segment_idx].first);
-            }
-        }
-    };
-
-    void ConfigSegmentsParser::parse_segments(std::vector<std::pair<SourceLoc, std::string>>& segments)
-    {
-        for (;;)
-        {
-            SourceLoc loc = cur_loc();
-            std::string segment;
-            for (;;)
-            {
-                auto n = match_while([](char32_t ch) { return ch != ',' && ch != '`' && ch != ';'; });
-                Strings::append(segment, n);
-                auto ch = cur();
-                if (ch == Unicode::end_of_file || ch == ',' || ch == ';')
-                {
-                    break;
-                }
-
-                if (ch == '`')
-                {
-                    ch = next();
-                    if (ch == Unicode::end_of_file)
-                    {
-                        return add_error(msg::format(msgUnexpectedEOFAfterBacktick));
-                    }
-                    else if (!Unicode::utf8_append_code_point(segment, ch))
-                    {
-                        return add_error(msg::format(msgInvalidCodePoint)
-                                             .append_raw(fmt::format("({:x})", static_cast<uint32_t>(ch))));
-                    }
-
-                    next();
-                }
-                else
-                {
-                    Checks::unreachable(VCPKG_LINE_INFO);
-                }
-            }
-            segments.emplace_back(loc, std::move(segment));
-
-            auto ch = cur();
-            if (ch == Unicode::end_of_file || ch == ';')
-            {
-                break;
-            }
-
-            if (ch == ',')
-            {
-                next();
-                continue;
-            }
-
-            Checks::unreachable(VCPKG_LINE_INFO);
-        }
-    }
-
-    std::vector<std::vector<std::pair<SourceLoc, std::string>>> ConfigSegmentsParser::parse_all_segments()
-    {
-        std::vector<std::vector<std::pair<SourceLoc, std::string>>> ret;
-        while (!at_eof())
-        {
-            std::vector<std::pair<SourceLoc, std::string>> segments;
-            parse_segments(segments);
-
-            if (messages().any_errors())
-            {
-                return {};
-            }
-
-            // Skip empty sources like ';;'
-            if (segments.size() > 1 || (segments.size() == 1 && !segments[0].second.empty()))
-            {
-                ret.push_back(std::move(segments));
-            }
-
-            if (cur() == ';')
-            {
-                next();
-            }
-        }
-        return ret;
-    }
-
     FeedReference make_feedref(const PackageSpec& spec, const Version& version, StringView abi_tag, StringView prefix)
     {
         return {Strings::concat(prefix, spec.dir()), format_version_for_feedref(version.text, abi_tag)};
@@ -1646,8 +1491,8 @@ namespace
     {
         bool cleared = false;
         bool block_origin = false;
-        std::vector<std::string> url_templates_to_get;
-        std::vector<std::string> azblob_templates_to_put;
+        Optional<std::string> url_template_to_get;
+        Optional<std::string> azblob_template_to_put;
         std::vector<std::string> secrets;
         Optional<std::string> script;
 
@@ -1655,111 +1500,62 @@ namespace
         {
             cleared = true;
             block_origin = false;
-            url_templates_to_get.clear();
-            azblob_templates_to_put.clear();
+            url_template_to_get.clear();
+            azblob_template_to_put.clear();
             secrets.clear();
             script.clear();
         }
     };
 
-    struct AssetSourcesParser : ConfigSegmentsParser
+    static bool set_asset_read_url(DiagnosticContext& context,
+                                   AssetSourcesState& state,
+                                   const StackedEscapeParseDocument& position,
+                                   std::string&& value)
     {
-        AssetSourcesParser(StringView text, StringView origin, AssetSourcesState* state)
-            : ConfigSegmentsParser(text, origin, {0, 0}), state(state)
+        if (state.url_template_to_get.has_value())
         {
+            position.report_error_with_caret_line(context, msg::format(msgAMaximumOfOneAssetReadUrlCanBeSpecified));
+            return false;
         }
 
-        AssetSourcesState* state;
+        state.url_template_to_get.emplace(std::move(value));
+        return true;
+    }
 
-        void parse()
+    static bool set_asset_write_url(DiagnosticContext& context,
+                                    AssetSourcesState& state,
+                                    const StackedEscapeParseDocument& position,
+                                    std::string&& value)
+    {
+        if (state.azblob_template_to_put.has_value())
         {
-            auto all_segments = parse_all_segments();
-            for (auto&& x : all_segments)
-            {
-                if (messages().any_errors()) return;
-                handle_segments(std::move(x));
-            }
+            position.report_error_with_caret_line(context, msg::format(msgAMaximumOfOneAssetWriteUrlCanBeSpecified));
+            return false;
         }
 
-        void handle_segments(std::vector<std::pair<SourceLoc, std::string>>&& segments)
+        state.azblob_template_to_put.emplace(std::move(value));
+        return true;
+    }
+
+    static Optional<BinaryCacheAccess> parse_asset_access_value(DiagnosticContext& context,
+                                                                const StackedEscapeParseDocument& access)
+    {
+        if (access.text() == "read")
         {
-            Checks::check_exit(VCPKG_LINE_INFO, !segments.empty());
-
-            if (segments[0].second == "x-block-origin")
-            {
-                if (segments.size() >= 2)
-                {
-                    return add_error(
-                        msg::format(msgAssetCacheProviderAcceptsNoArguments, msg::value = "x-block-origin"),
-                        segments[1].first);
-                }
-
-                state->block_origin = true;
-            }
-            else if (segments[0].second == "clear")
-            {
-                if (segments.size() >= 2)
-                {
-                    return add_error(msg::format(msgAssetCacheProviderAcceptsNoArguments, msg::value = "clear"),
-                                     segments[1].first);
-                }
-
-                state->clear();
-            }
-            else if (segments[0].second == "x-azurl")
-            {
-                // Scheme: x-azurl,<baseurl>[,<sas>[,<readwrite>]]
-                if (segments.size() < 2)
-                {
-                    return add_error(msg::format(msgAzUrlAssetCacheRequiresBaseUrl), segments[0].first);
-                }
-
-                if (segments.size() > 4)
-                {
-                    return add_error(msg::format(msgAzUrlAssetCacheRequiresLessThanFour), segments[4].first);
-                }
-
-                if (segments[1].second.empty())
-                {
-                    return add_error(msg::format(msgAzUrlAssetCacheRequiresBaseUrl), segments[1].first);
-                }
-
-                auto p = segments[1].second;
-                if (p.back() != '/')
-                {
-                    p.push_back('/');
-                }
-
-                p.append("<SHA>");
-                if (segments.size() > 2 && !segments[2].second.empty())
-                {
-                    if (!Strings::starts_with(segments[2].second, "?"))
-                    {
-                        p.push_back('?');
-                    }
-                    p.append(segments[2].second);
-                    // Note: the download manager does not currently respect secrets
-                    state->secrets.push_back(segments[2].second);
-                }
-                handle_readwrite(
-                    state->url_templates_to_get, state->azblob_templates_to_put, std::move(p), segments, 3);
-            }
-            else if (segments[0].second == "x-script")
-            {
-                // Scheme: x-script,<script-template>
-                if (segments.size() != 2)
-                {
-                    return add_error(msg::format(msgScriptAssetCacheRequiresScript), segments[0].first);
-                }
-                state->script = segments[1].second;
-            }
-            else
-            {
-                // Don't forget to update this message if new providers are added.
-                return add_error(msg::format(msgUnexpectedAssetCacheProvider), segments[0].first);
-            }
+            return BinaryCacheAccess::Read;
         }
-    };
+        else if (access.text() == "write")
+        {
+            return BinaryCacheAccess::Write;
+        }
+        else if (access.text() == "readwrite")
+        {
+            return BinaryCacheAccess::ReadWrite;
+        }
+
+        access.report_error_with_caret_line(context, msg::format(msgExpectedReadWriteReadWrite));
+        return nullopt;
+    }
 }
 
 namespace vcpkg
@@ -2705,48 +2501,227 @@ namespace vcpkg
     {
     }
 
-    ExpectedL<AssetCachingSettings> parse_download_configuration(const Optional<std::string>& arg)
+    Optional<AssetCachingSettings> parse_download_configuration(DiagnosticContext& context,
+                                                                const Optional<std::string>& arg)
     {
-        AssetCachingSettings result;
-        if (!arg || arg.get()->empty()) return result;
+        Optional<AssetCachingSettings> out;
+        auto& result = out.emplace();
+        if (!arg || arg.get()->empty()) return out;
 
         get_global_metrics_collector().track_define(DefineMetric::AssetSource);
 
         AssetSourcesState s;
-        const auto source = format_environment_variable(EnvironmentVariableXVcpkgAssetSources);
-        AssetSourcesParser parser(*arg.get(), source, &s);
-        parser.parse();
-        if (parser.messages().any_errors())
+        const auto source = format_environment_variable(EnvironmentVariableXVcpkgAssetSources).to_string();
+        ParsedDocument doc(*arg.get(), source);
+        auto e = doc.enumerator();
+        while (!e.at_eof())
         {
-            auto&& messages = std::move(parser).extract_messages();
-            messages.add_line(
-                DiagnosticLine{DiagKind::Note, msg::format(msgSeeURL, msg::url = docs::assetcaching_url)});
-            return messages.join();
+            char32_t matched_terminal;
+            auto maybe_kind = e.match_escaped(context, matched_terminal, '`', ",;");
+            const auto kind = maybe_kind.get();
+            if (!kind)
+            {
+                out.clear();
+                return out;
+            }
+
+            if (kind->text().empty() && matched_terminal == ';')
+            {
+                continue;
+            }
+
+            if (kind->text() == "x-block-origin")
+            {
+                if (matched_terminal == ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context, msg::format(msgAssetCacheProviderAcceptsNoArguments, msg::value = "x-block-origin"));
+                    out.clear();
+                    return out;
+                }
+
+                s.block_origin = true;
+                continue;
+            }
+
+            if (kind->text() == "clear")
+            {
+                if (matched_terminal == ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context, msg::format(msgAssetCacheProviderAcceptsNoArguments, msg::value = "clear"));
+                    out.clear();
+                    return out;
+                }
+
+                s.clear();
+                continue;
+            }
+
+            if (kind->text() == "x-azurl")
+            {
+                if (matched_terminal != ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(context,
+                                                                     msg::format(msgAzUrlAssetCacheRequiresBaseUrl));
+                    out.clear();
+                    return out;
+                }
+
+                auto maybe_baseurl = e.match_escaped(context, matched_terminal, '`', ",;");
+                auto baseurl = maybe_baseurl.get();
+                if (!baseurl)
+                {
+                    out.clear();
+                    return out;
+                }
+
+                if (baseurl->text().empty())
+                {
+                    baseurl->report_error_with_caret_line(context, msg::format(msgAzUrlAssetCacheRequiresBaseUrl));
+                    out.clear();
+                    return out;
+                }
+
+                auto normalized = baseurl->text();
+                if (normalized.back() != '/')
+                {
+                    normalized.push_back('/');
+                }
+
+                normalized.append("<SHA>");
+
+                if (matched_terminal == ',')
+                {
+                    auto maybe_sas = e.match_escaped(context, matched_terminal, '`', ",;");
+                    auto sas = maybe_sas.get();
+                    if (!sas)
+                    {
+                        out.clear();
+                        return out;
+                    }
+
+                    if (!sas->text().empty())
+                    {
+                        if (!Strings::starts_with(sas->text(), "?"))
+                        {
+                            normalized.push_back('?');
+                        }
+
+                        normalized.append(sas->text().data(), sas->text().size());
+                        s.secrets.push_back(sas->text());
+                    }
+                }
+
+                BinaryCacheAccess access = BinaryCacheAccess::Read;
+                if (matched_terminal == ',')
+                {
+                    auto maybe_access = e.match_escaped(context, matched_terminal, '`', ",;");
+                    const auto access_doc = maybe_access.get();
+                    if (!access_doc)
+                    {
+                        out.clear();
+                        return out;
+                    }
+
+                    auto maybe_parsed_access = parse_asset_access_value(context, *access_doc);
+                    const auto parsed_access = maybe_parsed_access.get();
+                    if (!parsed_access)
+                    {
+                        out.clear();
+                        return out;
+                    }
+
+                    access = *parsed_access;
+
+                    if (matched_terminal == ',')
+                    {
+                        auto maybe_extra = e.match_escaped(context, matched_terminal, '`', ",;");
+                        const auto extra = maybe_extra.get();
+                        if (!extra)
+                        {
+                            out.clear();
+                            return out;
+                        }
+
+                        extra->report_error_with_caret_line(context,
+                                                            msg::format(msgAzUrlAssetCacheRequiresLessThanFour));
+                        out.clear();
+                        return out;
+                    }
+                }
+
+                if (access == BinaryCacheAccess::Read || access == BinaryCacheAccess::ReadWrite)
+                {
+                    if (!set_asset_read_url(context, s, *baseurl, std::string(normalized)))
+                    {
+                        out.clear();
+                        return out;
+                    }
+                }
+
+                if (access == BinaryCacheAccess::Write || access == BinaryCacheAccess::ReadWrite)
+                {
+                    if (!set_asset_write_url(context, s, *baseurl, std::move(normalized)))
+                    {
+                        out.clear();
+                        return out;
+                    }
+                }
+
+                continue;
+            }
+
+            if (kind->text() == "x-script")
+            {
+                if (matched_terminal != ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(context,
+                                                                     msg::format(msgScriptAssetCacheRequiresScript));
+                    out.clear();
+                    return out;
+                }
+
+                auto maybe_script = e.match_escaped(context, matched_terminal, '`', ",;");
+                const auto script = maybe_script.get();
+                if (!script)
+                {
+                    out.clear();
+                    return out;
+                }
+
+                if (matched_terminal == ',')
+                {
+                    auto maybe_extra = e.match_escaped(context, matched_terminal, '`', ",;");
+                    const auto extra = maybe_extra.get();
+                    if (!extra)
+                    {
+                        out.clear();
+                        return out;
+                    }
+
+                    extra->report_error_with_caret_line(context, msg::format(msgScriptAssetCacheRequiresScript));
+                    out.clear();
+                    return out;
+                }
+
+                s.script = script->move_text();
+                continue;
+            }
+
+            kind->report_error_with_caret_line(context, msg::format(msgUnexpectedAssetCacheProvider));
+            out.clear();
+            return out;
         }
 
-        if (s.azblob_templates_to_put.size() > 1)
+        if (auto read = s.url_template_to_get.get())
         {
-            return msg::format_error(msgAMaximumOfOneAssetWriteUrlCanBeSpecified)
-                .append_raw('\n')
-                .append_raw(NotePrefix)
-                .append(msgSeeURL, msg::url = docs::assetcaching_url);
-        }
-        if (s.url_templates_to_get.size() > 1)
-        {
-            return msg::format_error(msgAMaximumOfOneAssetReadUrlCanBeSpecified)
-                .append_raw('\n')
-                .append_raw(NotePrefix)
-                .append(msgSeeURL, msg::url = docs::assetcaching_url);
+            result.m_read_url_template = std::move(*read);
         }
 
-        if (!s.url_templates_to_get.empty())
+        if (auto write = s.azblob_template_to_put.get())
         {
-            result.m_read_url_template = std::move(s.url_templates_to_get.back());
-        }
-
-        if (!s.azblob_templates_to_put.empty())
-        {
-            result.m_write_url_template = std::move(s.azblob_templates_to_put.back());
+            result.m_write_url_template = std::move(*write);
             auto v = azure_blob_headers();
             result.m_write_headers.assign(v.begin(), v.end());
         }
@@ -2754,7 +2729,7 @@ namespace vcpkg
         result.m_secrets = std::move(s.secrets);
         result.m_block_origin = s.block_origin;
         result.m_script = std::move(s.script);
-        return result;
+        return out;
     }
 
     StringLiteral to_string_literal(BinaryCacheProviderKind kind)
@@ -3658,8 +3633,9 @@ namespace vcpkg
         result.providers.push_back(
             {BinaryCacheProviderKind::Files, BinaryCacheAccess::ReadWrite, default_cache_path.native(), nullopt});
         result.telemetry_tags.insert("default");
+        const auto binary_sources_origin = format_environment_variable("VCPKG_BINARY_SOURCES").to_string();
         if (!parse_binary_provider_configs_append(
-                context, result, default_cache_path, env_string, format_environment_variable("VCPKG_BINARY_SOURCES")))
+                context, result, default_cache_path, env_string, binary_sources_origin))
         {
             out.clear();
             return out;
