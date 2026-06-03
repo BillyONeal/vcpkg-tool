@@ -555,6 +555,16 @@ TEST_CASE ("BinaryConfigParser interactive provider", "[binaryconfigparser]")
         REQUIRE(parsed.nuget_interactive);
     }
     {
+        auto parsed = parse_binary_provider_configs_or_exit(
+            "interactive;nugettimeout,3601;x-aws-config,no-sign-request;clear", {});
+
+        REQUIRE(parsed.providers.empty());
+        REQUIRE(parsed.telemetry_tags.empty());
+        REQUIRE(!parsed.nuget_interactive);
+        REQUIRE(parsed.nuget_timeout == 100);
+        REQUIRE(!parsed.aws_no_sign_request);
+    }
+    {
         require_binary_provider_parse_error(
             "interactive,read", col_after("interactive"), "binary config 'interactive' does not take arguments");
     }

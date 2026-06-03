@@ -3106,6 +3106,9 @@ namespace vcpkg
 
                 result.providers.clear();
                 result.telemetry_tags.clear();
+                result.nuget_interactive = false;
+                result.aws_no_sign_request = false;
+                result.nuget_timeout = 100;
                 continue;
             }
 
