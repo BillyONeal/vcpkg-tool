@@ -181,14 +181,14 @@ namespace vcpkg
                                 const InstallPlanAction& action,
                                 StringView id_prefix,
                                 const NuGetRepoInfo& repo_info);
-    StringLiteral to_string_literal(BinaryCacheProviderKind kind);
 
-    StringLiteral to_string_literal(BinaryCacheAccess access);
+    StringLiteral to_string_literal(BinaryCacheProviderKind kind);
+    StringLiteral to_string_literal(CacheAccessControl access);
 
     struct BinaryCacheProviderEntry
     {
         BinaryCacheProviderKind kind;
-        BinaryCacheAccess access;
+        CacheAccessControl access;
         Optional<std::string> arg1;
         Optional<std::string> arg2;
         Optional<std::string> arg3;
@@ -348,5 +348,5 @@ namespace vcpkg
 }
 
 VCPKG_FORMAT_WITH_TO_STRING_LITERAL_NONMEMBER(vcpkg::BinaryCacheProviderKind);
-VCPKG_FORMAT_WITH_TO_STRING_LITERAL_NONMEMBER(vcpkg::BinaryCacheAccess);
+VCPKG_FORMAT_WITH_TO_STRING_LITERAL_NONMEMBER(vcpkg::CacheAccessControl);
 VCPKG_FORMAT_WITH_TO_STRING(vcpkg::BinaryCacheProviderEntry);

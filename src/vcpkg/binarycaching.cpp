@@ -1537,20 +1537,20 @@ namespace
         return true;
     }
 
-    static Optional<BinaryCacheAccess> parse_asset_access_value(DiagnosticContext& context,
+    static Optional<CacheAccessControl> parse_asset_access_value(DiagnosticContext& context,
                                                                 const StackedEscapeParseDocument& access)
     {
         if (access.text() == "read")
         {
-            return BinaryCacheAccess::Read;
+            return CacheAccessControl::Read;
         }
         else if (access.text() == "write")
         {
-            return BinaryCacheAccess::Write;
+            return CacheAccessControl::Write;
         }
         else if (access.text() == "readwrite")
         {
-            return BinaryCacheAccess::ReadWrite;
+            return CacheAccessControl::ReadWrite;
         }
 
         access.report_error_with_caret_line(context, msg::format(msgExpectedReadWriteReadWrite));
@@ -2058,11 +2058,11 @@ namespace vcpkg
                 return true;
             };
 
-            auto installs_read = [](BinaryCacheAccess access) {
-                return access == BinaryCacheAccess::Read || access == BinaryCacheAccess::ReadWrite;
+            auto installs_read = [](CacheAccessControl access) {
+                return access == CacheAccessControl::Read || access == CacheAccessControl::ReadWrite;
             };
-            auto installs_write = [](BinaryCacheAccess access) {
-                return access == BinaryCacheAccess::Write || access == BinaryCacheAccess::ReadWrite;
+            auto installs_write = [](CacheAccessControl access) {
+                return access == CacheAccessControl::Write || access == CacheAccessControl::ReadWrite;
             };
 
             for (const auto& provider : parsed->providers)
@@ -2613,7 +2613,7 @@ namespace vcpkg
                     }
                 }
 
-                BinaryCacheAccess access = BinaryCacheAccess::Read;
+                CacheAccessControl access = CacheAccessControl::Read;
                 if (matched_terminal == ',')
                 {
                     auto maybe_access = e.match_escaped(context, matched_terminal, '`', ",;");
@@ -2651,7 +2651,7 @@ namespace vcpkg
                     }
                 }
 
-                if (access == BinaryCacheAccess::Read || access == BinaryCacheAccess::ReadWrite)
+                if (access == CacheAccessControl::Read || access == CacheAccessControl::ReadWrite)
                 {
                     if (!set_asset_read_url(context, s, *baseurl, std::string(normalized)))
                     {
@@ -2660,7 +2660,7 @@ namespace vcpkg
                     }
                 }
 
-                if (access == BinaryCacheAccess::Write || access == BinaryCacheAccess::ReadWrite)
+                if (access == CacheAccessControl::Write || access == CacheAccessControl::ReadWrite)
                 {
                     if (!set_asset_write_url(context, s, *baseurl, std::move(normalized)))
                     {
@@ -2752,13 +2752,13 @@ namespace vcpkg
         }
     }
 
-    StringLiteral to_string_literal(BinaryCacheAccess access)
+    StringLiteral to_string_literal(CacheAccessControl access)
     {
         switch (access)
         {
-            case BinaryCacheAccess::Read: return "read";
-            case BinaryCacheAccess::Write: return "write";
-            case BinaryCacheAccess::ReadWrite: return "readwrite";
+            case CacheAccessControl::Read: return "read";
+            case CacheAccessControl::Write: return "write";
+            case CacheAccessControl::ReadWrite: return "readwrite";
             default: Checks::unreachable(VCPKG_LINE_INFO);
         }
     }
@@ -2793,17 +2793,17 @@ namespace vcpkg
 
     std::string BinaryCacheProviderEntry::to_string() const { return adapt_to_string(*this); }
 
-    static Optional<BinaryCacheAccess> parse_access_terminal(DiagnosticContext& context,
+    static Optional<CacheAccessControl> parse_access_terminal(DiagnosticContext& context,
                                                              ParseEnumerator& e,
                                                              char32_t matched_terminal,
                                                              StringLiteral binary_source,
                                                              const msg::MessageT<msg::binary_source_t>& overlong_error)
     {
-        Optional<BinaryCacheAccess> result;
+        Optional<CacheAccessControl> result;
         if (matched_terminal != ',')
         {
             // default to readwrite if no access is specified
-            result.emplace(BinaryCacheAccess::ReadWrite);
+            result.emplace(CacheAccessControl::ReadWrite);
             return result;
         }
 
@@ -2823,15 +2823,15 @@ namespace vcpkg
 
         if (access->text() == "readwrite")
         {
-            result.emplace(BinaryCacheAccess::ReadWrite);
+            result.emplace(CacheAccessControl::ReadWrite);
         }
         else if (access->text() == "read")
         {
-            result.emplace(BinaryCacheAccess::Read);
+            result.emplace(CacheAccessControl::Read);
         }
         else if (access->text() == "write")
         {
-            result.emplace(BinaryCacheAccess::Write);
+            result.emplace(CacheAccessControl::Write);
         }
         else
         {
@@ -3051,20 +3051,20 @@ namespace vcpkg
         return baseuri->move_text();
     }
 
-    static Optional<BinaryCacheAccess> parse_access_value(DiagnosticContext& context,
+    static Optional<CacheAccessControl> parse_access_value(DiagnosticContext& context,
                                                           const StackedEscapeParseDocument& access)
     {
         if (access.text() == "readwrite")
         {
-            return BinaryCacheAccess::ReadWrite;
+            return CacheAccessControl::ReadWrite;
         }
         else if (access.text() == "read")
         {
-            return BinaryCacheAccess::Read;
+            return CacheAccessControl::Read;
         }
         else if (access.text() == "write")
         {
-            return BinaryCacheAccess::Write;
+            return CacheAccessControl::Write;
         }
 
         access.report_error_with_caret_line(context, msg::format(msgExpectedReadWriteReadWrite));
@@ -3405,7 +3405,7 @@ namespace vcpkg
                     url_template->url_template.append("{sha}.zip");
                 }
 
-                BinaryCacheAccess access = BinaryCacheAccess::ReadWrite;
+                CacheAccessControl access = CacheAccessControl::ReadWrite;
                 Optional<std::string> header;
                 if (matched_terminal == ',')
                 {
@@ -3418,15 +3418,15 @@ namespace vcpkg
 
                     if (access_text->text() == "readwrite")
                     {
-                        access = BinaryCacheAccess::ReadWrite;
+                        access = CacheAccessControl::ReadWrite;
                     }
                     else if (access_text->text() == "read")
                     {
-                        access = BinaryCacheAccess::Read;
+                        access = CacheAccessControl::Read;
                     }
                     else if (access_text->text() == "write")
                     {
-                        access = BinaryCacheAccess::Write;
+                        access = CacheAccessControl::Write;
                     }
                     else
                     {
@@ -3516,7 +3516,7 @@ namespace vcpkg
                     return false;
                 }
 
-                BinaryCacheAccess access = BinaryCacheAccess::ReadWrite;
+                CacheAccessControl access = CacheAccessControl::ReadWrite;
                 if (matched_terminal == ',')
                 {
                     auto maybe_access_doc = e.match_escaped(context, matched_terminal, '`', ",;");
@@ -3564,7 +3564,7 @@ namespace vcpkg
                     return false;
                 }
 
-                BinaryCacheAccess access = BinaryCacheAccess::ReadWrite;
+                CacheAccessControl access = CacheAccessControl::ReadWrite;
                 if (matched_terminal == ',')
                 {
                     auto maybe_access_doc = e.match_escaped(context, matched_terminal, '`', ",;");
@@ -3631,7 +3631,7 @@ namespace vcpkg
         auto& result = out.emplace();
 
         result.providers.push_back(
-            {BinaryCacheProviderKind::Files, BinaryCacheAccess::ReadWrite, default_cache_path.native(), nullopt});
+            {BinaryCacheProviderKind::Files, CacheAccessControl::ReadWrite, default_cache_path.native(), nullopt});
         result.telemetry_tags.insert("default");
         const auto binary_sources_origin = format_environment_variable("VCPKG_BINARY_SOURCES").to_string();
         if (!parse_binary_provider_configs_append(

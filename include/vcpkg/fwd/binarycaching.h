@@ -38,7 +38,7 @@ namespace vcpkg
         AzUniversal,
     };
 
-    enum class BinaryCacheAccess
+    enum class CacheAccessControl
     {
         Read,
         Write,

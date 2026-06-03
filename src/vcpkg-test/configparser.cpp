@@ -178,7 +178,7 @@ TEST_CASE ("BinaryConfigParser empty", "[binaryconfigparser]")
 
     REQUIRE(parsed.providers.size() == 1);
     CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                          BinaryCacheAccess::ReadWrite,
+                                                          CacheAccessControl::ReadWrite,
                                                           DEFAULT_ABSOLUTE_PATH});
     REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     REQUIRE(!parsed.nuget_interactive);
@@ -214,10 +214,10 @@ TEST_CASE ("BinaryConfigParser files provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::ReadWrite, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
@@ -230,10 +230,10 @@ TEST_CASE ("BinaryConfigParser files provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Read, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::Read, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
@@ -241,10 +241,10 @@ TEST_CASE ("BinaryConfigParser files provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Write, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::Write, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
@@ -252,10 +252,10 @@ TEST_CASE ("BinaryConfigParser files provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::ReadWrite, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
@@ -280,10 +280,10 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, "relative-path"});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "relative-path"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -291,10 +291,10 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "http://example.org/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
@@ -303,10 +303,10 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -319,10 +319,10 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -335,10 +335,10 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, ""});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, ""});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
 }
@@ -350,7 +350,7 @@ TEST_CASE ("BinaryConfigParser nuget timeout", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
         REQUIRE(parsed.nuget_timeout == 3601);
@@ -413,10 +413,10 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
@@ -430,10 +430,10 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, BinaryCacheAccess::Read, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, CacheAccessControl::Read, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -441,10 +441,10 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, BinaryCacheAccess::Write, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, CacheAccessControl::Write, ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -452,10 +452,10 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
@@ -478,10 +478,10 @@ TEST_CASE ("BinaryConfigParser default provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
@@ -494,20 +494,20 @@ TEST_CASE ("BinaryConfigParser default provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Read, DEFAULT_ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::Read, DEFAULT_ABSOLUTE_PATH});
     }
     {
         auto parsed = parse_binary_provider_configs_or_exit("default,readwrite", {});
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
     }
     {
@@ -515,10 +515,10 @@ TEST_CASE ("BinaryConfigParser default provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::Write,
+                                                              CacheAccessControl::Write,
                                                               DEFAULT_ABSOLUTE_PATH});
     }
     {
@@ -549,7 +549,7 @@ TEST_CASE ("BinaryConfigParser interactive provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
         REQUIRE(parsed.nuget_interactive);
@@ -567,7 +567,7 @@ TEST_CASE ("BinaryConfigParser multiple providers", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
@@ -576,7 +576,7 @@ TEST_CASE ("BinaryConfigParser multiple providers", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Read, DEFAULT_ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, CacheAccessControl::Read, DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
@@ -584,7 +584,7 @@ TEST_CASE ("BinaryConfigParser multiple providers", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::Write,
+                                                              CacheAccessControl::Write,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
@@ -593,7 +593,7 @@ TEST_CASE ("BinaryConfigParser multiple providers", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
@@ -635,10 +635,10 @@ TEST_CASE ("BinaryConfigParser escaping", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
     }
     {
@@ -650,10 +650,10 @@ TEST_CASE ("BinaryConfigParser escaping", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               ABSOLUTE_PATH ","});
     }
     {
@@ -661,10 +661,10 @@ TEST_CASE ("BinaryConfigParser escaping", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               ABSOLUTE_PATH "`"});
     }
     {
@@ -676,10 +676,10 @@ TEST_CASE ("BinaryConfigParser escaping", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               ABSOLUTE_PATH "``"});
     }
     {
@@ -703,7 +703,7 @@ TEST_CASE ("BinaryConfigParser args", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
@@ -739,11 +739,11 @@ TEST_CASE ("BinaryConfigParser azblob provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
               BinaryCacheProviderEntry{
-                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::ReadWrite, "https://azure/container", "sas"});
+                  BinaryCacheProviderKind::AzBlob, CacheAccessControl::ReadWrite, "https://azure/container", "sas"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
     }
     {
@@ -780,11 +780,11 @@ TEST_CASE ("BinaryConfigParser azblob provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
               BinaryCacheProviderEntry{
-                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::Read, "https://azure/container", "sas"});
+                  BinaryCacheProviderKind::AzBlob, CacheAccessControl::Read, "https://azure/container", "sas"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
     }
     {
@@ -792,11 +792,11 @@ TEST_CASE ("BinaryConfigParser azblob provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
               BinaryCacheProviderEntry{
-                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::Write, "https://azure/container", "sas"});
+                  BinaryCacheProviderKind::AzBlob, CacheAccessControl::Write, "https://azure/container", "sas"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
     }
     {
@@ -804,11 +804,11 @@ TEST_CASE ("BinaryConfigParser azblob provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
               BinaryCacheProviderEntry{
-                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::ReadWrite, "https://azure/container", "sas"});
+                  BinaryCacheProviderKind::AzBlob, CacheAccessControl::ReadWrite, "https://azure/container", "sas"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
     }
 }
@@ -825,10 +825,10 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   "https://azure/container"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
         }
@@ -837,10 +837,10 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
-                                                                  BinaryCacheAccess::Read,
+                                                                  CacheAccessControl::Read,
                                                                   "https://azure/container"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
         }
@@ -849,10 +849,10 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
-                                                                  BinaryCacheAccess::Write,
+                                                                  CacheAccessControl::Write,
                                                                   "https://azure/container"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
         }
@@ -861,10 +861,10 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   "https://azure/container"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
         }
@@ -910,10 +910,10 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopySas,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   "https://azure/container",
                                                                   "sas"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
@@ -923,11 +923,11 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] ==
                   BinaryCacheProviderEntry{
-                      BinaryCacheProviderKind::AzCopySas, BinaryCacheAccess::Read, "https://azure/container", "sas"});
+                      BinaryCacheProviderKind::AzCopySas, CacheAccessControl::Read, "https://azure/container", "sas"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
         }
         {
@@ -935,11 +935,11 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] ==
                   BinaryCacheProviderEntry{
-                      BinaryCacheProviderKind::AzCopySas, BinaryCacheAccess::Write, "https://azure/container", "sas"});
+                      BinaryCacheProviderKind::AzCopySas, CacheAccessControl::Write, "https://azure/container", "sas"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
         }
         {
@@ -948,10 +948,10 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 
             REQUIRE(parsed.providers.size() == 2);
             CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   DEFAULT_ABSOLUTE_PATH});
             CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopySas,
-                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  CacheAccessControl::ReadWrite,
                                                                   "https://azure/container",
                                                                   "sas"});
             REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
@@ -1018,10 +1018,10 @@ TEST_CASE ("BinaryConfigParser GCS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS, BinaryCacheAccess::ReadWrite, "gs://my-bucket/"});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS, CacheAccessControl::ReadWrite, "gs://my-bucket/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
     {
@@ -1029,10 +1029,10 @@ TEST_CASE ("BinaryConfigParser GCS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "gs://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
@@ -1050,10 +1050,10 @@ TEST_CASE ("BinaryConfigParser GCS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
-                                                              BinaryCacheAccess::Read,
+                                                              CacheAccessControl::Read,
                                                               "gs://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
@@ -1062,10 +1062,10 @@ TEST_CASE ("BinaryConfigParser GCS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
-                                                              BinaryCacheAccess::Write,
+                                                              CacheAccessControl::Write,
                                                               "gs://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
@@ -1074,10 +1074,10 @@ TEST_CASE ("BinaryConfigParser GCS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "gs://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
@@ -1090,10 +1090,10 @@ TEST_CASE ("BinaryConfigParser AWS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS, BinaryCacheAccess::ReadWrite, "s3://my-bucket/"});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS, CacheAccessControl::ReadWrite, "s3://my-bucket/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
     }
     {
@@ -1101,10 +1101,10 @@ TEST_CASE ("BinaryConfigParser AWS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "s3://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
     }
@@ -1122,10 +1122,10 @@ TEST_CASE ("BinaryConfigParser AWS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
-                                                              BinaryCacheAccess::Read,
+                                                              CacheAccessControl::Read,
                                                               "s3://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
     }
@@ -1134,10 +1134,10 @@ TEST_CASE ("BinaryConfigParser AWS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
-                                                              BinaryCacheAccess::Write,
+                                                              CacheAccessControl::Write,
                                                               "s3://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
     }
@@ -1146,10 +1146,10 @@ TEST_CASE ("BinaryConfigParser AWS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "s3://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
     }
@@ -1165,7 +1165,7 @@ TEST_CASE ("BinaryConfigParser AWS config provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 1);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         REQUIRE(parsed.aws_no_sign_request);
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}});
@@ -1191,10 +1191,10 @@ TEST_CASE ("BinaryConfigParser COS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::COS, BinaryCacheAccess::ReadWrite, "cos://my-bucket/"});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::COS, CacheAccessControl::ReadWrite, "cos://my-bucket/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
     }
     {
@@ -1202,10 +1202,10 @@ TEST_CASE ("BinaryConfigParser COS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "cos://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
     }
@@ -1223,10 +1223,10 @@ TEST_CASE ("BinaryConfigParser COS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
-                                                              BinaryCacheAccess::Read,
+                                                              CacheAccessControl::Read,
                                                               "cos://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
     }
@@ -1235,10 +1235,10 @@ TEST_CASE ("BinaryConfigParser COS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
-                                                              BinaryCacheAccess::Write,
+                                                              CacheAccessControl::Write,
                                                               "cos://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
     }
@@ -1247,10 +1247,10 @@ TEST_CASE ("BinaryConfigParser COS provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "cos://my-bucket/my-folder/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
     }
@@ -1272,10 +1272,10 @@ TEST_CASE ("BinaryConfigParser HTTP provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Http,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "http://example.org/{sha}.zip"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"http"}});
     }
@@ -1284,10 +1284,10 @@ TEST_CASE ("BinaryConfigParser HTTP provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Http,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "http://example.org/{sha}.zip"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"http"}});
     }
@@ -1296,10 +1296,10 @@ TEST_CASE ("BinaryConfigParser HTTP provider", "[binaryconfigparser]")
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Http,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "http://example.org/{triplet}/{sha}"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"http"}});
     }
@@ -1338,10 +1338,10 @@ TEST_CASE ("BinaryConfigParser Universal Packages provider", "[binaryconfigparse
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzUniversal,
-                                                              BinaryCacheAccess::Read,
+                                                              CacheAccessControl::Read,
                                                               "test_organization",
                                                               "test_project_name",
                                                               "test_feed"});
@@ -1353,10 +1353,10 @@ TEST_CASE ("BinaryConfigParser Universal Packages provider", "[binaryconfigparse
 
         REQUIRE(parsed.providers.size() == 2);
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzUniversal,
-                                                              BinaryCacheAccess::ReadWrite,
+                                                              CacheAccessControl::ReadWrite,
                                                               "test_organization",
                                                               "test_project_name",
                                                               "test_feed"});

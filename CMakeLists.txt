@@ -220,6 +220,8 @@ file(GLOB VCPKG_TEST_INCLUDES CONFIGURE_DEPENDS "include/vcpkg-test/*.h")
 set(VCPKG_FUZZ_UTF8_DECODER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg-fuzz-utf8-decoder.cpp")
 set(VCPKG_FUZZ_JSON_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg-fuzz-json.cpp")
 set(VCPKG_FUZZ_PLATFORM_EXPRESSIONS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg-fuzz-platform-expressions.cpp")
+set(VCPKG_FUZZ_BINARY_CONFIG_PARSER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg-fuzz-binary-config-parser.cpp")
+set(VCPKG_FUZZ_ASSET_CONFIG_PARSER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/vcpkg-fuzz-asset-config-parser.cpp")
 set(TLS12_DOWNLOAD_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/tls12-download.c")
 set(CLOSES_EXIT_MINUS_ONE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/closes-exit-minus-one.c")
 set(CLOSES_STDIN_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/closes-stdin.c")
@@ -585,6 +587,8 @@ if(VCPKG_BUILD_FUZZING)
     vcpkg_add_fuzzer(vcpkg-fuzz-utf8-decoder ${VCPKG_FUZZ_UTF8_DECODER_SOURCES})
     vcpkg_add_fuzzer(vcpkg-fuzz-json ${VCPKG_FUZZ_JSON_SOURCES})
     vcpkg_add_fuzzer(vcpkg-fuzz-platform-expressions ${VCPKG_FUZZ_PLATFORM_EXPRESSIONS_SOURCES})
+    vcpkg_add_fuzzer(vcpkg-fuzz-binary-config-parser ${VCPKG_FUZZ_BINARY_CONFIG_PARSER_SOURCES})
+    vcpkg_add_fuzzer(vcpkg-fuzz-asset-config-parser ${VCPKG_FUZZ_ASSET_CONFIG_PARSER_SOURCES})
 endif()
 
 # === Target: tls12-download ===
@@ -657,6 +661,8 @@ if(CLANG_FORMAT)
             ${VCPKG_FUZZ_UTF8_DECODER_SOURCES}
             ${VCPKG_FUZZ_JSON_SOURCES}
             ${VCPKG_FUZZ_PLATFORM_EXPRESSIONS_SOURCES}
+            ${VCPKG_FUZZ_BINARY_CONFIG_PARSER_SOURCES}
+            ${VCPKG_FUZZ_ASSET_CONFIG_PARSER_SOURCES}
             ${TLS12_DOWNLOAD_SOURCES}
             ${CLOSES_STDIN_SOURCES}
             ${CLOSES_STDOUT_SOURCES}
