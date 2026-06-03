@@ -553,11 +553,12 @@ TEST_CASE ("StackedEscapeParseDocument report_error_with_caret_line_last points 
 
         auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
 
-        REQUIRE(maybe_stacked_doc.has_value());
+        const auto* stacked_doc = maybe_stacked_doc.get();
+        REQUIRE(stacked_doc);
         REQUIRE(context.empty());
-        REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:1:15: error: marker\n"
-                                                                    "one` two three\n"
-                                                                    "              ^");
+        REQUIRE(stacked_marker_last_at(*stacked_doc) == "parse.txt:1:15: error: marker\n"
+                                                        "one` two three\n"
+                                                        "              ^");
     }
 
     {
@@ -567,12 +568,32 @@ TEST_CASE ("StackedEscapeParseDocument report_error_with_caret_line_last points 
 
         auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
 
-        REQUIRE(maybe_stacked_doc.has_value());
+        const auto* stacked_doc = maybe_stacked_doc.get();
+        REQUIRE(stacked_doc);
         REQUIRE(context.empty());
-        REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:2:8: error: marker\n"
-                                                                    "\xC3\xA9 three\n"
-                                                                    "       ^");
+        REQUIRE(stacked_marker_last_at(*stacked_doc) == "parse.txt:2:8: error: marker\n"
+                                                        "\xC3\xA9 three\n"
+                                                        "       ^");
     }
+}
+
+TEST_CASE ("StackedEscapeParseDocument report_error_with_caret_line_last counts source bytes not code points",
+           "[parse]")
+{
+    // Regression test: this caret position is wrong if source advancement mistakenly treats a byte count as a
+    // code-point count.
+    ParsedDocument doc(StringView{"one` two\n\xC3\xA9\xC3\xA9"}, StringView{"parse.txt"});
+    FullyBufferedDiagnosticContext context;
+    auto parser = doc.enumerator();
+
+    auto maybe_stacked_doc = parser.match_escaped(context, '`', '!');
+
+    const auto* stacked_doc = maybe_stacked_doc.get();
+    REQUIRE(stacked_doc);
+    REQUIRE(context.empty());
+    REQUIRE(stacked_marker_last_at(*stacked_doc) == "parse.txt:2:3: error: marker\n"
+                                                    "\xC3\xA9\xC3\xA9\n"
+                                                    "  ^");
 }
 
 TEST_CASE ("StackedEscapeParseDocument report_error_with_caret_line_last points at the consumed end delimiter",
@@ -584,11 +605,12 @@ TEST_CASE ("StackedEscapeParseDocument report_error_with_caret_line_last points 
 
     auto maybe_stacked_doc = parser.match_escaped(context, '`', ',');
 
-    REQUIRE(maybe_stacked_doc.has_value());
+    const auto* stacked_doc = maybe_stacked_doc.get();
+    REQUIRE(stacked_doc);
     REQUIRE(context.empty());
-    REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:1:10: error: marker\n"
-                                                                "readwrite,extra\n"
-                                                                "         ^");
+    REQUIRE(stacked_marker_last_at(*stacked_doc) == "parse.txt:1:10: error: marker\n"
+                                                    "readwrite,extra\n"
+                                                    "         ^");
 }
 
 TEST_CASE ("ParseEnumerator match_escaped reports invalid UTF-8 while proving decoded text", "[parse]")
@@ -613,12 +635,13 @@ TEST_CASE ("ParsedDocument stacked returns whole input as a stacked document", "
 
     auto maybe_stacked_doc = doc.stacked(context);
 
-    REQUIRE(maybe_stacked_doc.has_value());
+    const auto* stacked_doc = maybe_stacked_doc.get();
+    REQUIRE(stacked_doc);
     REQUIRE(context.empty());
-    REQUIRE(maybe_stacked_doc.get()->text() == "one\n\xC3\xA9 two");
-    REQUIRE(stacked_marker_last_at(*maybe_stacked_doc.get()) == "parse.txt:2:6: error: marker\n"
-                                                                "\xC3\xA9 two\n"
-                                                                "     ^");
+    REQUIRE(stacked_doc->text() == "one\n\xC3\xA9 two");
+    REQUIRE(stacked_marker_last_at(*stacked_doc) == "parse.txt:2:6: error: marker\n"
+                                                    "\xC3\xA9 two\n"
+                                                    "     ^");
 }
 
 TEST_CASE ("ParsedDocument stacked reports invalid UTF-8", "[parse]")

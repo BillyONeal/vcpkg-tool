@@ -194,13 +194,9 @@ namespace vcpkg
         friend StackedEscapeParseDocument;
         StackedParseEnumerator(const StackedEscapeParseDocument& doc) noexcept;
         ParsePosition source_position() const noexcept;
-        void advance_encoded() noexcept;
-        void advance_encoded(ParseIndex count) noexcept;
 
         const StackedEscapeParseDocument* m_doc;
         ParseIndex m_decoded_next;
-        ParseIndex m_source_next;
-        ParseIndex m_next_escape;
     };
 
     struct StackedEscapeParseDocument
@@ -352,7 +348,7 @@ namespace vcpkg
                 break;
             }
 
-            advance_encoded(1);
+            ++m_decoded_next;
         }
 
         return StringView{m_doc->m_decoded_text.data() + first, m_decoded_next - first};
@@ -379,7 +375,7 @@ namespace vcpkg
                 break;
             }
 
-            advance_encoded(len);
+            m_decoded_next += len;
         }
 
         return StringView{m_doc->m_decoded_text.data() + first, m_decoded_next - first};

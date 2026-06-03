@@ -2,6 +2,7 @@
 #include <vcpkg/base/parse.h>
 #include <vcpkg/base/util.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -188,32 +189,36 @@ namespace vcpkg
         }
     }
 
-    // advances position by one code point, and updates row and column information. text[position.next_index] must be
-    // valid UTF-8
-    static void advance_position_known_valid(StringView text, ParsePosition& position) noexcept
+    // advances position by count source bytes, and updates row and column information.
+    // text[position.next_index] must be valid UTF-8 for the traversed range.
+    static void advance_position_known_valid(StringView text, ParsePosition& position, ParseIndex count) noexcept
     {
-        const auto ch = static_cast<unsigned char>(text[position.next_index]);
-        if (ch == '\t')
+        const ParseIndex target_index = position.next_index + count;
+        while (position.next_index != target_index)
         {
-            ++position.next_index;
-            position.column = column_round_tabstop(position.column);
-        }
-        else if (ch == '\n')
-        {
-            ++position.next_index;
-            position.column = 1;
-            ++position.row;
-            position.row_start = position.next_index;
-        }
-        else if (!(ch & 0b1000'0000u))
-        {
-            ++position.next_index;
-            ++position.column;
-        }
-        else
-        {
-            decode_known_valid_utf8(position.next_index, text);
-            ++position.column;
+            const auto ch = static_cast<unsigned char>(text[position.next_index]);
+            if (ch == '\t')
+            {
+                ++position.next_index;
+                position.column = column_round_tabstop(position.column);
+            }
+            else if (ch == '\n')
+            {
+                ++position.next_index;
+                position.column = 1;
+                ++position.row;
+                position.row_start = position.next_index;
+            }
+            else if (!(ch & 0b1000'0000u))
+            {
+                ++position.next_index;
+                ++position.column;
+            }
+            else
+            {
+                decode_known_valid_utf8(position.next_index, text);
+                ++position.column;
+            }
         }
     }
 
@@ -518,7 +523,7 @@ namespace vcpkg
     }
 
     StackedParseEnumerator::StackedParseEnumerator(const StackedEscapeParseDocument& doc) noexcept
-        : m_doc(&doc), m_decoded_next(0), m_source_next(doc.m_start_position.next_index), m_next_escape(0)
+        : m_doc(&doc), m_decoded_next(0)
     {
     }
 
@@ -533,42 +538,23 @@ namespace vcpkg
 
         auto next_decoded = m_decoded_next;
         const auto result = decode_known_valid_utf8(next_decoded, m_doc->m_decoded_text);
-        advance_encoded(next_decoded - m_decoded_next);
+        m_decoded_next = next_decoded;
         return result;
     }
 
     ParsePosition StackedParseEnumerator::source_position() const noexcept
     {
         auto position = m_doc->m_start_position;
+        // m_escape_positions stores decoded-byte offsets where an escape character was removed.
+        // If the decoded cursor is exactly at such an offset, that escape is before the current source position.
+        const auto escapes_before_or_at = static_cast<ParseIndex>(
+            std::upper_bound(m_doc->m_escape_positions.begin(), m_doc->m_escape_positions.end(), m_decoded_next) -
+            m_doc->m_escape_positions.begin());
+        const ParseIndex source_next = m_doc->m_start_position.next_index + m_decoded_next + escapes_before_or_at;
 
-        while (position.next_index != m_source_next)
-        {
-            advance_position_known_valid(m_doc->m_parent_doc->m_text, position);
-        }
+        advance_position_known_valid(m_doc->m_parent_doc->m_text, position, source_next - position.next_index);
 
         return position;
-    }
-
-    void StackedParseEnumerator::advance_encoded() noexcept
-    {
-        const auto has_escape = m_next_escape < m_doc->m_escape_positions.size() &&
-                                m_source_next == m_doc->m_escape_positions[m_next_escape];
-        ++m_decoded_next;
-        m_source_next += 1u + static_cast<ParseIndex>(has_escape);
-        m_next_escape += has_escape;
-    }
-
-    void StackedParseEnumerator::advance_encoded(ParseIndex count) noexcept
-    {
-        m_decoded_next += count;
-        m_source_next += count;
-
-        while (m_next_escape < m_doc->m_escape_positions.size() &&
-               m_doc->m_escape_positions[m_next_escape] < m_source_next)
-        {
-            ++m_source_next;
-            ++m_next_escape;
-        }
     }
 
     void StackedParseEnumerator::report_error_with_caret_line(DiagnosticContext& context,
@@ -582,13 +568,12 @@ namespace vcpkg
     {
         if (m_decoded_next != m_doc->m_decoded_text.size() && m_doc->m_decoded_text[m_decoded_next] == ch)
         {
-            advance_encoded();
+            ++m_decoded_next;
             return true;
         }
 
         report_error_with_caret_line(context, msg::format(msgExpectedCharacterHere, msg::expected = ch));
         m_decoded_next = static_cast<ParseIndex>(m_doc->m_decoded_text.size());
-        m_source_next = static_cast<ParseIndex>(m_doc->m_parent_doc->m_text.size());
         return false;
     }
 
@@ -596,7 +581,7 @@ namespace vcpkg
     {
         if (m_decoded_next != m_doc->m_decoded_text.size() && m_doc->m_decoded_text[m_decoded_next] == ch)
         {
-            advance_encoded();
+            ++m_decoded_next;
             return true;
         }
 
@@ -612,7 +597,6 @@ namespace vcpkg
 
         report_error_with_caret_line(context, msg::format(msgExpectedTextHere, msg::expected = text));
         m_decoded_next = static_cast<ParseIndex>(m_doc->m_decoded_text.size());
-        m_source_next = static_cast<ParseIndex>(m_doc->m_parent_doc->m_text.size());
         return false;
     }
 
@@ -623,7 +607,7 @@ namespace vcpkg
         if (remaining_size >= text_size &&
             std::equal(text.begin(), text.end(), m_doc->m_decoded_text.data() + m_decoded_next))
         {
-            advance_encoded(text_size);
+            m_decoded_next += text_size;
             return true;
         }
 
@@ -639,7 +623,6 @@ namespace vcpkg
 
         report_error_with_caret_line(context, msg::format(msgExpectedTextHere, msg::expected = keyword));
         m_decoded_next = static_cast<ParseIndex>(m_doc->m_decoded_text.size());
-        m_source_next = static_cast<ParseIndex>(m_doc->m_parent_doc->m_text.size());
         return false;
     }
 
@@ -656,7 +639,7 @@ namespace vcpkg
             return false;
         }
 
-        advance_encoded(keyword_size);
+        m_decoded_next += keyword_size;
         return true;
     }
 
@@ -671,10 +654,7 @@ namespace vcpkg
         const auto source_end = m_start_position.next_index + static_cast<ParseIndex>(m_decoded_text.size()) +
                                 static_cast<ParseIndex>(m_escape_positions.size());
 
-        while (position.next_index != source_end)
-        {
-            advance_position_known_valid(m_parent_doc->m_text, position);
-        }
+        advance_position_known_valid(m_parent_doc->m_text, position, source_end - position.next_index);
 
         return position;
     }
@@ -950,7 +930,7 @@ namespace vcpkg
             if (m_doc->m_text[m_position.next_index] == escape_char)
             {
                 decoded_text.append(m_doc->m_text.data() + append_from, m_position.next_index - append_from);
-                escape_positions.push_back(m_position.next_index);
+                escape_positions.push_back(static_cast<ParseIndex>(decoded_text.size()));
                 ++m_position.next_index;
                 ++m_position.column;
                 if (at_eof())
