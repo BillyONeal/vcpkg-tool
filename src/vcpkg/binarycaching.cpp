@@ -82,9 +82,9 @@ namespace
     }
 #endif // ^^^ _WIN32
 
-    Path make_temp_archive_path(const Path& buildtrees, const PackageSpec& spec, const std::string& abi)
+    Path make_temp_archive_path(const Path& package_dir, const std::string& abi)
     {
-        return buildtrees / fmt::format("{}_{}.zip", spec.name(), abi);
+        return fmt::format("{}_{}.zip", package_dir, abi);
     }
 
     Path files_archive_parent_path(const std::string& abi) { return Path(abi.substr(0, 2)); }
@@ -96,6 +96,7 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem& fs,
+                          const Path&,
                           const BinaryPackageWriteInfo& request) override
         {
             const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
@@ -111,7 +112,7 @@ namespace
 
             if (!request.unique_write_provider || (ec && ec == std::make_error_condition(std::errc::cross_device_link)))
             {
-                // either we need to make a copy or the rename failed because buildtrees and the binary
+                // either we need to make a copy or the rename failed because packages and the binary
                 // cache write target are on different filesystems, copy to a sibling in that directory and rename
                 // into place
                 // First copy to temporary location to avoid race between different vcpkg instances trying to upload
@@ -162,8 +163,6 @@ namespace
     // - IReadBinaryProvider::precheck()
     struct ZipReadBinaryProvider : IReadBinaryProvider
     {
-        ZipReadBinaryProvider(const ZipTool& zip) : m_zip(zip) { }
-
         struct UnzipJob
         {
             const Path* package_dir;
@@ -176,12 +175,15 @@ namespace
 
         void fetch(DiagnosticContext& context,
                    const Filesystem& fs,
+                   const ZipTool* zip_tool,
+                   const Path& packages,
                    View<const InstallPlanAction*> actions,
                    Span<RestoreResult> out_status) const override
         {
+            Checks::check_exit(VCPKG_LINE_INFO, zip_tool != nullptr);
             const ElapsedTimer timer;
             std::vector<Optional<ZipResource>> zip_paths(actions.size(), nullopt);
-            acquire_zips(context, fs, actions, zip_paths);
+            acquire_zips(context, fs, packages, actions, zip_paths);
             std::vector<UnzipJob> jobs;
             jobs.reserve(actions.size());
             for (size_t i = 0; i < actions.size(); ++i)
@@ -196,11 +198,11 @@ namespace
             std::sort(
                 jobs.begin(), jobs.end(), [](const UnzipJob& l, const UnzipJob& r) { return l.zip_size > r.zip_size; });
 
-            parallel_for_each(jobs, [this, &fs, &out_status](UnzipJob& job) {
+            parallel_for_each(jobs, [zip_tool, &fs, &out_status](UnzipJob& job) {
                 WarningDiagnosticContext wdc{job.fbdc};
                 if (clean_prepare_dir(wdc, fs, *job.package_dir))
                 {
-                    auto cmd = m_zip.decompress_zip_archive_cmd(*job.package_dir, job.zip_resource->path);
+                    auto cmd = zip_tool->decompress_zip_archive_cmd(*job.package_dir, job.zip_resource->path);
                     auto maybe_output = cmd_execute_and_capture_output(wdc, cmd);
                     if (check_zero_exit_code(wdc, cmd, maybe_output)
 #ifdef _WIN32
@@ -247,19 +249,18 @@ namespace
         // Note that as this API can't fail, only warnings or lower will be emitted to `context`.
         virtual void acquire_zips(DiagnosticContext& context,
                                   const Filesystem& fs,
+                                  const Path& packages,
                                   View<const InstallPlanAction*> actions,
                                   Span<Optional<ZipResource>> out_zips) const = 0;
-
-    protected:
-        ZipTool m_zip;
     };
 
     struct FilesReadBinaryProvider : ZipReadBinaryProvider
     {
-        FilesReadBinaryProvider(const ZipTool& zip, Path&& dir) : ZipReadBinaryProvider(zip), m_dir(std::move(dir)) { }
+        explicit FilesReadBinaryProvider(Path&& dir) : m_dir(std::move(dir)) { }
 
         void acquire_zips(DiagnosticContext&,
                           const Filesystem& fs,
+                          const Path&,
                           View<const InstallPlanAction*> actions,
                           Span<Optional<ZipResource>> out_zip_paths) const override
         {
@@ -313,7 +314,10 @@ namespace
         {
         }
 
-        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem&,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
         {
             if (!request.zip_path) return false;
             const auto& zip_path = *request.zip_path.get();
@@ -332,19 +336,14 @@ namespace
 
     struct HttpGetBinaryProvider : ZipReadBinaryProvider
     {
-        HttpGetBinaryProvider(ZipTool zip,
-                              const Path& buildtrees,
-                              UrlTemplate&& url_template,
-                              const std::vector<std::string>& secrets)
-            : ZipReadBinaryProvider(std::move(zip))
-            , m_buildtrees(buildtrees)
-            , m_url_template(std::move(url_template))
-            , m_secrets(secrets)
+        HttpGetBinaryProvider(UrlTemplate&& url_template, const std::vector<std::string>& secrets)
+            : m_url_template(std::move(url_template)), m_secrets(secrets)
         {
         }
 
         void acquire_zips(DiagnosticContext& context,
                           const Filesystem&,
+                          const Path&,
                           View<const InstallPlanAction*> actions,
                           Span<Optional<ZipResource>> out_zip_paths) const override
         {
@@ -354,7 +353,7 @@ namespace
                 auto&& action = *actions[idx];
                 auto read_info = BinaryPackageReadInfo{action};
                 url_paths.emplace_back(m_url_template.instantiate_variables(read_info),
-                                       make_temp_archive_path(m_buildtrees, read_info.spec, read_info.package_abi));
+                                       make_temp_archive_path(read_info.package_dir, read_info.package_abi));
             }
 
             WarningDiagnosticContext wdc{context};
@@ -398,7 +397,6 @@ namespace
             return msg::format(msgRestoredPackagesFromHTTP, msg::count = count, msg::elapsed = ElapsedTime(elapsed));
         }
 
-        Path m_buildtrees;
         UrlTemplate m_url_template;
         std::vector<std::string> m_secrets;
     };
@@ -412,6 +410,7 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem& fs,
+                          const Path&,
                           const BinaryPackageWriteInfo& request) override
         {
             if (!request.zip_path) return false;
@@ -646,17 +645,12 @@ namespace
 
     struct NugetBaseBinaryProvider
     {
-        NugetBaseBinaryProvider(const NuGetTool& tool,
-                                const Path& packages,
-                                const Path& buildtrees,
-                                StringView nuget_prefix)
-            : m_cmd(tool), m_packages(packages), m_buildtrees(buildtrees), m_nuget_prefix(nuget_prefix.to_string())
+        NugetBaseBinaryProvider(const NuGetTool& tool, StringView nuget_prefix)
+            : m_cmd(tool), m_nuget_prefix(nuget_prefix.to_string())
         {
         }
 
         NuGetTool m_cmd;
-        Path m_packages;
-        Path m_buildtrees;
         std::string m_nuget_prefix;
     };
 
@@ -704,10 +698,12 @@ namespace
 
         void fetch(DiagnosticContext& context,
                    const Filesystem& fs,
+                   const ZipTool*,
+                   const Path& packages,
                    View<const InstallPlanAction*> actions,
                    Span<RestoreResult> out_status) const override
         {
-            auto packages_config = m_buildtrees / "packages.config";
+            auto packages_config = packages / "packages.config";
             auto refs =
                 Util::fmap(actions, [this](const InstallPlanAction* p) { return make_nugetref(*p, m_nuget_prefix); });
             WarningDiagnosticContext wdc{context};
@@ -716,11 +712,11 @@ namespace
                 return;
             }
 
-            (void)m_cmd.install(wdc, packages_config, m_packages, m_src);
+            (void)m_cmd.install(wdc, packages_config, packages, m_src);
             for (size_t i = 0; i < actions.size(); ++i)
             {
                 // nuget.exe provides the nupkg file and the unpacked folder
-                const auto nupkg_path = m_packages / refs[i].id / refs[i].id + ".nupkg";
+                const auto nupkg_path = packages / refs[i].id / refs[i].id + ".nupkg";
                 if (fs.exists(nupkg_path, IgnoreErrors{}))
                 {
                     (void)fs.remove(wdc, nupkg_path);
@@ -731,8 +727,8 @@ namespace
                     }
                     else
                     {
-                        const auto path_from = m_packages / refs[i].id;
-                        const auto path_to = m_packages / nuget_dir;
+                        const auto path_from = packages / refs[i].id;
+                        const auto path_to = packages / nuget_dir;
                         if (fs.rename(wdc, path_from, path_to))
                         {
                             out_status[i] = RestoreResult::restored;
@@ -757,10 +753,10 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem& fs,
+                          const Path& packages,
                           const BinaryPackageWriteInfo& request) override
         {
-            auto& spec = request.spec;
-            auto nuspec_path = m_buildtrees / spec.name() / spec.triplet().canonical_name() + ".nuspec";
+            auto nuspec_path = request.package_dir.native() + ".nuspec";
             auto& nuspec_contents = request.nuspec.value_or_exit(VCPKG_LINE_INFO);
             std::error_code ec;
             fs.write_contents(nuspec_path, nuspec_contents, ec);
@@ -772,14 +768,14 @@ namespace
                 return false;
             }
 
-            auto pack_result = m_cmd.pack(context, nuspec_path, m_buildtrees);
+            auto pack_result = m_cmd.pack(context, nuspec_path, packages);
             fs.remove(nuspec_path, IgnoreErrors{});
             if (!pack_result)
             {
                 return false;
             }
 
-            auto nupkg_path = m_buildtrees / make_feedref(request, m_nuget_prefix).nupkg_filename();
+            auto nupkg_path = packages / make_feedref(request, m_nuget_prefix).nupkg_filename();
             const auto vendor = m_src.option == "-ConfigFile" ? "NuGet config" : "NuGet";
             context.statusln(msg::format(msgUploadingBinariesToVendor,
                                          msg::spec = request.display_name,
@@ -807,11 +803,8 @@ namespace
 
     struct ObjectStorageProvider : ZipReadBinaryProvider
     {
-        ObjectStorageProvider(const ZipTool& zip,
-                              const Path& buildtrees,
-                              std::string&& prefix,
-                              const std::shared_ptr<const IObjectStorageTool>& tool)
-            : ZipReadBinaryProvider(zip), m_buildtrees(buildtrees), m_prefix(std::move(prefix)), m_tool(tool)
+        ObjectStorageProvider(std::string&& prefix, const std::shared_ptr<const IObjectStorageTool>& tool)
+            : m_prefix(std::move(prefix)), m_tool(tool)
         {
         }
 
@@ -822,6 +815,7 @@ namespace
 
         void acquire_zips(DiagnosticContext& context,
                           const Filesystem&,
+                          const Path&,
                           View<const InstallPlanAction*> actions,
                           Span<Optional<ZipResource>> out_zip_paths) const override
         {
@@ -829,7 +823,7 @@ namespace
             {
                 auto&& action = *actions[idx];
                 const auto& abi = action.package_abi_or_exit(VCPKG_LINE_INFO);
-                auto tmp = make_temp_archive_path(m_buildtrees, action.spec, abi);
+                auto tmp = make_temp_archive_path(action.package_dir, abi);
                 WarningDiagnosticContext wdc{context};
                 auto res = m_tool->download_file(wdc, make_object_path(m_prefix, abi), tmp);
                 if (auto cache_result = res.get())
@@ -870,7 +864,6 @@ namespace
             return m_tool->restored_message(count, elapsed);
         }
 
-        Path m_buildtrees;
         std::string m_prefix;
         std::shared_ptr<const IObjectStorageTool> m_tool;
     };
@@ -886,7 +879,10 @@ namespace
             return Strings::concat(prefix, abi, ".zip");
         }
 
-        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem&,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
         {
             if (auto zip_path = request.zip_path.get())
             {
@@ -906,10 +902,7 @@ namespace
 
     struct AzCopyStorageProvider : ZipReadBinaryProvider
     {
-        AzCopyStorageProvider(const ZipTool& zip, const Path& buildtrees, AzCopyUrl&& az_url, const Path& tool)
-            : ZipReadBinaryProvider(zip), m_buildtrees(buildtrees), m_url(std::move(az_url)), m_tool(tool)
-        {
-        }
+        AzCopyStorageProvider(AzCopyUrl&& az_url, const Path& tool) : m_url(std::move(az_url)), m_tool(tool) { }
 
         // Batch the azcopy arguments to fit within the maximum allowed command line length.
         static std::vector<std::vector<std::string>> batch_azcopy_args(const std::vector<std::string>& abis,
@@ -959,6 +952,7 @@ namespace
 
         void acquire_zips(DiagnosticContext& context,
                           const Filesystem& fs,
+                          const Path& packages,
                           View<const InstallPlanAction*> actions,
                           Span<Optional<ZipResource>> out_zip_paths) const override
         {
@@ -973,7 +967,7 @@ namespace
                 abi_index_map[abi] = idx;
             }
 
-            const auto tmp_downloads_location = m_buildtrees / ".azcopy";
+            const auto tmp_downloads_location = packages / ".azcopy";
             auto base_cmd = Command{m_tool}
                                 .string_arg("copy")
                                 .string_arg("--from-to")
@@ -1046,7 +1040,6 @@ namespace
                 msgRestoredPackagesFromAzureStorage, msg::count = count, msg::elapsed = ElapsedTime(elapsed));
         }
 
-        Path m_buildtrees;
         AzCopyUrl m_url;
         Path m_tool;
     };
@@ -1072,7 +1065,10 @@ namespace
             return check_zero_exit_code(context, cmd, maybe_code_and_output);
         }
 
-        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem&,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
         {
             const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
             WarningDiagnosticContext wdc{context};
@@ -1363,7 +1359,10 @@ namespace
         {
         }
 
-        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem&,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
         {
             auto ref = make_feedref(request, "");
             std::string package_description = "Cached package for " + ref.id;
@@ -1383,14 +1382,8 @@ namespace
 
     struct AzureUpkgGetBinaryProvider : public ZipReadBinaryProvider
     {
-        AzureUpkgGetBinaryProvider(const ZipTool& zip,
-                                   const Path& azcli_path,
-                                   AzureUpkgSource&& source,
-                                   const Path& buildtrees)
-            : ZipReadBinaryProvider(zip)
-            , m_azure_tool(azcli_path)
-            , m_source(std::move(source))
-            , m_buildtrees(buildtrees)
+        AzureUpkgGetBinaryProvider(const Path& azcli_path, AzureUpkgSource&& source)
+            : m_azure_tool(azcli_path), m_source(std::move(source))
         {
         }
 
@@ -1410,6 +1403,7 @@ namespace
 
         void acquire_zips(DiagnosticContext& context,
                           const Filesystem& fs,
+                          const Path& packages,
                           View<const InstallPlanAction*> actions,
                           Span<Optional<ZipResource>> out_zips) const override
         {
@@ -1420,9 +1414,9 @@ namespace
                 const auto info = BinaryPackageReadInfo{action};
                 const auto ref = make_feedref(info, "");
 
-                Path temp_dir = m_buildtrees / fmt::format("upkg_download_{}", info.package_abi);
+                Path temp_dir = packages / fmt::format("upkg_download_{}", info.package_abi);
                 Path temp_zip_path = temp_dir / fmt::format("{}.zip", ref.id);
-                Path final_zip_path = m_buildtrees / fmt::format("{}.zip", ref.id);
+                Path final_zip_path = make_temp_archive_path(info.package_dir, info.package_abi);
 
                 const auto result = m_azure_tool.download(wdc, m_source, ref.id, ref.version, temp_dir);
                 if (result && fs.exists(temp_zip_path, IgnoreErrors{}) && fs.rename(wdc, temp_zip_path, final_zip_path))
@@ -1440,7 +1434,6 @@ namespace
     private:
         AzureUpkgTool m_azure_tool;
         AzureUpkgSource m_source;
-        const Path& m_buildtrees;
     };
 
     Optional<Path> default_cache_path(DiagnosticContext& context)
@@ -1675,7 +1668,12 @@ namespace vcpkg
                 get_environment_variable(EnvironmentVariableGitHubSha).value_or("")};
     }
 
-    void ReadOnlyBinaryCache::fetch(DiagnosticContext& context, const Filesystem& fs, View<InstallPlanAction> actions)
+    ReadOnlyBinaryCache::ReadOnlyBinaryCache(const Filesystem& fs, Path packages)
+        : m_fs(fs), m_packages(std::move(packages))
+    {
+    }
+
+    void ReadOnlyBinaryCache::fetch(DiagnosticContext& context, View<InstallPlanAction> actions)
     {
         std::vector<const InstallPlanAction*> action_ptrs;
         std::vector<RestoreResult> restores;
@@ -1701,7 +1699,7 @@ namespace vcpkg
             if (action_ptrs.empty()) continue;
 
             ElapsedTimer timer;
-            provider->fetch(context, fs, action_ptrs, restores);
+            provider->fetch(context, m_fs, &m_zip_tool, m_packages, action_ptrs, restores);
             size_t num_restored = 0;
             for (size_t i = 0; i < restores.size(); ++i)
             {
@@ -1744,7 +1742,6 @@ namespace vcpkg
     }
 
     std::vector<CacheAvailability> ReadOnlyBinaryCache::precheck(DiagnosticContext& context,
-                                                                 const Filesystem& fs,
                                                                  View<const InstallPlanAction*> actions)
     {
         const std::vector<CacheStatus*> statuses = Util::fmap(actions, [this](const InstallPlanAction* action) {
@@ -1771,7 +1768,7 @@ namespace vcpkg
             }
             if (action_ptrs.empty()) continue;
 
-            provider->precheck(context, fs, action_ptrs, cache_result);
+            provider->precheck(context, m_fs, action_ptrs, cache_result);
 
             for (size_t i = 0; i < action_ptrs.size(); ++i)
             {
@@ -1914,8 +1911,6 @@ namespace vcpkg
 
             m_config.nuget_repo = get_nuget_repo_info_from_env(args);
 
-            const auto& buildtrees = paths.buildtrees();
-
             std::vector<std::string> secrets;
             for (const auto& provider : parsed->providers)
             {
@@ -1925,22 +1920,6 @@ namespace vcpkg
                     secrets.push_back(provider.arg2.value_or_exit(VCPKG_LINE_INFO));
                 }
             }
-
-            ZipTool zip_tool;
-            bool has_zip_tool = false;
-            auto ensure_zip_tool = [&]() -> bool {
-                if (!has_zip_tool)
-                {
-                    if (!zip_tool.setup(context, fs, tools))
-                    {
-                        return false;
-                    }
-
-                    has_zip_tool = true;
-                }
-
-                return true;
-            };
 
             std::shared_ptr<const GcsStorageTool> gcs_tool;
             auto ensure_gcs_tool = [&]() -> bool {
@@ -2045,8 +2024,6 @@ namespace vcpkg
                                                                                 parsed->nuget_timeout,
                                                                                 parsed->nuget_interactive,
                                                                                 args.use_nuget_cache.value_or(false)),
-                                                                      paths.packages(),
-                                                                      buildtrees,
                                                                       m_config.nuget_prefix);
                     }
                     else
@@ -2071,11 +2048,11 @@ namespace vcpkg
                 {
                     case BinaryCacheProviderKind::Files:
                     {
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
                             m_config.read.push_back(std::make_unique<FilesReadBinaryProvider>(
-                                zip_tool, Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)}));
+                                Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)}));
                         }
 
                         if (installs_write(provider.access))
@@ -2130,11 +2107,11 @@ namespace vcpkg
                             url_template.headers.push_back(*header);
                         }
 
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
-                            m_config.read.push_back(std::make_unique<HttpGetBinaryProvider>(
-                                zip_tool, buildtrees, UrlTemplate{url_template}, secrets));
+                            m_config.read.push_back(
+                                std::make_unique<HttpGetBinaryProvider>(UrlTemplate{url_template}, secrets));
                         }
 
                         if (installs_write(provider.access))
@@ -2147,14 +2124,14 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::AzBlob:
                     {
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
                                          provider.arg2.value_or_exit(VCPKG_LINE_INFO)};
                         UrlTemplate url_template{az_url.make_object_path("{sha}")};
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
-                            m_config.read.push_back(std::make_unique<HttpGetBinaryProvider>(
-                                zip_tool, buildtrees, UrlTemplate{url_template}, secrets));
+                            m_config.read.push_back(
+                                std::make_unique<HttpGetBinaryProvider>(UrlTemplate{url_template}, secrets));
                         }
 
                         if (installs_write(provider.access))
@@ -2170,13 +2147,13 @@ namespace vcpkg
                     case BinaryCacheProviderKind::AzCopy:
                     case BinaryCacheProviderKind::AzCopySas:
                     {
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_azcopy_tool()) return false;
                         AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO), provider.arg2.value_or("")};
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
-                            m_config.read.push_back(std::make_unique<AzCopyStorageProvider>(
-                                zip_tool, buildtrees, AzCopyUrl{az_url}, azcopy_tool));
+                            m_config.read.push_back(
+                                std::make_unique<AzCopyStorageProvider>(AzCopyUrl{az_url}, azcopy_tool));
                         }
 
                         if (installs_write(provider.access))
@@ -2189,13 +2166,13 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::GCS:
                     {
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_gcs_tool()) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
-                            m_config.read.push_back(std::make_unique<ObjectStorageProvider>(
-                                zip_tool, buildtrees, std::string{prefix}, gcs_tool));
+                            m_config.read.push_back(
+                                std::make_unique<ObjectStorageProvider>(std::string{prefix}, gcs_tool));
                         }
 
                         if (installs_write(provider.access))
@@ -2208,13 +2185,13 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::AWS:
                     {
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_aws_tool()) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
-                            m_config.read.push_back(std::make_unique<ObjectStorageProvider>(
-                                zip_tool, buildtrees, std::string{prefix}, aws_tool));
+                            m_config.read.push_back(
+                                std::make_unique<ObjectStorageProvider>(std::string{prefix}, aws_tool));
                         }
 
                         if (installs_write(provider.access))
@@ -2227,13 +2204,13 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::COS:
                     {
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_cos_tool()) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
-                            m_config.read.push_back(std::make_unique<ObjectStorageProvider>(
-                                zip_tool, buildtrees, std::string{prefix}, cos_tool));
+                            m_config.read.push_back(
+                                std::make_unique<ObjectStorageProvider>(std::string{prefix}, cos_tool));
                         }
 
                         if (installs_write(provider.access))
@@ -2246,15 +2223,15 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::AzUniversal:
                     {
+                        if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_azcli_tool()) return false;
                         AzureUpkgSource source{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
                                                provider.arg2.value_or_exit(VCPKG_LINE_INFO),
                                                provider.arg3.value_or_exit(VCPKG_LINE_INFO)};
                         if (installs_read(provider.access))
                         {
-                            if (!ensure_zip_tool()) return false;
-                            m_config.read.push_back(std::make_unique<AzureUpkgGetBinaryProvider>(
-                                zip_tool, azcli_tool, AzureUpkgSource{source}, buildtrees));
+                            m_config.read.push_back(
+                                std::make_unique<AzureUpkgGetBinaryProvider>(azcli_tool, AzureUpkgSource{source}));
                         }
 
                         if (installs_write(provider.access))
@@ -2273,18 +2250,12 @@ namespace vcpkg
 
         m_needs_nuspec_data = Util::any_of(m_config.write, [](auto&& p) { return p->needs_nuspec_data(); });
         m_needs_zip_file = Util::any_of(m_config.write, [](auto&& p) { return p->needs_zip_file(); });
-        if (m_needs_zip_file)
-        {
-            if (!m_zip_tool.setup(context, fs, tools))
-            {
-                return false;
-            }
-        }
-
         return true;
     }
-    BinaryCache::BinaryCache(const Filesystem& fs)
-        : m_fs(fs), m_bg_msg_sink(stdout_sink), m_push_thread(&BinaryCache::push_thread_main, this)
+    BinaryCache::BinaryCache(const Filesystem& fs, Path packages)
+        : ReadOnlyBinaryCache(fs, std::move(packages))
+        , m_bg_msg_sink(stdout_sink)
+        , m_push_thread(&BinaryCache::push_thread_main, this)
     {
     }
     BinaryCache::~BinaryCache() { wait_for_async_complete_and_join(); }
@@ -2381,9 +2352,10 @@ namespace vcpkg
                 size_t num_destinations = 0;
                 for (auto&& provider : m_config.write)
                 {
+                    // skip pushing to providers that need zips if making the zip above failed
                     if (!provider->needs_zip_file() || action_to_push.request.zip_path.has_value())
                     {
-                        num_destinations += provider->push_success(pdc, m_fs, action_to_push.request);
+                        num_destinations += provider->push_success(pdc, m_fs, m_packages, action_to_push.request);
                     }
                 }
 

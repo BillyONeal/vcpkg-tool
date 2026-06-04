@@ -36,6 +36,7 @@ namespace vcpkg
             CleanPackages::Yes,
             CleanDownloads::No,
             BackcompatFeatures::Allow,
+            KeepGoing::No,
         };
 
         const FullPackageSpec spec =

@@ -214,6 +214,7 @@ namespace vcpkg
             CleanPackages::No,
             CleanDownloads::No,
             BackcompatFeatures::Allow,
+            KeepGoing::No,
         };
 
         const FullPackageSpec spec =
@@ -295,7 +296,7 @@ namespace vcpkg
                                         msg::path = spec_name);
         }
 
-        BinaryCache binary_cache(fs);
+        BinaryCache binary_cache(fs, paths.packages());
         if (!binary_cache.install_providers(console_diagnostic_context, args, paths))
         {
             Checks::exit_fail(VCPKG_LINE_INFO);

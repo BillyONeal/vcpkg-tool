@@ -1544,7 +1544,7 @@ namespace vcpkg
         track_install_plan(action_plan);
         install_preclear_plan_packages(paths, action_plan);
 
-        BinaryCache binary_cache(fs);
+        BinaryCache binary_cache(fs, paths.packages());
         if (!only_downloads)
         {
             if (!binary_cache.install_providers(console_diagnostic_context, args, paths))
@@ -1553,7 +1553,7 @@ namespace vcpkg
             }
         }
 
-        binary_cache.fetch(console_diagnostic_context, fs, action_plan.install_actions);
+        binary_cache.fetch(console_diagnostic_context, action_plan.install_actions);
         const InstallSummary summary = install_execute_plan(args,
                                                             paths,
                                                             host_triplet,

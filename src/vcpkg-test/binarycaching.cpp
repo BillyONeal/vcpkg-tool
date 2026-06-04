@@ -15,6 +15,8 @@ struct KnowNothingBinaryProvider : IReadBinaryProvider
 {
     void fetch(DiagnosticContext&,
                const Filesystem& fs,
+               const ZipTool*,
+               const Path&,
                View<const InstallPlanAction*> actions,
                Span<RestoreResult> out_status) const override
     {
@@ -335,7 +337,7 @@ Dependencies:
 TEST_CASE ("Provider nullptr checks", "[BinaryCache]")
 {
     // create a binary cache to test
-    ReadOnlyBinaryCache uut;
+    ReadOnlyBinaryCache uut(always_failing_filesystem, Path{"pkgs"});
     uut.install_read_provider(std::make_unique<KnowNothingBinaryProvider>());
 
     // create an action plan with an action without a package ABI set
@@ -365,7 +367,7 @@ Description:
 
     // test that the binary cache does the right thing. See also CHECKs etc. in KnowNothingBinaryProvider
     FullyBufferedDiagnosticContext fbdc;
-    uut.fetch(fbdc, always_failing_filesystem, install_plan); // should have no effects
+    uut.fetch(fbdc, install_plan); // should have no effects
     REQUIRE(fbdc.empty());
 }
 

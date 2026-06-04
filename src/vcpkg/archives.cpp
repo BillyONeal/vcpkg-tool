@@ -362,6 +362,11 @@ namespace vcpkg
     bool ZipTool::setup(DiagnosticContext& context, const Filesystem& fs, const ToolCache& cache)
     {
 #if defined(_WIN32)
+        if (seven_zip.has_value())
+        {
+            return true;
+        }
+
         if (const auto* tool = cache.get_tool_path(context, fs, Tools::SEVEN_ZIP))
         {
             seven_zip.emplace(*tool);

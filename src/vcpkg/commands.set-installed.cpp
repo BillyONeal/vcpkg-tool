@@ -267,7 +267,7 @@ namespace vcpkg
 
         track_install_plan(action_plan);
 
-        BinaryCache binary_cache(fs);
+        BinaryCache binary_cache(fs, paths.packages());
         if (build_options.only_downloads == OnlyDownloads::No)
         {
             if (!binary_cache.install_providers(console_diagnostic_context, args, paths))
@@ -280,7 +280,7 @@ namespace vcpkg
         {
             auto install_actions =
                 Util::fmap(action_plan.install_actions, [](const InstallPlanAction& action) { return &action; });
-            auto availability = binary_cache.precheck(console_diagnostic_context, fs, install_actions);
+            auto availability = binary_cache.precheck(console_diagnostic_context, install_actions);
             if (Util::all_of(availability,
                              [](CacheAvailability state) { return state == CacheAvailability::available; }))
             {
@@ -289,7 +289,7 @@ namespace vcpkg
             }
         }
         install_preclear_plan_packages(paths, action_plan);
-        binary_cache.fetch(console_diagnostic_context, fs, action_plan.install_actions);
+        binary_cache.fetch(console_diagnostic_context, action_plan.install_actions);
 
         const auto summary = install_execute_plan(args,
                                                   paths,

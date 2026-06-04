@@ -561,14 +561,14 @@ namespace vcpkg
         PackagesDirAssigner packages_dir_assigner{paths.packages()};
         auto action_plan = compute_full_plan(
             paths, provider, var_provider, ci_specs.requested, packages_dir_assigner, create_install_plan_options);
-        BinaryCache binary_cache(fs);
+        BinaryCache binary_cache(fs, paths.packages());
         if (!binary_cache.install_providers(console_diagnostic_context, args, paths))
         {
             Checks::exit_fail(VCPKG_LINE_INFO);
         }
         auto install_actions =
             Util::fmap(action_plan.install_actions, [](const InstallPlanAction& action) { return &action; });
-        const auto precheck_results = binary_cache.precheck(console_diagnostic_context, fs, install_actions);
+        const auto precheck_results = binary_cache.precheck(console_diagnostic_context, install_actions);
         SortedVector<PackageSpec> empty_skipped_failures;
         const SortedVector<PackageSpec>& skipped_failures =
             skip_failures == SkipFailures::Yes ? baseline_data.expected_fail : empty_skipped_failures;
@@ -621,7 +621,7 @@ namespace vcpkg
             }
 
             install_preclear_plan_packages(paths, action_plan);
-            binary_cache.fetch(console_diagnostic_context, fs, action_plan.install_actions);
+            binary_cache.fetch(console_diagnostic_context, action_plan.install_actions);
 
             auto summary = install_execute_plan(args,
                                                 paths,

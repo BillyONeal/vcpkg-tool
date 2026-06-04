@@ -86,6 +86,7 @@ namespace vcpkg
         /// Note that as this is considered non-fatal, only warnings or lower will be emitted to `context`.
         virtual bool push_success(DiagnosticContext& context,
                                   const Filesystem& fs,
+                                  const Path& packages,
                                   const BinaryPackageWriteInfo& request) = 0;
 
         virtual bool needs_nuspec_data() const = 0;
@@ -104,6 +105,8 @@ namespace vcpkg
         /// Prerequisites: actions[i].package_abi(), out_status.size() == actions.size()
         virtual void fetch(DiagnosticContext& context,
                            const Filesystem& fs,
+                           const ZipTool* zip_tool,
+                           const Path& packages,
                            View<const InstallPlanAction*> actions,
                            Span<RestoreResult> out_status) const = 0;
 
@@ -223,13 +226,13 @@ namespace vcpkg
 
     struct ReadOnlyBinaryCache
     {
-        ReadOnlyBinaryCache() = default;
+        ReadOnlyBinaryCache(const Filesystem& fs, Path packages);
         ReadOnlyBinaryCache(const ReadOnlyBinaryCache&) = delete;
         ReadOnlyBinaryCache& operator=(const ReadOnlyBinaryCache&) = delete;
 
         /// Gives the IBinaryProvider an opportunity to batch any downloading or server communication for
         /// executing `actions`.
-        void fetch(DiagnosticContext& context, const Filesystem& fs, View<InstallPlanAction> actions);
+        void fetch(DiagnosticContext& context, View<InstallPlanAction> actions);
 
         bool is_restored(const InstallPlanAction& ipa) const;
 
@@ -238,15 +241,16 @@ namespace vcpkg
         /// Checks whether the `actions` are present in the cache, without restoring them. Used by CI to determine
         /// missing packages.
         /// Returns a vector where each index corresponds to the matching index in `actions`.
-        std::vector<CacheAvailability> precheck(DiagnosticContext& context,
-                                                const Filesystem& fs,
-                                                View<const InstallPlanAction*> actions);
+        std::vector<CacheAvailability> precheck(DiagnosticContext& context, View<const InstallPlanAction*> actions);
 
         // Informs the binary cache that the packages directory has been reset. Used when the same port-name is built
         // more than once in a single invocation of vcpkg.
         void mark_all_unrestored();
 
     protected:
+        const Filesystem& m_fs;
+        Path m_packages;
+        ZipTool m_zip_tool;
         BinaryProviders m_config;
 
         std::unordered_map<std::string, CacheStatus> m_status;
@@ -300,7 +304,7 @@ namespace vcpkg
         bool install_providers(DiagnosticContext& context, const VcpkgCmdArguments& args, const VcpkgPaths& paths);
 
         // fs must outlive the BinaryCache, and will be accessed from the background thread that does pushes
-        explicit BinaryCache(const Filesystem& fs);
+        explicit BinaryCache(const Filesystem& fs, Path packages);
         BinaryCache(const BinaryCache&) = delete;
         BinaryCache& operator=(const BinaryCache&) = delete;
         ~BinaryCache();
@@ -316,12 +320,10 @@ namespace vcpkg
             BinaryPackageWriteInfo request;
             CleanPackages clean_after_push;
         };
-
-        ZipTool m_zip_tool;
         bool m_needs_nuspec_data = false;
         bool m_needs_zip_file = false;
 
-        const Filesystem& m_fs;
+        CleanPackages m_clean_packages;
 
         BGMessageSink m_bg_msg_sink;
         BackgroundWorkQueue<ActionToPush> m_actions_to_push;
