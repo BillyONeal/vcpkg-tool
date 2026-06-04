@@ -643,24 +643,15 @@ namespace
         bool m_use_nuget_cache;
     };
 
-    struct NugetBaseBinaryProvider
+    struct NugetReadBinaryProvider : IReadBinaryProvider
     {
-        NugetBaseBinaryProvider(const NuGetTool& tool, StringView nuget_prefix)
-            : m_cmd(tool), m_nuget_prefix(nuget_prefix.to_string())
+        NugetReadBinaryProvider(const NuGetTool& tool, StringView nuget_prefix, NuGetSource src)
+            : m_cmd(tool), m_nuget_prefix(nuget_prefix.to_string()), m_src(std::move(src))
         {
         }
 
         NuGetTool m_cmd;
         std::string m_nuget_prefix;
-    };
-
-    struct NugetReadBinaryProvider : IReadBinaryProvider, private NugetBaseBinaryProvider
-    {
-        NugetReadBinaryProvider(const NugetBaseBinaryProvider& base, NuGetSource src)
-            : NugetBaseBinaryProvider(base), m_src(std::move(src))
-        {
-        }
-
         NuGetSource m_src;
 
         static std::string generate_packages_config(View<FeedReference> refs)
@@ -739,13 +730,15 @@ namespace
         }
     };
 
-    struct NugetBinaryPushProvider : IWriteBinaryProvider, private NugetBaseBinaryProvider
+    struct NugetBinaryPushProvider : IWriteBinaryProvider
     {
-        NugetBinaryPushProvider(const NugetBaseBinaryProvider& base, NuGetSource src)
-            : NugetBaseBinaryProvider(base), m_src(std::move(src))
+        NugetBinaryPushProvider(const NuGetTool& tool, StringView nuget_prefix, NuGetSource src)
+            : m_cmd(tool), m_nuget_prefix(nuget_prefix.to_string()), m_src(std::move(src))
         {
         }
 
+        NuGetTool m_cmd;
+        std::string m_nuget_prefix;
         NuGetSource m_src;
 
         bool needs_nuspec_data() const override { return true; }
@@ -2012,19 +2005,17 @@ namespace vcpkg
                 return true;
             };
 
-            std::unique_ptr<NugetBaseBinaryProvider> nuget_base;
-            auto ensure_nuget_base = [&]() -> bool {
-                if (!nuget_base)
+            std::unique_ptr<NuGetTool> nuget_tool;
+            auto ensure_nuget_tool = [&]() -> bool {
+                if (!nuget_tool)
                 {
                     auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
                     if (auto* nuget_tools = maybe_nuget_tools.get())
                     {
-                        nuget_base =
-                            std::make_unique<NugetBaseBinaryProvider>(NuGetTool(std::move(*nuget_tools),
-                                                                                parsed->nuget_timeout,
-                                                                                parsed->nuget_interactive,
-                                                                                args.use_nuget_cache.value_or(false)),
-                                                                      m_config.nuget_prefix);
+                        nuget_tool = std::make_unique<NuGetTool>(std::move(*nuget_tools),
+                                                                  parsed->nuget_timeout,
+                                                                  parsed->nuget_interactive,
+                                                                  args.use_nuget_cache.value_or(false));
                     }
                     else
                     {
@@ -2065,36 +2056,36 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::NuGet:
                     {
-                        if (!ensure_nuget_base()) return false;
+                        if (!ensure_nuget_tool()) return false;
                         const auto& source = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         if (installs_read(provider.access))
                         {
                             m_config.read.push_back(std::make_unique<NugetReadBinaryProvider>(
-                                *nuget_base, nuget_sources_arg({&source, 1})));
+                                *nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1})));
                         }
 
                         if (installs_write(provider.access))
                         {
                             m_config.write.push_back(std::make_unique<NugetBinaryPushProvider>(
-                                *nuget_base, nuget_sources_arg({&source, 1})));
+                                *nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1})));
                         }
 
                         break;
                     }
                     case BinaryCacheProviderKind::NuGetConfig:
                     {
-                        if (!ensure_nuget_base()) return false;
+                        if (!ensure_nuget_tool()) return false;
                         Path config_path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)};
                         if (installs_read(provider.access))
                         {
                             m_config.read.push_back(std::make_unique<NugetReadBinaryProvider>(
-                                *nuget_base, nuget_configfile_arg(config_path)));
+                                *nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path)));
                         }
 
                         if (installs_write(provider.access))
                         {
                             m_config.write.push_back(std::make_unique<NugetBinaryPushProvider>(
-                                *nuget_base, nuget_configfile_arg(config_path)));
+                                *nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path)));
                         }
 
                         break;
@@ -2242,7 +2233,7 @@ namespace vcpkg
 
                         break;
                     }
-                    case BinaryCacheProviderKind::None: break;
+                    case BinaryCacheProviderKind::None:
                     default: Checks::unreachable(VCPKG_LINE_INFO);
                 }
             }
