@@ -90,59 +90,6 @@ namespace
     Path files_archive_parent_path(const std::string& abi) { return Path(abi.substr(0, 2)); }
     Path files_archive_subpath(const std::string& abi) { return files_archive_parent_path(abi) / (abi + ".zip"); }
 
-    struct FilesWriteBinaryProvider : IWriteBinaryProvider
-    {
-        FilesWriteBinaryProvider(Path&& dir) : m_dir(std::move(dir)) { }
-
-        bool push_success(DiagnosticContext& context,
-                          const Filesystem& fs,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
-        {
-            const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
-            const auto archive_parent_path = m_dir / files_archive_parent_path(request.package_abi);
-            fs.create_directories(archive_parent_path, IgnoreErrors{});
-            const auto archive_path = archive_parent_path / (request.package_abi + ".zip");
-            const auto archive_temp_path = Path(fmt::format("{}.{}", archive_path.native(), get_process_id()));
-            std::error_code ec;
-            if (request.unique_write_provider)
-            {
-                fs.rename_or_delete(zip_path, archive_path, ec);
-            }
-
-            if (!request.unique_write_provider || (ec && ec == std::make_error_condition(std::errc::cross_device_link)))
-            {
-                // either we need to make a copy or the rename failed because packages and the binary
-                // cache write target are on different filesystems, copy to a sibling in that directory and rename
-                // into place
-                // First copy to temporary location to avoid race between different vcpkg instances trying to upload
-                // the same archive, e.g. if 2 machines try to upload to a shared binary cache.
-                fs.copy_file(zip_path, archive_temp_path, CopyOptions::overwrite_existing, ec);
-                if (!ec)
-                {
-                    fs.rename_or_delete(archive_temp_path, archive_path, ec);
-                }
-            }
-
-            if (ec)
-            {
-                context.report(DiagnosticLine{DiagKind::Warning,
-                                              msg::format(msgFailedToStoreBinaryCache, msg::path = archive_path)
-                                                  .append_raw('\n')
-                                                  .append_raw(ec.message())});
-                return false;
-            }
-
-            return true;
-        }
-
-        bool needs_nuspec_data() const override { return false; }
-        bool needs_zip_file() const override { return true; }
-
-    private:
-        Path m_dir;
-    };
-
     enum class RemoveWhen
     {
         nothing,
@@ -160,8 +107,8 @@ namespace
     // This middleware class contains logic for BinaryProviders that operate on zip files.
     // Derived classes must implement:
     // - acquire_zips()
-    // - IReadBinaryProvider::precheck()
-    struct ZipReadBinaryProvider : IReadBinaryProvider
+    // - IBinaryProvider::precheck()
+    struct ZipReadBinaryProvider : IBinaryProvider
     {
         struct UnzipJob
         {
@@ -247,6 +194,8 @@ namespace
         // Leaving an Optional disengaged indicates that the cache does not contain the requested zip.
         //
         // Note that as this API can't fail, only warnings or lower will be emitted to `context`.
+        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
+
         virtual void acquire_zips(DiagnosticContext& context,
                                   const Filesystem& fs,
                                   const Path& packages,
@@ -254,9 +203,9 @@ namespace
                                   Span<Optional<ZipResource>> out_zips) const = 0;
     };
 
-    struct FilesReadBinaryProvider : ZipReadBinaryProvider
+    struct FilesBinaryProvider : ZipReadBinaryProvider
     {
-        explicit FilesReadBinaryProvider(Path&& dir) : m_dir(std::move(dir)) { }
+        explicit FilesBinaryProvider(Path&& dir) : m_dir(std::move(dir)) { }
 
         void acquire_zips(DiagnosticContext&,
                           const Filesystem& fs,
@@ -282,18 +231,13 @@ namespace
         {
             for (size_t idx = 0; idx < actions.size(); ++idx)
             {
-                const auto& action = *actions[idx];
-                const auto& abi_tag = action.package_abi_or_exit(VCPKG_LINE_INFO);
-
-                bool any_available = false;
-                if (fs.exists(m_dir / files_archive_subpath(abi_tag), IgnoreErrors{}))
-                {
-                    any_available = true;
-                }
-
-                cache_status[idx] = any_available ? CacheAvailability::available : CacheAvailability::unavailable;
+                const auto& abi_tag = actions[idx]->package_abi_or_exit(VCPKG_LINE_INFO);
+                cache_status[idx] = fs.exists(m_dir / files_archive_subpath(abi_tag), IgnoreErrors{})
+                                        ? CacheAvailability::available
+                                        : CacheAvailability::unavailable;
             }
         }
+
         LocalizedString restored_message(size_t count,
                                          std::chrono::high_resolution_clock::duration elapsed) const override
         {
@@ -303,37 +247,54 @@ namespace
                                msg::path = m_dir);
         }
 
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem& fs,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
+        {
+            const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
+            const auto archive_parent_path = m_dir / files_archive_parent_path(request.package_abi);
+            fs.create_directories(archive_parent_path, IgnoreErrors{});
+            const auto archive_path = archive_parent_path / (request.package_abi + ".zip");
+            const auto archive_temp_path = Path(fmt::format("{}.{}", archive_path.native(), get_process_id()));
+            std::error_code ec;
+            if (request.unique_write_provider)
+            {
+                fs.rename_or_delete(zip_path, archive_path, ec);
+            }
+
+            if (!request.unique_write_provider || (ec && ec == std::make_error_condition(std::errc::cross_device_link)))
+            {
+                // either we need to make a copy or the rename failed because packages and the binary
+                // cache write target are on different filesystems, copy to a sibling in that directory and rename
+                // into place
+                // First copy to temporary location to avoid race between different vcpkg instances trying to upload
+                // the same archive, e.g. if 2 machines try to upload to a shared binary cache.
+                fs.copy_file(zip_path, archive_temp_path, CopyOptions::overwrite_existing, ec);
+                if (!ec)
+                {
+                    fs.rename_or_delete(archive_temp_path, archive_path, ec);
+                }
+            }
+
+            if (ec)
+            {
+                context.report(DiagnosticLine{DiagKind::Warning,
+                                              msg::format(msgFailedToStoreBinaryCache, msg::path = archive_path)
+                                                  .append_raw('\n')
+                                                  .append_raw(ec.message())});
+                return false;
+            }
+
+            return true;
+        }
+
     private:
         Path m_dir;
     };
 
-    struct HTTPPutBinaryProvider : IWriteBinaryProvider
-    {
-        HTTPPutBinaryProvider(UrlTemplate&& url, const std::vector<std::string>& secrets)
-            : m_url(std::move(url)), m_secrets(secrets)
-        {
-        }
-
-        bool push_success(DiagnosticContext& context,
-                          const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
-        {
-            if (!request.zip_path) return false;
-            const auto& zip_path = *request.zip_path.get();
-            auto url = m_url.instantiate_variables(request);
-            WarningDiagnosticContext wdc{context};
-            return store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url.headers, zip_path);
-        }
-
-        bool needs_nuspec_data() const override { return false; }
-        bool needs_zip_file() const override { return true; }
-
-    private:
-        UrlTemplate m_url;
-        std::vector<std::string> m_secrets;
-    };
-
+    // Abstract base class for HTTP-based binary providers.
+    // Derived classes must implement push_success and archive_format.
     struct HttpGetBinaryProvider : ZipReadBinaryProvider
     {
         HttpGetBinaryProvider(UrlTemplate&& url_template, const std::vector<std::string>& secrets)
@@ -401,10 +362,33 @@ namespace
         std::vector<std::string> m_secrets;
     };
 
-    struct AzureBlobPutBinaryProvider : IWriteBinaryProvider
+    struct HttpBinaryProvider : HttpGetBinaryProvider
     {
-        AzureBlobPutBinaryProvider(UrlTemplate&& url, const std::vector<std::string>& secrets)
-            : m_url(std::move(url)), m_secrets(secrets)
+        HttpBinaryProvider(UrlTemplate&& url_template, const std::vector<std::string>& secrets)
+            : HttpGetBinaryProvider(std::move(url_template), secrets)
+        {
+        }
+
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem&,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
+        {
+            if (!request.zip_path) return false;
+            const auto& zip_path = *request.zip_path.get();
+            auto url = m_url_template.instantiate_variables(request);
+            WarningDiagnosticContext wdc{context};
+            return store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url_template.headers, zip_path);
+        }
+
+    };
+
+    struct AzureBlobBinaryProvider : HttpGetBinaryProvider
+    {
+        AzureBlobBinaryProvider(UrlTemplate&& url_template,
+                                const std::vector<std::string>& secrets,
+                                std::vector<std::string> write_headers)
+            : HttpGetBinaryProvider(std::move(url_template), secrets), m_write_headers(std::move(write_headers))
         {
         }
 
@@ -426,17 +410,13 @@ namespace
             bool use_azcopy = file_size > max_single_write;
 
             WarningDiagnosticContext wdc{context};
-            auto url = m_url.instantiate_variables(request);
+            auto url = m_url_template.instantiate_variables(request);
             return use_azcopy ? azcopy_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, zip_path)
-                              : store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url.headers, zip_path);
+                              : store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_write_headers, zip_path);
         }
 
-        bool needs_nuspec_data() const override { return false; }
-        bool needs_zip_file() const override { return true; }
-
     private:
-        UrlTemplate m_url;
-        std::vector<std::string> m_secrets;
+        std::vector<std::string> m_write_headers;
     };
 
     struct NuGetSource
@@ -643,9 +623,9 @@ namespace
         bool m_use_nuget_cache;
     };
 
-    struct NugetReadBinaryProvider : IReadBinaryProvider
+    struct NugetBinaryProvider : IBinaryProvider
     {
-        NugetReadBinaryProvider(const NuGetTool& tool, StringView nuget_prefix, NuGetSource src)
+        NugetBinaryProvider(const NuGetTool& tool, StringView nuget_prefix, NuGetSource src)
             : m_cmd(tool), m_nuget_prefix(nuget_prefix.to_string()), m_src(std::move(src))
         {
         }
@@ -728,21 +708,8 @@ namespace
                 }
             }
         }
-    };
 
-    struct NugetBinaryPushProvider : IWriteBinaryProvider
-    {
-        NugetBinaryPushProvider(const NuGetTool& tool, StringView nuget_prefix, NuGetSource src)
-            : m_cmd(tool), m_nuget_prefix(nuget_prefix.to_string()), m_src(std::move(src))
-        {
-        }
-
-        NuGetTool m_cmd;
-        std::string m_nuget_prefix;
-        NuGetSource m_src;
-
-        bool needs_nuspec_data() const override { return true; }
-        bool needs_zip_file() const override { return false; }
+        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::NuPkg; }
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem& fs,
@@ -794,10 +761,10 @@ namespace
         virtual bool upload_file(DiagnosticContext& context, StringView object, const Path& archive) const = 0;
     };
 
-    struct ObjectStorageProvider : ZipReadBinaryProvider
+    struct ObjectStorageBinaryProvider : ZipReadBinaryProvider
     {
-        ObjectStorageProvider(std::string&& prefix, const std::shared_ptr<const IObjectStorageTool>& tool)
-            : m_prefix(std::move(prefix)), m_tool(tool)
+        ObjectStorageBinaryProvider(std::string&& prefix, std::shared_ptr<const IObjectStorageTool> tool)
+            : m_prefix(std::move(prefix)), m_tool(std::move(tool))
         {
         }
 
@@ -857,21 +824,6 @@ namespace
             return m_tool->restored_message(count, elapsed);
         }
 
-        std::string m_prefix;
-        std::shared_ptr<const IObjectStorageTool> m_tool;
-    };
-    struct ObjectStoragePushProvider : IWriteBinaryProvider
-    {
-        ObjectStoragePushProvider(std::string&& prefix, std::shared_ptr<const IObjectStorageTool> tool)
-            : m_prefix(std::move(prefix)), m_tool(std::move(tool))
-        {
-        }
-
-        static std::string make_object_path(const std::string& prefix, const std::string& abi)
-        {
-            return Strings::concat(prefix, abi, ".zip");
-        }
-
         bool push_success(DiagnosticContext& context,
                           const Filesystem&,
                           const Path&,
@@ -886,16 +838,13 @@ namespace
             return false;
         }
 
-        bool needs_nuspec_data() const override { return false; }
-        bool needs_zip_file() const override { return true; }
-
         std::string m_prefix;
         std::shared_ptr<const IObjectStorageTool> m_tool;
     };
 
-    struct AzCopyStorageProvider : ZipReadBinaryProvider
+    struct AzCopyBinaryProvider : ZipReadBinaryProvider
     {
-        AzCopyStorageProvider(AzCopyUrl&& az_url, const Path& tool) : m_url(std::move(az_url)), m_tool(tool) { }
+        AzCopyBinaryProvider(AzCopyUrl&& az_url, const Path& tool) : m_url(std::move(az_url)), m_tool(tool) { }
 
         // Batch the azcopy arguments to fit within the maximum allowed command line length.
         static std::vector<std::vector<std::string>> batch_azcopy_args(const std::vector<std::string>& abis,
@@ -1033,14 +982,14 @@ namespace
                 msgRestoredPackagesFromAzureStorage, msg::count = count, msg::elapsed = ElapsedTime(elapsed));
         }
 
-        AzCopyUrl m_url;
-        Path m_tool;
-    };
-    struct AzCopyStoragePushProvider : IWriteBinaryProvider
-    {
-        AzCopyStoragePushProvider(AzCopyUrl&& container, const Path& tool)
-            : m_container(std::move(container)), m_tool(tool)
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem&,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
         {
+            const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
+            WarningDiagnosticContext wdc{context};
+            return upload_file(wdc, m_url.make_object_path(request.package_abi), zip_path);
         }
 
         bool upload_file(DiagnosticContext& context, StringView url, const Path& archive) const
@@ -1058,20 +1007,7 @@ namespace
             return check_zero_exit_code(context, cmd, maybe_code_and_output);
         }
 
-        bool push_success(DiagnosticContext& context,
-                          const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
-        {
-            const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
-            WarningDiagnosticContext wdc{context};
-            return upload_file(wdc, m_container.make_object_path(request.package_abi), zip_path);
-        }
-
-        bool needs_nuspec_data() const override { return false; }
-        bool needs_zip_file() const override { return true; }
-
-        AzCopyUrl m_container;
+        AzCopyUrl m_url;
         Path m_tool;
     };
 
@@ -1345,37 +1281,9 @@ namespace
         Path az_cli;
     };
 
-    struct AzureUpkgPutBinaryProvider : public IWriteBinaryProvider
+    struct AzureUpkgBinaryProvider : ZipReadBinaryProvider
     {
-        AzureUpkgPutBinaryProvider(const Path& tool_path, AzureUpkgSource&& source)
-            : m_azure_tool(tool_path), m_source(std::move(source))
-        {
-        }
-
-        bool push_success(DiagnosticContext& context,
-                          const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
-        {
-            auto ref = make_feedref(request, "");
-            std::string package_description = "Cached package for " + ref.id;
-
-            const Path& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
-            WarningDiagnosticContext wdc{context};
-            return m_azure_tool.publish(wdc, m_source, ref.id, ref.version, zip_path, package_description);
-        }
-
-        bool needs_nuspec_data() const override { return false; }
-        bool needs_zip_file() const override { return true; }
-
-    private:
-        AzureUpkgTool m_azure_tool;
-        AzureUpkgSource m_source;
-    };
-
-    struct AzureUpkgGetBinaryProvider : public ZipReadBinaryProvider
-    {
-        AzureUpkgGetBinaryProvider(const Path& azcli_path, AzureUpkgSource&& source)
+        AzureUpkgBinaryProvider(const Path& azcli_path, AzureUpkgSource&& source)
             : m_azure_tool(azcli_path), m_source(std::move(source))
         {
         }
@@ -1422,6 +1330,19 @@ namespace
                     fs.remove_all(temp_dir, IgnoreErrors{});
                 }
             }
+        }
+
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem&,
+                          const Path&,
+                          const BinaryPackageWriteInfo& request) override
+        {
+            auto ref = make_feedref(request, "");
+            std::string package_description = "Cached package for " + ref.id;
+
+            const Path& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
+            WarningDiagnosticContext wdc{context};
+            return m_azure_tool.publish(wdc, m_source, ref.id, ref.version, zip_path, package_description);
         }
 
     private:
@@ -1671,8 +1592,10 @@ namespace vcpkg
         std::vector<const InstallPlanAction*> action_ptrs;
         std::vector<RestoreResult> restores;
         std::vector<CacheStatus*> statuses;
-        for (auto&& provider : m_config.read)
+        for (auto&& entry : m_config.entries)
         {
+            if (entry.access != CacheAccessControl::Read && entry.access != CacheAccessControl::ReadWrite) continue;
+            auto* provider = entry.provider.get();
             action_ptrs.clear();
             restores.clear();
             statuses.clear();
@@ -1681,7 +1604,7 @@ namespace vcpkg
                 if (auto abi = actions[i].package_abi())
                 {
                     CacheStatus& status = m_status[*abi];
-                    if (status.should_attempt_restore(provider.get()))
+                    if (status.should_attempt_restore(provider))
                     {
                         action_ptrs.push_back(&actions[i]);
                         restores.push_back(RestoreResult::unavailable);
@@ -1698,7 +1621,7 @@ namespace vcpkg
             {
                 if (restores[i] == RestoreResult::unavailable)
                 {
-                    statuses[i]->mark_unavailable(provider.get());
+                    statuses[i]->mark_unavailable(provider);
                 }
                 else
                 {
@@ -1721,9 +1644,9 @@ namespace vcpkg
         return false;
     }
 
-    void ReadOnlyBinaryCache::install_read_provider(std::unique_ptr<IReadBinaryProvider>&& provider)
+    void ReadOnlyBinaryCache::install_provider(CacheAccessControl access, std::unique_ptr<IBinaryProvider>&& provider)
     {
-        m_config.read.push_back(std::move(provider));
+        m_config.entries.push_back({access, std::move(provider)});
     }
 
     void ReadOnlyBinaryCache::mark_all_unrestored()
@@ -1745,14 +1668,16 @@ namespace vcpkg
         std::vector<const InstallPlanAction*> action_ptrs;
         std::vector<CacheAvailability> cache_result;
         std::vector<size_t> indexes;
-        for (auto&& provider : m_config.read)
+        for (auto&& entry : m_config.entries)
         {
+            if (entry.access != CacheAccessControl::Read && entry.access != CacheAccessControl::ReadWrite) continue;
+            auto* provider = entry.provider.get();
             action_ptrs.clear();
             cache_result.clear();
             indexes.clear();
             for (size_t i = 0; i < actions.size(); ++i)
             {
-                if (statuses[i]->should_attempt_precheck(provider.get()))
+                if (statuses[i]->should_attempt_precheck(provider))
                 {
                     action_ptrs.push_back(actions[i]);
                     cache_result.push_back(CacheAvailability::unknown);
@@ -1767,11 +1692,11 @@ namespace vcpkg
             {
                 if (cache_result[i] == CacheAvailability::available)
                 {
-                    statuses[i]->mark_available(provider.get());
+                    statuses[i]->mark_available(provider);
                 }
                 else if (cache_result[i] == CacheAvailability::unavailable)
                 {
-                    statuses[i]->mark_unavailable(provider.get());
+                    statuses[i]->mark_unavailable(provider);
                 }
             }
         }
@@ -2013,9 +1938,9 @@ namespace vcpkg
                     if (auto* nuget_tools = maybe_nuget_tools.get())
                     {
                         nuget_tool = std::make_unique<NuGetTool>(std::move(*nuget_tools),
-                                                                  parsed->nuget_timeout,
-                                                                  parsed->nuget_interactive,
-                                                                  args.use_nuget_cache.value_or(false));
+                                                                 parsed->nuget_timeout,
+                                                                 parsed->nuget_interactive,
+                                                                 args.use_nuget_cache.value_or(false));
                     }
                     else
                     {
@@ -2026,13 +1951,6 @@ namespace vcpkg
                 return true;
             };
 
-            auto installs_read = [](CacheAccessControl access) {
-                return access == CacheAccessControl::Read || access == CacheAccessControl::ReadWrite;
-            };
-            auto installs_write = [](CacheAccessControl access) {
-                return access == CacheAccessControl::Write || access == CacheAccessControl::ReadWrite;
-            };
-
             for (const auto& provider : parsed->providers)
             {
                 switch (provider.kind)
@@ -2040,54 +1958,29 @@ namespace vcpkg
                     case BinaryCacheProviderKind::Files:
                     {
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(std::make_unique<FilesReadBinaryProvider>(
-                                Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)}));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(std::make_unique<FilesWriteBinaryProvider>(
-                                Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)}));
-                        }
-
+                        m_config.entries.push_back({provider.access,
+                                                    std::make_unique<FilesBinaryProvider>(
+                                                        Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)})});
                         break;
                     }
                     case BinaryCacheProviderKind::NuGet:
                     {
                         if (!ensure_nuget_tool()) return false;
                         const auto& source = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(std::make_unique<NugetReadBinaryProvider>(
-                                *nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1})));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(std::make_unique<NugetBinaryPushProvider>(
-                                *nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1})));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access,
+                             std::make_unique<NugetBinaryProvider>(
+                                 *nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1}))});
                         break;
                     }
                     case BinaryCacheProviderKind::NuGetConfig:
                     {
                         if (!ensure_nuget_tool()) return false;
                         Path config_path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)};
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(std::make_unique<NugetReadBinaryProvider>(
-                                *nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path)));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(std::make_unique<NugetBinaryPushProvider>(
-                                *nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path)));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access,
+                             std::make_unique<NugetBinaryProvider>(
+                                 *nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path))});
                         break;
                     }
                     case BinaryCacheProviderKind::Http:
@@ -2099,18 +1992,8 @@ namespace vcpkg
                         }
 
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(
-                                std::make_unique<HttpGetBinaryProvider>(UrlTemplate{url_template}, secrets));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(
-                                std::make_unique<HTTPPutBinaryProvider>(std::move(url_template), secrets));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access, std::make_unique<HttpBinaryProvider>(std::move(url_template), secrets)});
                         break;
                     }
                     case BinaryCacheProviderKind::AzBlob:
@@ -2119,20 +2002,12 @@ namespace vcpkg
                         AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
                                          provider.arg2.value_or_exit(VCPKG_LINE_INFO)};
                         UrlTemplate url_template{az_url.make_object_path("{sha}")};
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(
-                                std::make_unique<HttpGetBinaryProvider>(UrlTemplate{url_template}, secrets));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            auto headers = azure_blob_headers();
-                            url_template.headers.assign(headers.begin(), headers.end());
-                            m_config.write.push_back(
-                                std::make_unique<AzureBlobPutBinaryProvider>(std::move(url_template), secrets));
-                        }
-
+                        auto headers = azure_blob_headers();
+                        m_config.entries.push_back({provider.access,
+                                                    std::make_unique<AzureBlobBinaryProvider>(
+                                                        std::move(url_template),
+                                                        secrets,
+                                                        std::vector<std::string>(headers.begin(), headers.end()))});
                         break;
                     }
                     case BinaryCacheProviderKind::AzCopy:
@@ -2141,18 +2016,8 @@ namespace vcpkg
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_azcopy_tool()) return false;
                         AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO), provider.arg2.value_or("")};
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(
-                                std::make_unique<AzCopyStorageProvider>(AzCopyUrl{az_url}, azcopy_tool));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(
-                                std::make_unique<AzCopyStoragePushProvider>(std::move(az_url), azcopy_tool));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access, std::make_unique<AzCopyBinaryProvider>(std::move(az_url), azcopy_tool)});
                         break;
                     }
                     case BinaryCacheProviderKind::GCS:
@@ -2160,18 +2025,9 @@ namespace vcpkg
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_gcs_tool()) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(
-                                std::make_unique<ObjectStorageProvider>(std::string{prefix}, gcs_tool));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(
-                                std::make_unique<ObjectStoragePushProvider>(std::string{prefix}, gcs_tool));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access,
+                             std::make_unique<ObjectStorageBinaryProvider>(std::string{prefix}, gcs_tool)});
                         break;
                     }
                     case BinaryCacheProviderKind::AWS:
@@ -2179,18 +2035,9 @@ namespace vcpkg
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_aws_tool()) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(
-                                std::make_unique<ObjectStorageProvider>(std::string{prefix}, aws_tool));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(
-                                std::make_unique<ObjectStoragePushProvider>(std::string{prefix}, aws_tool));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access,
+                             std::make_unique<ObjectStorageBinaryProvider>(std::string{prefix}, aws_tool)});
                         break;
                     }
                     case BinaryCacheProviderKind::COS:
@@ -2198,18 +2045,9 @@ namespace vcpkg
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
                         if (!ensure_cos_tool()) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(
-                                std::make_unique<ObjectStorageProvider>(std::string{prefix}, cos_tool));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(
-                                std::make_unique<ObjectStoragePushProvider>(std::string{prefix}, cos_tool));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access,
+                             std::make_unique<ObjectStorageBinaryProvider>(std::string{prefix}, cos_tool)});
                         break;
                     }
                     case BinaryCacheProviderKind::AzUniversal:
@@ -2219,18 +2057,9 @@ namespace vcpkg
                         AzureUpkgSource source{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
                                                provider.arg2.value_or_exit(VCPKG_LINE_INFO),
                                                provider.arg3.value_or_exit(VCPKG_LINE_INFO)};
-                        if (installs_read(provider.access))
-                        {
-                            m_config.read.push_back(
-                                std::make_unique<AzureUpkgGetBinaryProvider>(azcli_tool, AzureUpkgSource{source}));
-                        }
-
-                        if (installs_write(provider.access))
-                        {
-                            m_config.write.push_back(
-                                std::make_unique<AzureUpkgPutBinaryProvider>(azcli_tool, std::move(source)));
-                        }
-
+                        m_config.entries.push_back(
+                            {provider.access,
+                             std::make_unique<AzureUpkgBinaryProvider>(azcli_tool, std::move(source))});
                         break;
                     }
                     case BinaryCacheProviderKind::None:
@@ -2239,8 +2068,14 @@ namespace vcpkg
             }
         }
 
-        m_needs_nuspec_data = Util::any_of(m_config.write, [](auto&& p) { return p->needs_nuspec_data(); });
-        m_needs_zip_file = Util::any_of(m_config.write, [](auto&& p) { return p->needs_zip_file(); });
+        m_needs_nuspec_data = Util::any_of(m_config.entries, [](const BinaryProviders::Entry& e) {
+            return (e.access == CacheAccessControl::Write || e.access == CacheAccessControl::ReadWrite) &&
+                   e.provider->archive_format() == CacheArchiveFormat::NuPkg;
+        });
+        m_needs_zip_file = Util::any_of(m_config.entries, [](const BinaryProviders::Entry& e) {
+            return (e.access == CacheAccessControl::Write || e.access == CacheAccessControl::ReadWrite) &&
+                   e.provider->archive_format() == CacheArchiveFormat::Zip;
+        });
         return true;
     }
     BinaryCache::BinaryCache(const Filesystem& fs, Path packages)
@@ -2271,7 +2106,14 @@ namespace vcpkg
                 m_status.erase(it);
             }
 
-            if (!restored && !m_config.write.empty())
+            size_t write_provider_count = 0;
+            for (auto&& e : m_config.entries)
+            {
+                if (e.access == CacheAccessControl::Write || e.access == CacheAccessControl::ReadWrite)
+                    ++write_provider_count;
+            }
+
+            if (!restored && write_provider_count != 0)
             {
                 ElapsedTimer timer;
                 BinaryPackageWriteInfo request{action};
@@ -2282,7 +2124,7 @@ namespace vcpkg
                         generate_nuspec(request.package_dir, action, m_config.nuget_prefix, m_config.nuget_repo);
                 }
 
-                if (m_config.write.size() == 1)
+                if (write_provider_count == 1)
                 {
                     request.unique_write_provider = true;
                 }
@@ -2290,7 +2132,7 @@ namespace vcpkg
                 m_synchronizer.add_submitted();
                 msg::println(msg::format(msgSubmittingBinaryCacheBackground,
                                          msg::spec = action.display_name(),
-                                         msg::count = m_config.write.size()));
+                                         msg::count = write_provider_count));
                 m_actions_to_push.push(ActionToPush{std::move(request), clean_packages});
                 return;
             }
@@ -2341,12 +2183,13 @@ namespace vcpkg
                 }
 
                 size_t num_destinations = 0;
-                for (auto&& provider : m_config.write)
+                for (auto&& entry : m_config.entries)
                 {
+                    if (entry.access == CacheAccessControl::Read) continue;
                     // skip pushing to providers that need zips if making the zip above failed
-                    if (!provider->needs_zip_file() || action_to_push.request.zip_path.has_value())
+                    if (entry.provider->archive_format() != CacheArchiveFormat::Zip || action_to_push.request.zip_path.has_value())
                     {
-                        num_destinations += provider->push_success(pdc, m_fs, m_packages, action_to_push.request);
+                        num_destinations += entry.provider->push_success(pdc, m_fs, m_packages, action_to_push.request);
                     }
                 }
 
@@ -2375,7 +2218,7 @@ namespace vcpkg
         }
     }
 
-    bool CacheStatus::should_attempt_precheck(const IReadBinaryProvider* sender) const noexcept
+    bool CacheStatus::should_attempt_precheck(const IBinaryProvider* sender) const noexcept
     {
         switch (m_status)
         {
@@ -2386,7 +2229,7 @@ namespace vcpkg
         }
     }
 
-    bool CacheStatus::should_attempt_restore(const IReadBinaryProvider* sender) const noexcept
+    bool CacheStatus::should_attempt_restore(const IBinaryProvider* sender) const noexcept
     {
         switch (m_status)
         {
@@ -2397,21 +2240,21 @@ namespace vcpkg
         }
     }
 
-    bool CacheStatus::is_unavailable(const IReadBinaryProvider* sender) const noexcept
+    bool CacheStatus::is_unavailable(const IBinaryProvider* sender) const noexcept
     {
         return Util::Vectors::contains(m_known_unavailable_providers, sender);
     }
 
     bool CacheStatus::is_restored() const noexcept { return m_status == CacheStatusState::restored; }
 
-    void CacheStatus::mark_unavailable(const IReadBinaryProvider* sender)
+    void CacheStatus::mark_unavailable(const IBinaryProvider* sender)
     {
         if (!Util::Vectors::contains(m_known_unavailable_providers, sender))
         {
             m_known_unavailable_providers.push_back(sender);
         }
     }
-    void CacheStatus::mark_available(const IReadBinaryProvider* sender) noexcept
+    void CacheStatus::mark_available(const IBinaryProvider* sender) noexcept
     {
         switch (m_status)
         {
@@ -2444,7 +2287,7 @@ namespace vcpkg
         }
     }
 
-    const IReadBinaryProvider* CacheStatus::get_available_provider() const noexcept
+    const IBinaryProvider* CacheStatus::get_available_provider() const noexcept
     {
         switch (m_status)
         {

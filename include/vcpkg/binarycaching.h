@@ -30,15 +30,15 @@ namespace vcpkg
 {
     struct CacheStatus
     {
-        bool should_attempt_precheck(const IReadBinaryProvider* sender) const noexcept;
-        bool should_attempt_restore(const IReadBinaryProvider* sender) const noexcept;
+        bool should_attempt_precheck(const IBinaryProvider* sender) const noexcept;
+        bool should_attempt_restore(const IBinaryProvider* sender) const noexcept;
 
-        bool is_unavailable(const IReadBinaryProvider* sender) const noexcept;
-        const IReadBinaryProvider* get_available_provider() const noexcept;
+        bool is_unavailable(const IBinaryProvider* sender) const noexcept;
+        const IBinaryProvider* get_available_provider() const noexcept;
         bool is_restored() const noexcept;
 
-        void mark_unavailable(const IReadBinaryProvider* sender);
-        void mark_available(const IReadBinaryProvider* sender) noexcept;
+        void mark_unavailable(const IBinaryProvider* sender);
+        void mark_available(const IBinaryProvider* sender) noexcept;
         void mark_restored() noexcept;
         void mark_unrestored() noexcept;
 
@@ -47,10 +47,10 @@ namespace vcpkg
 
         // The set of providers who know they do not have the associated cache entry.
         // Flat vector set because N is tiny.
-        std::vector<const IReadBinaryProvider*> m_known_unavailable_providers;
+        std::vector<const IBinaryProvider*> m_known_unavailable_providers;
 
         // The provider who affirmatively has the associated cache entry.
-        const IReadBinaryProvider* m_available_provider = nullptr; // meaningful iff m_status == available
+        const IBinaryProvider* m_available_provider = nullptr; // meaningful iff m_status == available
     };
 
     struct BinaryPackageReadInfo
@@ -76,26 +76,15 @@ namespace vcpkg
         Optional<Path> zip_path;
     };
 
-    struct IWriteBinaryProvider
-    {
-        virtual ~IWriteBinaryProvider() = default;
-
-        /// Called upon a successful build of `action` to store those contents in the binary cache.
-        /// returns true if the upload succeeded
-        ///
-        /// Note that as this is considered non-fatal, only warnings or lower will be emitted to `context`.
-        virtual bool push_success(DiagnosticContext& context,
-                                  const Filesystem& fs,
-                                  const Path& packages,
-                                  const BinaryPackageWriteInfo& request) = 0;
-
-        virtual bool needs_nuspec_data() const = 0;
-        virtual bool needs_zip_file() const = 0;
+    enum class CacheArchiveFormat {
+        None,
+        Zip,
+        NuPkg,
     };
 
-    struct IReadBinaryProvider
+    struct IBinaryProvider
     {
-        virtual ~IReadBinaryProvider() = default;
+        virtual ~IBinaryProvider() = default;
 
         /// Gives the IBinaryProvider an opportunity to batch any downloading or server communication for executing
         /// `actions`. Note that as this API can't fail, only warnings or lower will be emitted to `context`.
@@ -124,6 +113,17 @@ namespace vcpkg
 
         virtual LocalizedString restored_message(size_t count,
                                                  std::chrono::high_resolution_clock::duration elapsed) const = 0;
+
+        /// Called upon a successful build of `action` to store those contents in the binary cache.
+        /// returns true if the upload succeeded
+        ///
+        /// Note that as this is considered non-fatal, only warnings or lower will be emitted to `context`.
+        virtual bool push_success(DiagnosticContext& context,
+                                  const Filesystem& fs,
+                                  const Path& packages,
+                                  const BinaryPackageWriteInfo& request) = 0;
+
+        virtual CacheArchiveFormat archive_format() const = 0;
     };
 
     struct UrlTemplate
@@ -218,8 +218,12 @@ namespace vcpkg
 
     struct BinaryProviders
     {
-        std::vector<std::unique_ptr<IReadBinaryProvider>> read;
-        std::vector<std::unique_ptr<IWriteBinaryProvider>> write;
+        struct Entry
+        {
+            CacheAccessControl access;
+            std::unique_ptr<IBinaryProvider> provider;
+        };
+        std::vector<Entry> entries;
         std::string nuget_prefix;
         NuGetRepoInfo nuget_repo;
     };
@@ -236,7 +240,7 @@ namespace vcpkg
 
         bool is_restored(const InstallPlanAction& ipa) const;
 
-        void install_read_provider(std::unique_ptr<IReadBinaryProvider>&& provider);
+        void install_provider(CacheAccessControl access, std::unique_ptr<IBinaryProvider>&& provider);
 
         /// Checks whether the `actions` are present in the cache, without restoring them. Used by CI to determine
         /// missing packages.

@@ -45,8 +45,7 @@ namespace vcpkg
         ReadWrite,
     };
 
-    struct IReadBinaryProvider;
-    struct IWriteBinaryProvider;
+    struct IBinaryProvider;
     struct BinaryCache;
     struct CacheStatus;
     struct BinaryPackageReadInfo;

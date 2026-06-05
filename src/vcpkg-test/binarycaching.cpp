@@ -11,7 +11,7 @@
 
 using namespace vcpkg;
 
-struct KnowNothingBinaryProvider : IReadBinaryProvider
+struct KnowNothingBinaryProvider : IBinaryProvider
 {
     void fetch(DiagnosticContext&,
                const Filesystem& fs,
@@ -45,6 +45,13 @@ struct KnowNothingBinaryProvider : IReadBinaryProvider
     {
         return LocalizedString::from_raw("Nothing");
     }
+
+    bool push_success(DiagnosticContext&, const Filesystem&, const Path&, const BinaryPackageWriteInfo&) override
+    {
+        return false;
+    }
+
+    CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::None; }
 };
 
 TEST_CASE ("CacheStatus operations", "[BinaryCache]")
@@ -338,7 +345,7 @@ TEST_CASE ("Provider nullptr checks", "[BinaryCache]")
 {
     // create a binary cache to test
     ReadOnlyBinaryCache uut(always_failing_filesystem, Path{"pkgs"});
-    uut.install_read_provider(std::make_unique<KnowNothingBinaryProvider>());
+    uut.install_provider(CacheAccessControl::Read, std::make_unique<KnowNothingBinaryProvider>());
 
     // create an action plan with an action without a package ABI set
     auto pghs = Paragraphs::parse_paragraphs(R"(
