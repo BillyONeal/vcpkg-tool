@@ -1839,118 +1839,6 @@ namespace vcpkg
                 }
             }
 
-            std::shared_ptr<const GcsStorageTool> gcs_tool;
-            auto ensure_gcs_tool = [&]() -> bool {
-                if (!gcs_tool)
-                {
-                    if (auto gcs_tool_path = tools.get_tool_path(context, fs, Tools::GSUTIL))
-                    {
-                        gcs_tool = std::make_shared<GcsStorageTool>(*gcs_tool_path);
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
-            };
-
-            std::shared_ptr<const AwsStorageTool> aws_tool;
-            auto ensure_aws_tool = [&]() -> bool {
-                if (!aws_tool)
-                {
-                    if (auto aws_tool_path = tools.get_tool_path(context, fs, Tools::AWSCLI))
-                    {
-                        aws_tool = std::make_shared<AwsStorageTool>(*aws_tool_path, parsed->aws_no_sign_request);
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
-            };
-
-            std::shared_ptr<const CosStorageTool> cos_tool;
-            auto ensure_cos_tool = [&]() -> bool {
-                if (!cos_tool)
-                {
-                    if (auto cos_tool_path = tools.get_tool_path(context, fs, Tools::COSCLI))
-                    {
-                        cos_tool = std::make_shared<CosStorageTool>(*cos_tool_path);
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
-            };
-
-            Path azcopy_tool;
-            bool has_azcopy_tool = false;
-            auto ensure_azcopy_tool = [&]() -> bool {
-                if (!has_azcopy_tool)
-                {
-                    if (auto tool = tools.get_tool_path(context, fs, Tools::AZCOPY))
-                    {
-                        azcopy_tool = *tool;
-                    }
-                    else
-                    {
-                        return false;
-                    }
-
-                    has_azcopy_tool = true;
-                }
-
-                return true;
-            };
-
-            Path azcli_tool;
-            bool has_azcli_tool = false;
-            auto ensure_azcli_tool = [&]() -> bool {
-                if (!has_azcli_tool)
-                {
-                    if (auto tool = tools.get_tool_path(context, fs, Tools::AZCLI))
-                    {
-                        azcli_tool = *tool;
-                    }
-                    else
-                    {
-                        return false;
-                    }
-
-                    has_azcli_tool = true;
-                }
-
-                return true;
-            };
-
-            std::unique_ptr<NuGetTool> nuget_tool;
-            auto ensure_nuget_tool = [&]() -> bool {
-                if (!nuget_tool)
-                {
-                    auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
-                    if (auto* nuget_tools = maybe_nuget_tools.get())
-                    {
-                        nuget_tool = std::make_unique<NuGetTool>(std::move(*nuget_tools),
-                                                                 parsed->nuget_timeout,
-                                                                 parsed->nuget_interactive,
-                                                                 args.use_nuget_cache.value_or(false));
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
-            };
-
             for (const auto& provider : parsed->providers)
             {
                 switch (provider.kind)
@@ -1965,22 +1853,32 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::NuGet:
                     {
-                        if (!ensure_nuget_tool()) return false;
+                        auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
+                        if (!maybe_nuget_tools.has_value()) return false;
+                        NuGetTool nuget_tool(std::move(*maybe_nuget_tools.get()),
+                                            parsed->nuget_timeout,
+                                            parsed->nuget_interactive,
+                                            args.use_nuget_cache.value_or(false));
                         const auto& source = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         m_config.entries.push_back(
                             {provider.access,
                              std::make_unique<NugetBinaryProvider>(
-                                 *nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1}))});
+                                 nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1}))});
                         break;
                     }
                     case BinaryCacheProviderKind::NuGetConfig:
                     {
-                        if (!ensure_nuget_tool()) return false;
+                        auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
+                        if (!maybe_nuget_tools.has_value()) return false;
+                        NuGetTool nuget_tool(std::move(*maybe_nuget_tools.get()),
+                                            parsed->nuget_timeout,
+                                            parsed->nuget_interactive,
+                                            args.use_nuget_cache.value_or(false));
                         Path config_path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)};
                         m_config.entries.push_back(
                             {provider.access,
                              std::make_unique<NugetBinaryProvider>(
-                                 *nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path))});
+                                 nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path))});
                         break;
                     }
                     case BinaryCacheProviderKind::Http:
@@ -2014,52 +1912,61 @@ namespace vcpkg
                     case BinaryCacheProviderKind::AzCopySas:
                     {
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
-                        if (!ensure_azcopy_tool()) return false;
+                        auto azcopy_tool = tools.get_tool_path(context, fs, Tools::AZCOPY);
+                        if (!azcopy_tool) return false;
                         AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO), provider.arg2.value_or("")};
                         m_config.entries.push_back(
-                            {provider.access, std::make_unique<AzCopyBinaryProvider>(std::move(az_url), azcopy_tool)});
+                            {provider.access, std::make_unique<AzCopyBinaryProvider>(std::move(az_url), *azcopy_tool)});
                         break;
                     }
                     case BinaryCacheProviderKind::GCS:
                     {
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
-                        if (!ensure_gcs_tool()) return false;
+                        auto gcs_tool_path = tools.get_tool_path(context, fs, Tools::GSUTIL);
+                        if (!gcs_tool_path) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         m_config.entries.push_back(
                             {provider.access,
-                             std::make_unique<ObjectStorageBinaryProvider>(std::string{prefix}, gcs_tool)});
+                             std::make_unique<ObjectStorageBinaryProvider>(
+                                 std::string{prefix}, std::make_shared<GcsStorageTool>(*gcs_tool_path))});
                         break;
                     }
                     case BinaryCacheProviderKind::AWS:
                     {
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
-                        if (!ensure_aws_tool()) return false;
+                        auto aws_tool_path = tools.get_tool_path(context, fs, Tools::AWSCLI);
+                        if (!aws_tool_path) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         m_config.entries.push_back(
                             {provider.access,
-                             std::make_unique<ObjectStorageBinaryProvider>(std::string{prefix}, aws_tool)});
+                             std::make_unique<ObjectStorageBinaryProvider>(
+                                 std::string{prefix},
+                                 std::make_shared<AwsStorageTool>(*aws_tool_path, parsed->aws_no_sign_request))});
                         break;
                     }
                     case BinaryCacheProviderKind::COS:
                     {
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
-                        if (!ensure_cos_tool()) return false;
+                        auto cos_tool_path = tools.get_tool_path(context, fs, Tools::COSCLI);
+                        if (!cos_tool_path) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         m_config.entries.push_back(
                             {provider.access,
-                             std::make_unique<ObjectStorageBinaryProvider>(std::string{prefix}, cos_tool)});
+                             std::make_unique<ObjectStorageBinaryProvider>(
+                                 std::string{prefix}, std::make_shared<CosStorageTool>(*cos_tool_path))});
                         break;
                     }
                     case BinaryCacheProviderKind::AzUniversal:
                     {
                         if (!m_zip_tool.setup(context, fs, tools)) return false;
-                        if (!ensure_azcli_tool()) return false;
+                        auto azcli_tool = tools.get_tool_path(context, fs, Tools::AZCLI);
+                        if (!azcli_tool) return false;
                         AzureUpkgSource source{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
                                                provider.arg2.value_or_exit(VCPKG_LINE_INFO),
                                                provider.arg3.value_or_exit(VCPKG_LINE_INFO)};
                         m_config.entries.push_back(
                             {provider.access,
-                             std::make_unique<AzureUpkgBinaryProvider>(azcli_tool, std::move(source))});
+                             std::make_unique<AzureUpkgBinaryProvider>(*azcli_tool, std::move(source))});
                         break;
                     }
                     case BinaryCacheProviderKind::None:
