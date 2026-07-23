@@ -380,7 +380,6 @@ namespace
             WarningDiagnosticContext wdc{context};
             return store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url_template.headers, zip_path);
         }
-
     };
 
     struct AzureBlobBinaryProvider : HttpGetBinaryProvider
@@ -623,6 +622,52 @@ namespace
         bool m_use_nuget_cache;
     };
 
+}
+
+namespace vcpkg
+{
+    struct NugetPackagePacker
+    {
+        NugetPackagePacker(const NuGetTool& tool, StringView nuget_prefix)
+            : m_tool(tool), m_nuget_prefix(nuget_prefix.to_string())
+        {
+        }
+
+        Optional<Path> pack(DiagnosticContext& context,
+                            const Filesystem& fs,
+                            const Path& packages,
+                            const BinaryPackageWriteInfo& request) const
+        {
+            auto nuspec_path = request.package_dir.native() + ".nuspec";
+            auto& nuspec_contents = request.nuspec.value_or_exit(VCPKG_LINE_INFO);
+            std::error_code ec;
+            fs.write_contents(nuspec_path, nuspec_contents, ec);
+            if (ec)
+            {
+                context.report_error(
+                    format_filesystem_call_error(ec, "write_contents", {nuspec_path, nuspec_contents}));
+                context.report(DiagnosticLine{DiagKind::Note, msg::format(msgWhilePackingNuGetPackage)});
+                return nullopt;
+            }
+
+            auto pack_result = m_tool.pack(context, nuspec_path, packages);
+            fs.remove(nuspec_path, IgnoreErrors{});
+            if (!pack_result)
+            {
+                return nullopt;
+            }
+
+            return packages / make_feedref(request, m_nuget_prefix).nupkg_filename();
+        }
+
+    private:
+        NuGetTool m_tool;
+        std::string m_nuget_prefix;
+    };
+}
+
+namespace
+{
     struct NugetBinaryProvider : IBinaryProvider
     {
         NugetBinaryProvider(const NuGetTool& tool, StringView nuget_prefix, NuGetSource src)
@@ -712,39 +757,17 @@ namespace
         CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::NuPkg; }
 
         bool push_success(DiagnosticContext& context,
-                          const Filesystem& fs,
-                          const Path& packages,
+                          const Filesystem&,
+                          const Path&,
                           const BinaryPackageWriteInfo& request) override
         {
-            auto nuspec_path = request.package_dir.native() + ".nuspec";
-            auto& nuspec_contents = request.nuspec.value_or_exit(VCPKG_LINE_INFO);
-            std::error_code ec;
-            fs.write_contents(nuspec_path, nuspec_contents, ec);
-            if (ec)
-            {
-                context.report_error(
-                    format_filesystem_call_error(ec, "write_contents", {nuspec_path, nuspec_contents}));
-                context.report(DiagnosticLine{DiagKind::Note, msg::format(msgWhilePackingNuGetPackage)});
-                return false;
-            }
-
-            auto pack_result = m_cmd.pack(context, nuspec_path, packages);
-            fs.remove(nuspec_path, IgnoreErrors{});
-            if (!pack_result)
-            {
-                return false;
-            }
-
-            auto nupkg_path = packages / make_feedref(request, m_nuget_prefix).nupkg_filename();
+            const auto& nupkg_path = request.nupkg_path.value_or_exit(VCPKG_LINE_INFO);
             const auto vendor = m_src.option == "-ConfigFile" ? "NuGet config" : "NuGet";
             context.statusln(msg::format(msgUploadingBinariesToVendor,
                                          msg::spec = request.display_name,
                                          msg::vendor = vendor,
                                          msg::path = m_src.value));
-            const auto stored = m_cmd.push(context, nupkg_path, m_src);
-
-            fs.remove(nupkg_path, IgnoreErrors{});
-            return stored;
+            return m_cmd.push(context, nupkg_path, m_src);
         }
     };
 
@@ -1856,9 +1879,14 @@ namespace vcpkg
                         auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
                         if (!maybe_nuget_tools.has_value()) return false;
                         NuGetTool nuget_tool(std::move(*maybe_nuget_tools.get()),
-                                            parsed->nuget_timeout,
-                                            parsed->nuget_interactive,
-                                            args.use_nuget_cache.value_or(false));
+                                             parsed->nuget_timeout,
+                                             parsed->nuget_interactive,
+                                             args.use_nuget_cache.value_or(false));
+                        if (provider.access != CacheAccessControl::Read && !m_nuget_package_packer)
+                        {
+                            m_nuget_package_packer =
+                                std::make_unique<NugetPackagePacker>(nuget_tool, m_config.nuget_prefix);
+                        }
                         const auto& source = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
                         m_config.entries.push_back(
                             {provider.access,
@@ -1871,9 +1899,14 @@ namespace vcpkg
                         auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
                         if (!maybe_nuget_tools.has_value()) return false;
                         NuGetTool nuget_tool(std::move(*maybe_nuget_tools.get()),
-                                            parsed->nuget_timeout,
-                                            parsed->nuget_interactive,
-                                            args.use_nuget_cache.value_or(false));
+                                             parsed->nuget_timeout,
+                                             parsed->nuget_interactive,
+                                             args.use_nuget_cache.value_or(false));
+                        if (provider.access != CacheAccessControl::Read && !m_nuget_package_packer)
+                        {
+                            m_nuget_package_packer =
+                                std::make_unique<NugetPackagePacker>(nuget_tool, m_config.nuget_prefix);
+                        }
                         Path config_path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)};
                         m_config.entries.push_back(
                             {provider.access,
@@ -1975,10 +2008,6 @@ namespace vcpkg
             }
         }
 
-        m_needs_nuspec_data = Util::any_of(m_config.entries, [](const BinaryProviders::Entry& e) {
-            return (e.access == CacheAccessControl::Write || e.access == CacheAccessControl::ReadWrite) &&
-                   e.provider->archive_format() == CacheArchiveFormat::NuPkg;
-        });
         m_needs_zip_file = Util::any_of(m_config.entries, [](const BinaryProviders::Entry& e) {
             return (e.access == CacheAccessControl::Write || e.access == CacheAccessControl::ReadWrite) &&
                    e.provider->archive_format() == CacheArchiveFormat::Zip;
@@ -2025,7 +2054,7 @@ namespace vcpkg
                 ElapsedTimer timer;
                 BinaryPackageWriteInfo request{action};
 
-                if (m_needs_nuspec_data)
+                if (m_nuget_package_packer)
                 {
                     request.nuspec =
                         generate_nuspec(request.package_dir, action, m_config.nuget_prefix, m_config.nuget_repo);
@@ -2089,15 +2118,30 @@ namespace vcpkg
                     }
                 }
 
+                if (m_nuget_package_packer)
+                {
+                    action_to_push.request.nupkg_path =
+                        m_nuget_package_packer->pack(pdc, m_fs, m_packages, action_to_push.request);
+                }
+
                 size_t num_destinations = 0;
                 for (auto&& entry : m_config.entries)
                 {
                     if (entry.access == CacheAccessControl::Read) continue;
-                    // skip pushing to providers that need zips if making the zip above failed
-                    if (entry.provider->archive_format() != CacheArchiveFormat::Zip || action_to_push.request.zip_path.has_value())
+                    const auto archive_format = entry.provider->archive_format();
+                    const bool archive_available =
+                        archive_format == CacheArchiveFormat::None ||
+                        (archive_format == CacheArchiveFormat::Zip && action_to_push.request.zip_path.has_value()) ||
+                        (archive_format == CacheArchiveFormat::NuPkg && action_to_push.request.nupkg_path.has_value());
+                    if (archive_available)
                     {
                         num_destinations += entry.provider->push_success(pdc, m_fs, m_packages, action_to_push.request);
                     }
+                }
+
+                if (action_to_push.request.nupkg_path)
+                {
+                    (void)m_fs.remove(wdc, *action_to_push.request.nupkg_path.get());
                 }
 
                 if (action_to_push.request.zip_path)

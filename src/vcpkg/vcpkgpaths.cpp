@@ -318,6 +318,17 @@ namespace
         return fs.almost_canonical(ret, VCPKG_LINE_INFO);
     }
 
+    static AssetCachingSettings parse_download_configuration_or_exit(const VcpkgCmdArguments& args)
+    {
+        auto maybe_settings = parse_download_configuration(console_diagnostic_context, args.asset_sources_template());
+        if (auto settings = maybe_settings.get())
+        {
+            return std::move(*settings);
+        }
+
+        Checks::exit_fail(VCPKG_LINE_INFO);
+    }
+
     // This structure holds members that
     // 1. Do not have any inter-member dependencies
     // 2. Are const (and therefore initialized in the initializer list)
@@ -332,9 +343,7 @@ namespace
             , m_ff_settings(args.feature_flag_settings())
             , m_manifest_dir(compute_manifest_dir(fs, args, original_cwd))
             , m_bundle(bundle)
-            , m_asset_cache_settings(
-                  parse_download_configuration(console_diagnostic_context, args.asset_sources_template())
-                      .value_or_exit(VCPKG_LINE_INFO))
+            , m_asset_cache_settings(parse_download_configuration_or_exit(args))
             , m_builtin_ports(process_output_directory(fs, args.builtin_ports_root_dir.get(), root / "ports"))
             , m_default_vs_path(args.default_visual_studio_path
                                     .map([&fs](const std::string& default_visual_studio_path) {

@@ -67,8 +67,11 @@ namespace vcpkg
     {
         using BinaryPackageReadInfo::BinaryPackageReadInfo;
 
-        // Filled if BinaryCache has a provider that returns true for needs_nuspec_data()
+        // Filled if BinaryCache has a writable NuGet provider.
         Optional<std::string> nuspec;
+        // Filled if BinaryCache has a provider that uses NuGet packages.
+        // Note: this can be empty if an error occurred while packing.
+        Optional<Path> nupkg_path;
         // Set to true if there is only one write provider, meaning that one provider can take ownership of the zip file
         bool unique_write_provider = false;
         // Filled if BinaryCache has a provider that returns true for needs_zip_file()
@@ -76,7 +79,8 @@ namespace vcpkg
         Optional<Path> zip_path;
     };
 
-    enum class CacheArchiveFormat {
+    enum class CacheArchiveFormat
+    {
         None,
         Zip,
         NuPkg,
@@ -294,6 +298,8 @@ namespace vcpkg
         bool submission_complete;
     };
 
+    struct NugetPackagePacker;
+
     // compression and upload of binary cache entries happens on a single 'background' thread, `m_push_thread`
     // Thread safety is achieved within the binary cache providers by:
     //   1. Only using one thread in the background for this work.
@@ -324,7 +330,7 @@ namespace vcpkg
             BinaryPackageWriteInfo request;
             CleanPackages clean_after_push;
         };
-        bool m_needs_nuspec_data = false;
+        std::unique_ptr<NugetPackagePacker> m_nuget_package_packer;
         bool m_needs_zip_file = false;
 
         CleanPackages m_clean_packages;

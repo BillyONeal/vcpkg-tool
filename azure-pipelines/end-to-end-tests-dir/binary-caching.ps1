@@ -91,7 +91,8 @@ if(-Not $IsLinux -and -Not $IsMacOS) {
     Throw-IfFailed
     Remove-Item -Recurse -Force $NuGetRoot -ErrorAction SilentlyContinue
     mkdir $NuGetRoot
-    Run-Vcpkg -TestArgs ($commonArgs + @("install", "vcpkg-hello-world-1", "vcpkg-hello-world-2", "vcpkg-cmake", "vcpkg-cmake-config", "--x-binarysource=clear;nuget,$NuGetRoot2;nuget,$NuGetRoot,write"))
+    $NuGetRoot3 = Join-Path $TestingRoot 'nuget3'
+    Run-Vcpkg -TestArgs ($commonArgs + @("install", "vcpkg-hello-world-1", "vcpkg-hello-world-2", "vcpkg-cmake", "vcpkg-cmake-config", "--x-binarysource=clear;nuget,$NuGetRoot2;nuget,$NuGetRoot,write;nuget,$NuGetRoot3,write"))
     Throw-IfFailed
     Require-FileExists "$installRoot/$Triplet/include/hello-1.h"
     Require-FileExists "$installRoot/$Triplet/include/hello-2.h"
@@ -99,6 +100,9 @@ if(-Not $IsLinux -and -Not $IsMacOS) {
     Require-FileExists "$buildtreesRoot/vcpkg-hello-world-2/src"
     if ((Get-ChildItem $NuGetRoot -Filter '*.nupkg' | Measure-Object).Count -ne 1) {
         throw "In '$CurrentTest': did not create exactly 1 NuGet package"
+    }
+    if ((Get-ChildItem $NuGetRoot3 -Filter '*.nupkg' | Measure-Object).Count -ne 1) {
+        throw "In '$CurrentTest': did not create exactly 1 NuGet package in the second destination"
     }
 
     # Test export
