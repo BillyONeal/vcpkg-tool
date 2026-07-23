@@ -747,49 +747,54 @@ namespace vcpkg
             fmt::format("{}.{}.part", fs.absolute(download_path, VCPKG_LINE_INFO), get_process_id());
         Lazy<std::string> escaped_url;
         const auto escaped_dpath = Command(download_path_part_path).extract();
-        auto maybe_raw_command = api_stable_format(context, *script, [&](std::string& out, StringView key) {
-            if (key == "url")
-            {
-                if (raw_urls.empty())
+        ParsedDocument doc{*script, nullopt};
+        auto maybe_raw_command = api_stable_format(
+            context,
+            doc.stacked(context).value_or_exit(VCPKG_LINE_INFO),
+            [&](DiagnosticContext& context, std::string& out, StringView key, const StackedParseEnumerator& position) {
+                if (key == "url")
                 {
-                    if (!maybe_sha512)
+                    if (raw_urls.empty())
                     {
-                        Checks::unreachable(VCPKG_LINE_INFO);
+                        if (!maybe_sha512)
+                        {
+                            Checks::unreachable(VCPKG_LINE_INFO);
+                        }
+
+                        position.report_error_with_caret_line(
+                            context, msg::format(msgAssetCacheScriptNeedsUrl, msg::sha = *maybe_sha512));
+                        return false;
                     }
 
-                    context.report_error(
-                        msg::format(msgAssetCacheScriptNeedsUrl, msg::value = *script, msg::sha = *maybe_sha512));
-                    return false;
-                }
-
-                Strings::append(out, escaped_url.get_lazy([&] { return Command(raw_urls[0]).extract(); }));
-                return true;
-            }
-
-            if (key == "sha512")
-            {
-                if (maybe_sha512)
-                {
-                    out.append(maybe_sha512->data(), maybe_sha512->size());
+                    Strings::append(out, escaped_url.get_lazy([&] { return Command(raw_urls[0]).extract(); }));
                     return true;
                 }
 
-                context.report_error(
-                    msg::format(msgAssetCacheScriptNeedsSha, msg::value = *script, msg::url = sanitized_urls[0]));
+                if (key == "sha512")
+                {
+                    if (maybe_sha512)
+                    {
+                        out.append(maybe_sha512->data(), maybe_sha512->size());
+                        return true;
+                    }
+
+                    position.report_error_with_caret_line(
+                        context, msg::format(msgAssetCacheScriptNeedsSha, msg::url = sanitized_urls[0]));
+                    return false;
+                }
+
+                if (key == "dst")
+                {
+                    Strings::append(out, escaped_dpath);
+                    return true;
+                }
+
+                position.report_error_with_caret_line(context,
+                                                      msg::format(msgAssetCacheScriptBadVariable, msg::list = key));
+                context.report(
+                    DiagnosticLine{DiagKind::Note, msg::format(msgAssetCacheScriptBadVariableHint, msg::list = key)});
                 return false;
-            }
-
-            if (key == "dst")
-            {
-                Strings::append(out, escaped_dpath);
-                return true;
-            }
-
-            context.report_error(msg::format(msgAssetCacheScriptBadVariable, msg::value = *script, msg::list = key));
-            context.report(
-                DiagnosticLine{DiagKind::Note, msg::format(msgAssetCacheScriptBadVariableHint, msg::list = key)});
-            return false;
-        });
+            });
 
         auto raw_command = maybe_raw_command.get();
         if (!raw_command)

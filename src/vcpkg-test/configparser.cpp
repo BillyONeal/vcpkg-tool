@@ -1,483 +1,778 @@
 #include <vcpkg-test/util.h>
 
+#include <vcpkg/base/diagnostics.h>
+#include <vcpkg/base/message_sinks.h>
 #include <vcpkg/base/util.h>
 
 #include <vcpkg/binarycaching.h>
 
+#include <algorithm>
+
 using namespace vcpkg;
 
 #if defined(_WIN32)
+#define DEFAULT_ABSOLUTE_PATH "C:\\default"
 #define ABSOLUTE_PATH "C:\\foo"
 #else
+#define DEFAULT_ABSOLUTE_PATH "/default"
 #define ABSOLUTE_PATH "/foo"
 #endif
 
 namespace
 {
-    void validate_readonly_url(const BinaryConfigParserState& state, StringView url)
+    BinaryCacheParsedConfigs parse_binary_provider_arg_or_exit(StringView arg)
     {
-        auto extended_url = url.to_string() + "/{sha}.zip?sas";
-        CHECK(state.url_templates_to_put.empty());
-        CHECK(state.url_templates_to_get.size() == 1);
-        CHECK(state.url_templates_to_get.front().url_template == extended_url);
+        SinkBufferedDiagnosticContext context{null_sink};
+        std::vector<std::string> args;
+        args.push_back(arg.to_string());
+        auto result = parse_binary_provider_configs(context, DEFAULT_ABSOLUTE_PATH, {}, args);
+        REQUIRE(std::move(context).to_string() == "");
+        return result.value_or_exit(VCPKG_LINE_INFO);
     }
 
-    void validate_readonly_sources(const BinaryConfigParserState& state, StringView sources)
+    BinaryCacheParsedConfigs parse_binary_provider_env_and_args_or_exit(StringView env_string,
+                                                                        std::vector<std::string> args)
     {
-        CHECK(state.sources_to_write.empty());
-        CHECK(state.sources_to_read.size() == 1);
-        CHECK(state.sources_to_read.front() == sources);
+        SinkBufferedDiagnosticContext context{null_sink};
+        auto result = parse_binary_provider_configs(context, DEFAULT_ABSOLUTE_PATH, env_string.to_string(), args);
+        auto diagnostics = std::move(context).to_string();
+        REQUIRE(std::move(context).to_string() == "");
+        return result.value_or_exit(VCPKG_LINE_INFO);
+    }
+
+    std::string parse_binary_provider_arg_error(StringView arg)
+    {
+        SinkBufferedDiagnosticContext context{null_sink};
+        std::vector<std::string> args;
+        args.push_back(arg.to_string());
+        auto result = parse_binary_provider_configs(context, DEFAULT_ABSOLUTE_PATH, {}, args);
+        auto diagnostics = std::move(context).to_string();
+        INFO(diagnostics);
+        REQUIRE(!result.has_value());
+        return diagnostics;
+    }
+
+    std::string parse_binary_provider_env_error(StringView env_string)
+    {
+        SinkBufferedDiagnosticContext context{null_sink};
+        auto result = parse_binary_provider_configs(context, DEFAULT_ABSOLUTE_PATH, env_string.to_string(), {});
+        auto diagnostics = std::move(context).to_string();
+        INFO(diagnostics);
+        REQUIRE(!result.has_value());
+        return diagnostics;
+    }
+
+    std::string parse_binary_provider_env_and_args_error(StringView env_string, std::vector<std::string> args)
+    {
+        SinkBufferedDiagnosticContext context{null_sink};
+        auto result = parse_binary_provider_configs(context, DEFAULT_ABSOLUTE_PATH, env_string.to_string(), args);
+        auto diagnostics = std::move(context).to_string();
+        INFO(diagnostics);
+        REQUIRE(!result.has_value());
+        return diagnostics;
+    }
+
+    BinaryCacheParsedConfigs parse_binary_provider_configs_or_exit(StringView env_string,
+                                                                   std::vector<std::string> args = {})
+    {
+        if (args.empty())
+        {
+            return parse_binary_provider_arg_or_exit(env_string);
+        }
+
+        return parse_binary_provider_env_and_args_or_exit(env_string, std::move(args));
+    }
+
+    std::string format_binary_provider_parse_error(Optional<StringView> origin,
+                                                   StringView source_text,
+                                                   std::size_t column,
+                                                   StringView message)
+    {
+        std::string result;
+        if (const auto actual_origin = origin.get())
+        {
+            fmt::format_to(std::back_inserter(result), "{}:1:{}: error: {}", *actual_origin, column, message);
+        }
+        else
+        {
+            fmt::format_to(std::back_inserter(result), "error: {}", message);
+        }
+
+        result.push_back('\n');
+        result.append(source_text.data(), source_text.size());
+        result.push_back('\n');
+        result.append(column - 1, ' ');
+        result.push_back('^');
+        return result;
+    }
+
+    std::size_t col_after(StringView prefix) { return prefix.size() + 1; }
+
+    void require_binary_provider_parse_error(StringView arg, std::size_t column, StringView expected_message)
+    {
+        auto diagnostics = parse_binary_provider_arg_error(arg);
+        REQUIRE_LINES(diagnostics, format_binary_provider_parse_error(nullopt, arg, column, expected_message));
+    }
+
+    void require_binary_provider_parse_env_error(StringView env_string, std::size_t column, StringView expected_message)
+    {
+        auto diagnostics = parse_binary_provider_env_error(env_string);
+        REQUIRE_LINES(diagnostics,
+                      format_binary_provider_parse_error(
+                          format_environment_variable("VCPKG_BINARY_SOURCES"), env_string, column, expected_message));
+    }
+
+    void require_binary_provider_parse_arg_error(StringView env_string,
+                                                 std::vector<std::string> args,
+                                                 std::size_t column,
+                                                 StringView expected_message)
+    {
+        REQUIRE(!args.empty());
+
+        const auto source_text = args.back();
+        auto diagnostics = parse_binary_provider_env_and_args_error(env_string, std::move(args));
+        REQUIRE_LINES(diagnostics, format_binary_provider_parse_error(nullopt, source_text, column, expected_message));
     }
 }
 
 TEST_CASE ("BinaryConfigParser empty", "[binaryconfigparser]")
 {
-    auto parsed = parse_binary_provider_configs("", {});
-    REQUIRE(parsed.has_value());
+    auto parsed = parse_binary_provider_configs_or_exit("", {});
+
+    REQUIRE(parsed.providers.size() == 1);
+    CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                          BinaryCacheAccess::ReadWrite,
+                                                          DEFAULT_ABSOLUTE_PATH});
+    REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
+    REQUIRE(!parsed.nuget_interactive);
+    REQUIRE(!parsed.aws_no_sign_request);
+    REQUIRE(parsed.nuget_timeout == 100);
 }
 
 TEST_CASE ("BinaryConfigParser unacceptable provider", "[binaryconfigparser]")
 {
-    auto parsed = parse_binary_provider_configs("unacceptable", {});
-    REQUIRE(!parsed.has_value());
+    require_binary_provider_parse_env_error(
+        "unacceptable",
+        1,
+        "unknown binary provider type: valid providers are 'clear', 'default', 'nuget', 'nugetconfig', "
+        "'nugettimeout', 'interactive', 'x-azblob', 'x-gcs', 'x-aws', 'x-aws-config', 'http', and 'files'");
 }
 
 TEST_CASE ("BinaryConfigParser files provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("files", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "files", col_after("files"), "binary config 'files' requires at least one path argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("files,relative-path", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "files,relative-path", col_after("files,"), "path arguments for binary config strings must be absolute");
     }
     {
-        auto parsed = parse_binary_provider_configs("files,C:foo", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "files,C:foo", col_after("files,"), "path arguments for binary config strings must be absolute");
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH, {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH, {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"files"}});
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH ",nonsense", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("files," ABSOLUTE_PATH ",nonsense",
+                                            col_after("files," ABSOLUTE_PATH ","),
+                                            "expected 'read', 'readwrite', or 'write'");
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH ",read", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH ",read", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"files"}});
-        REQUIRE(!state.archives_to_read.empty());
-        REQUIRE(!Util::Vectors::contains(state.archives_to_write, ABSOLUTE_PATH));
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Read, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH ",write", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH ",write", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"files"}});
-        REQUIRE(!state.archives_to_write.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Write, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH ",readwrite", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH ",readwrite", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"files"}});
-        REQUIRE(!state.archives_to_write.empty());
-        REQUIRE(!state.archives_to_read.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"files"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH ",readwrite,extra", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("files," ABSOLUTE_PATH ",readwrite,extra",
+                                            col_after("files," ABSOLUTE_PATH ",readwrite"),
+                                            "binary config 'files' requires 1 or 2 arguments");
     }
     {
-        auto parsed = parse_binary_provider_configs("files,,upload", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "files,,upload", col_after("files,"), "path arguments for binary config strings must be absolute");
     }
 }
 
 TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("nuget", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "nuget", col_after("nuget"), "binary config 'nuget' requires at least one source argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nuget,relative-path", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("nuget,relative-path", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
-        validate_readonly_sources(state, "relative-path");
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, "relative-path"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nuget,http://example.org/", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("nuget,http://example.org/", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
-        validate_readonly_sources(state, "http://example.org/");
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "http://example.org/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nuget," ABSOLUTE_PATH, {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("nuget," ABSOLUTE_PATH, {});
 
-        validate_readonly_sources(state, ABSOLUTE_PATH);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nuget," ABSOLUTE_PATH ",nonsense", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nuget," ABSOLUTE_PATH ",nonsense",
+                                            col_after("nuget," ABSOLUTE_PATH ","),
+                                            "expected 'read', 'readwrite', or 'write'");
     }
     {
-        auto parsed = parse_binary_provider_configs("nuget," ABSOLUTE_PATH ",readwrite", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("nuget," ABSOLUTE_PATH ",readwrite", {});
 
-        CHECK(state.sources_to_read.size() == 1);
-        CHECK(state.sources_to_write.size() == 1);
-        CHECK(state.sources_to_read.front() == state.sources_to_write.front());
-        CHECK(state.sources_to_read.front() == ABSOLUTE_PATH);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
-        REQUIRE(!state.archives_to_write.empty());
-        REQUIRE(!state.archives_to_read.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nuget," ABSOLUTE_PATH ",readwrite,extra", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nuget," ABSOLUTE_PATH ",readwrite,extra",
+                                            col_after("nuget," ABSOLUTE_PATH ",readwrite"),
+                                            "binary config 'nuget' requires 1 or 2 arguments");
     }
     {
-        auto parsed = parse_binary_provider_configs("nuget,,readwrite", {});
-        REQUIRE(!parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("nuget,,readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, BinaryCacheAccess::ReadWrite, ""});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
 }
 
 TEST_CASE ("BinaryConfigParser nuget timeout", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout,3601", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("nugettimeout,3601", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
-        REQUIRE(state.nugettimeout == std::string{"3601"});
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
+        REQUIRE(parsed.nuget_timeout == 3601);
     }
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugettimeout",
+                                            col_after("nugettimeout"),
+                                            "binary config 'nugettimeout' expects a single positive integer argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout,", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugettimeout,",
+                                            col_after("nugettimeout,"),
+                                            "binary config 'nugettimeout' expects a single positive integer argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout,nonsense", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugettimeout,nonsense",
+                                            col_after("nugettimeout,"),
+                                            "binary config 'nugettimeout' expects a single positive integer argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout,0", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugettimeout,0",
+                                            col_after("nugettimeout,"),
+                                            "binary config 'nugettimeout' expects a single positive integer argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout,12x", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugettimeout,12x",
+                                            col_after("nugettimeout,12"),
+                                            "binary config 'nugettimeout' expects a single positive integer argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout,-321", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugettimeout,-321",
+                                            col_after("nugettimeout,"),
+                                            "binary config 'nugettimeout' expects a single positive integer argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugettimeout,321,123", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugettimeout,321,123",
+                                            col_after("nugettimeout,321"),
+                                            "binary config 'nugettimeout' expects a single positive integer argument");
     }
 }
 
 TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "nugetconfig", col_after("nugetconfig"), "binary config 'nugetconfig' requires at least one path argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig,relative-path", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugetconfig,relative-path",
+                                            col_after("nugetconfig,"),
+                                            "path arguments for binary config strings must be absolute");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig,http://example.org/", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugetconfig,http://example.org/",
+                                            col_after("nugetconfig,"),
+                                            "path arguments for binary config strings must be absolute");
     }
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig," ABSOLUTE_PATH, {});
-        REQUIRE(parsed.has_value());
-    }
-    {
-        auto parsed = parse_binary_provider_configs("nugetconfig," ABSOLUTE_PATH ",nonsense", {});
-        REQUIRE(!parsed.has_value());
-    }
-    {
-        auto parsed = parse_binary_provider_configs("nugetconfig," ABSOLUTE_PATH ",read", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("nugetconfig," ABSOLUTE_PATH, {});
 
-        CHECK(state.configs_to_write.empty());
-        CHECK(state.configs_to_read.size() == 1);
-        CHECK(state.configs_to_read.front() == ABSOLUTE_PATH);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
-        REQUIRE(!state.archives_to_read.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig," ABSOLUTE_PATH ",write", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        require_binary_provider_parse_error("nugetconfig," ABSOLUTE_PATH ",nonsense",
+                                            col_after("nugetconfig," ABSOLUTE_PATH ","),
+                                            "expected 'read', 'readwrite', or 'write'");
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("nugetconfig," ABSOLUTE_PATH ",read", {});
 
-        CHECK(state.configs_to_read.empty());
-        CHECK(state.configs_to_write.size() == 1);
-        CHECK(state.configs_to_write.front() == ABSOLUTE_PATH);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
-        REQUIRE(!state.archives_to_write.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, BinaryCacheAccess::Read, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig," ABSOLUTE_PATH ",readwrite", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("nugetconfig," ABSOLUTE_PATH ",write", {});
 
-        CHECK(state.configs_to_read.size() == 1);
-        CHECK(state.configs_to_write.size() == 1);
-        CHECK(state.configs_to_read.front() == state.configs_to_write.front());
-        CHECK(state.configs_to_read.front() == ABSOLUTE_PATH);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"nuget"}});
-        REQUIRE(!state.archives_to_write.empty());
-        REQUIRE(!state.archives_to_read.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, BinaryCacheAccess::Write, ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig," ABSOLUTE_PATH ",readwrite,extra", {});
-        REQUIRE(!parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("nugetconfig," ABSOLUTE_PATH ",readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("nugetconfig,,readwrite", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("nugetconfig," ABSOLUTE_PATH ",readwrite,extra",
+                                            col_after("nugetconfig," ABSOLUTE_PATH ",readwrite"),
+                                            "binary config 'nugetconfig' requires 1 or 2 arguments");
+    }
+    {
+        require_binary_provider_parse_error("nugetconfig,,readwrite",
+                                            col_after("nugetconfig,"),
+                                            "path arguments for binary config strings must be absolute");
     }
 }
 
 TEST_CASE ("BinaryConfigParser default provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("default", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("default", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
-        auto parsed = parse_binary_provider_configs("default,nonsense", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "default,nonsense", col_after("default,"), "expected 'read', 'readwrite', or 'write'");
     }
     {
-        auto parsed = parse_binary_provider_configs("default,read", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(!state.archives_to_read.empty());
+        auto parsed = parse_binary_provider_configs_or_exit("default,read", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Read, DEFAULT_ABSOLUTE_PATH});
     }
     {
-        auto parsed = parse_binary_provider_configs("default,readwrite", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(!state.archives_to_read.empty());
-        REQUIRE(!state.archives_to_write.empty());
+        auto parsed = parse_binary_provider_configs_or_exit("default,readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
     }
     {
-        auto parsed = parse_binary_provider_configs("default,write", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(!state.archives_to_write.empty());
+        auto parsed = parse_binary_provider_configs_or_exit("default,write", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::Write,
+                                                              DEFAULT_ABSOLUTE_PATH});
     }
     {
-        auto parsed = parse_binary_provider_configs("default,read,extra", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("default,read,extra",
+                                            col_after("default,read"),
+                                            "binary config 'default' does not take more than 1 argument");
     }
 }
 
 TEST_CASE ("BinaryConfigParser clear provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("clear", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("clear", {});
+
+        REQUIRE(parsed.providers.empty());
+        REQUIRE(parsed.telemetry_tags.empty());
     }
     {
-        auto parsed = parse_binary_provider_configs("clear,upload", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "clear,upload", col_after("clear"), "binary config 'clear' does not take arguments");
     }
 }
 
 TEST_CASE ("BinaryConfigParser interactive provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("interactive", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("interactive", {});
+
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
+        REQUIRE(parsed.nuget_interactive);
     }
     {
-        auto parsed = parse_binary_provider_configs("interactive,read", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "interactive,read", col_after("interactive"), "binary config 'interactive' does not take arguments");
     }
 }
 
 TEST_CASE ("BinaryConfigParser multiple providers", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("clear;default", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("clear;default", {});
+
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
-        auto parsed = parse_binary_provider_configs("clear;default,read", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("clear;default,read", {});
+
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::Files, BinaryCacheAccess::Read, DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
-        auto parsed = parse_binary_provider_configs("clear;default,write", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("clear;default,write", {});
+
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::Write,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
-        auto parsed = parse_binary_provider_configs("clear;default,readwrite", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("clear;default,readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
-        auto parsed = parse_binary_provider_configs("clear;default,readwrite;clear;clear", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("clear;default,readwrite;clear;clear", {});
+
+        REQUIRE(parsed.providers.empty());
+        REQUIRE(parsed.telemetry_tags.empty());
     }
     {
-        auto parsed = parse_binary_provider_configs("clear;files,relative;default", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("clear;files,relative;default",
+                                            col_after("clear;files,"),
+                                            "path arguments for binary config strings must be absolute");
     }
     {
-        auto parsed = parse_binary_provider_configs(";;;clear;;;;", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit(";;;clear;;;;", {});
+
+        REQUIRE(parsed.providers.empty());
+        REQUIRE(parsed.telemetry_tags.empty());
     }
     {
-        auto parsed = parse_binary_provider_configs(";;;,;;;;", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            ";;;,;;;;",
+            4,
+            "unknown binary provider type: valid providers are 'clear', 'default', 'nuget', 'nugetconfig', "
+            "'nugettimeout', 'interactive', 'x-azblob', 'x-gcs', 'x-aws', 'x-aws-config', 'http', and 'files'");
     }
 }
 
 TEST_CASE ("BinaryConfigParser escaping", "[binaryconfigparser]")
 {
+    constexpr StringLiteral trailing_backtick_error = "Unexpected EOF after escape character";
+
     {
-        auto parsed = parse_binary_provider_configs(";;;;;;;`", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(";;;;;;;`", col_after(";;;;;;;`"), trailing_backtick_error);
     }
     {
-        auto parsed = parse_binary_provider_configs(";;;;;;;`defaul`t", {});
-        REQUIRE(parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit(";;;;;;;`defaul`t", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH "`", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "files," ABSOLUTE_PATH "`", col_after("files," ABSOLUTE_PATH "`"), trailing_backtick_error);
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH "`,", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"files"}});
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH "`,", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              ABSOLUTE_PATH ","});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH "``", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"files"}});
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH "``", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              ABSOLUTE_PATH "`"});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH "```", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "files," ABSOLUTE_PATH "```", col_after("files," ABSOLUTE_PATH "```"), trailing_backtick_error);
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH "````", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"files"}});
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH "````", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              ABSOLUTE_PATH "``"});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH ",", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("files," ABSOLUTE_PATH ",",
+                                            col_after("files," ABSOLUTE_PATH ","),
+                                            "expected 'read', 'readwrite', or 'write'");
     }
 }
 
 TEST_CASE ("BinaryConfigParser args", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH, std::vector<std::string>{"clear"});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH, std::vector<std::string>{"clear"});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{"clear"});
-    }
-    {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH, std::vector<std::string>{"clear;default"});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"clear"}, {"default"}});
-    }
-    {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH, std::vector<std::string>{"clear;default,"});
-        REQUIRE(!parsed.has_value());
+        REQUIRE(parsed.providers.empty());
+        REQUIRE(parsed.telemetry_tags.empty());
     }
     {
         auto parsed =
-            parse_binary_provider_configs("files," ABSOLUTE_PATH, std::vector<std::string>{"clear", "clear;default,"});
-        REQUIRE(!parsed.has_value());
+            parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH, std::vector<std::string>{"clear;default"});
+
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{"default"});
     }
     {
-        auto parsed = parse_binary_provider_configs("files," ABSOLUTE_PATH, std::vector<std::string>{"clear", "clear"});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        require_binary_provider_parse_arg_error("files," ABSOLUTE_PATH,
+                                                std::vector<std::string>{"clear;default,"},
+                                                col_after("clear;default,"),
+                                                "expected 'read', 'readwrite', or 'write'");
+    }
+    {
+        // being passesd as separate --binarysource args is equivalent to being all in one arg
+        require_binary_provider_parse_arg_error("files," ABSOLUTE_PATH,
+                                                std::vector<std::string>{"clear", "clear;default,"},
+                                                col_after("clear;default,"),
+                                                "expected 'read', 'readwrite', or 'write'");
+    }
+    {
+        auto parsed =
+            parse_binary_provider_configs_or_exit("files," ABSOLUTE_PATH, std::vector<std::string>{"clear", "clear"});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{"clear"});
+        REQUIRE(parsed.providers.empty());
+        REQUIRE(parsed.telemetry_tags.empty());
     }
 }
 
 TEST_CASE ("BinaryConfigParser azblob provider", "[binaryconfigparser]")
 {
-    UrlTemplate url_temp;
-    {
-        auto parsed = parse_binary_provider_configs("x-azblob,https://azure/container,sas", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+    constexpr StringLiteral requires_azblob_https_base_url_error =
+        "binary config 'azblob' requires a https:// base url as the first argument";
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azblob"}, {"default"}});
-        validate_readonly_url(state, "https://azure/container");
-        REQUIRE(state.secrets == std::vector<std::string>{"sas"});
-    }
     {
-        auto parsed = parse_binary_provider_configs("x-azblob,https://azure/container,?sas", {});
-        REQUIRE(!parsed.has_value());
-    }
-    {
-        auto parsed = parse_binary_provider_configs("x-azblob,,sas", {});
-        REQUIRE(!parsed.has_value());
-    }
-    {
-        auto parsed = parse_binary_provider_configs("x-azblob,https://azure/container", {});
-        REQUIRE(!parsed.has_value());
-    }
-    {
-        auto parsed = parse_binary_provider_configs("x-azblob,https://azure/container,sas,invalid", {});
-        REQUIRE(!parsed.has_value());
-    }
-    {
-        auto parsed = parse_binary_provider_configs("x-azblob,https://azure/container,sas,read", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("x-azblob,https://azure/container,sas", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azblob"}, {"default"}});
-        validate_readonly_url(state, "https://azure/container");
-        REQUIRE(state.secrets == std::vector<std::string>{"sas"});
-        REQUIRE(!state.archives_to_read.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::ReadWrite, "https://azure/container", "sas"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("x-azblob,https://azure/container,sas,write", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azblob"}, {"default"}});
-        CHECK(state.url_templates_to_get.empty());
-        CHECK(state.url_templates_to_put.empty());
-        CHECK(state.azblob_templates_to_put.size() == 1);
-        CHECK(state.azblob_templates_to_put.front().url_template == "https://azure/container/{sha}.zip?sas");
-        REQUIRE(state.secrets == std::vector<std::string>{"sas"});
-        REQUIRE(!state.archives_to_write.empty());
+        require_binary_provider_parse_error(
+            "x-azblob,https://azure/container,?sas",
+            col_after("x-azblob,https://azure/container,"),
+            "binary config 'azblob' requires a SAS token without a preceeding '?' as the second argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("x-azblob,https://azure/container,sas,readwrite", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        require_binary_provider_parse_error(
+            "x-azblob,,sas", col_after("x-azblob,"), requires_azblob_https_base_url_error);
+    }
+    {
+        require_binary_provider_parse_error("x-azblob,https://azure/container",
+                                            col_after("x-azblob,https://azure/container"),
+                                            "binary config 'azblob' requires at least a base-url and a SAS token");
+    }
+    {
+        require_binary_provider_parse_error(
+            "x-azblob,http://not/container,sas", col_after("x-azblob,"), requires_azblob_https_base_url_error);
+    }
+    {
+        require_binary_provider_parse_error("x-azblob,https://azure/container,sas,invalid",
+                                            col_after("x-azblob,https://azure/container,sas,"),
+                                            "expected 'read', 'readwrite', or 'write'");
+    }
+    {
+        require_binary_provider_parse_error("x-azblob,https://azure/container,sas,readwrite,extra",
+                                            col_after("x-azblob,https://azure/container,sas,readwrite"),
+                                            "binary config 'azblob' requires 2 or 3 arguments");
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-azblob,https://azure/container,sas,read", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azblob"}, {"default"}});
-        CHECK(state.url_templates_to_get.size() == 1);
-        CHECK(state.url_templates_to_get.front().url_template == "https://azure/container/{sha}.zip?sas");
-        CHECK(state.url_templates_to_put.empty());
-        CHECK(state.azblob_templates_to_put.size() == 1);
-        CHECK(state.azblob_templates_to_put.front().url_template == "https://azure/container/{sha}.zip?sas");
-        REQUIRE(state.secrets == std::vector<std::string>{"sas"});
-        REQUIRE(!state.archives_to_read.empty());
-        REQUIRE(!state.archives_to_write.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::Read, "https://azure/container", "sas"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-azblob,https://azure/container,sas,write", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::Write, "https://azure/container", "sas"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-azblob,https://azure/container,sas,readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::AzBlob, BinaryCacheAccess::ReadWrite, "https://azure/container", "sas"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azblob"}, {"default"}});
     }
 }
 
@@ -485,189 +780,192 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 {
     SECTION ("azcopy no SAS token")
     {
-        {
-            auto parsed = parse_binary_provider_configs("x-azcopy,https://azure/container", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        constexpr StringLiteral requires_https_base_url_error =
+            "binary config 'x-azcopy' requires a https:// base url as the first argument";
 
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy"}, {"default"}});
-            REQUIRE(state.azcopy_read_templates.size() == 1);
-            const auto& azcopy_read = state.azcopy_read_templates.front();
-            CHECK(azcopy_read.url == "https://azure/container");
-            CHECK(azcopy_read.sas.empty());
-            CHECK(azcopy_read.make_object_path("{sha}") == "https://azure/container/{sha}.zip");
-            CHECK(azcopy_read.make_container_path() == "https://azure/container");
+        {
+            auto parsed = parse_binary_provider_configs_or_exit("x-azcopy,https://azure/container", {});
 
-            CHECK(state.azcopy_write_templates.empty());
-            REQUIRE(state.secrets.empty());
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  "https://azure/container"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy,https://azure/container,read", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+            auto parsed = parse_binary_provider_configs_or_exit("x-azcopy,https://azure/container,read", {});
 
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy"}, {"default"}});
-            REQUIRE(state.azcopy_read_templates.size() == 1);
-            const auto& azcopy_read = state.azcopy_read_templates.front();
-            CHECK(azcopy_read.url == "https://azure/container");
-            CHECK(azcopy_read.sas.empty());
-            CHECK(azcopy_read.make_object_path("{sha}") == "https://azure/container/{sha}.zip");
-            CHECK(azcopy_read.make_container_path() == "https://azure/container");
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
+                                                                  BinaryCacheAccess::Read,
+                                                                  "https://azure/container"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
+        }
+        {
+            auto parsed = parse_binary_provider_configs_or_exit("x-azcopy,https://azure/container,write", {});
 
-            CHECK(state.azcopy_write_templates.empty());
-            REQUIRE(state.secrets.empty());
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
+                                                                  BinaryCacheAccess::Write,
+                                                                  "https://azure/container"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy,https://azure/container,write", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+            auto parsed = parse_binary_provider_configs_or_exit("x-azcopy,https://azure/container,readwrite", {});
 
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy"}, {"default"}});
-            CHECK(state.azcopy_read_templates.empty());
-            REQUIRE(state.azcopy_write_templates.size() == 1);
-            const auto& azcopy_write = state.azcopy_write_templates.front();
-            CHECK(azcopy_write.url == "https://azure/container");
-            CHECK(azcopy_write.sas.empty());
-            CHECK(azcopy_write.make_object_path("{sha}") == "https://azure/container/{sha}.zip");
-            CHECK(azcopy_write.make_container_path() == "https://azure/container");
-            REQUIRE(state.secrets.empty());
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopy,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  "https://azure/container"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy"}, {"default"}});
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy,https://azure/container,readwrite", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy"}, {"default"}});
-            REQUIRE(state.azcopy_read_templates.size() == 1);
-            const auto& azcopy_read = state.azcopy_read_templates.front();
-            CHECK(azcopy_read.url == "https://azure/container");
-            CHECK(azcopy_read.sas.empty());
-            CHECK(azcopy_read.make_object_path("{sha}") == "https://azure/container/{sha}.zip");
-            CHECK(azcopy_read.make_container_path() == "https://azure/container");
-            REQUIRE(state.azcopy_write_templates.size() == 1);
-            const auto& azcopy_write = state.azcopy_write_templates.front();
-            CHECK(azcopy_write.url == "https://azure/container");
-            CHECK(azcopy_write.sas.empty());
-            CHECK(azcopy_write.make_object_path("{sha}") == "https://azure/container/{sha}.zip");
-            CHECK(azcopy_write.make_container_path() == "https://azure/container");
-            REQUIRE(state.secrets.empty());
+            require_binary_provider_parse_error("x-azcopy", col_after("x-azcopy"), requires_https_base_url_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error(
+                "x-azcopy,http://not/container", col_after("x-azcopy,"), requires_https_base_url_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy,http://not/container", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error(
+                "x-azcopy,,readwrite", col_after("x-azcopy,"), requires_https_base_url_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy,,readwrite", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy,https://azure/container,",
+                                                col_after("x-azcopy,https://azure/container,"),
+                                                "expected 'read', 'readwrite', or 'write'");
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy,https://azure/container,", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy,https://azure/container,?sas",
+                                                col_after("x-azcopy,https://azure/container,"),
+                                                "expected 'read', 'readwrite', or 'write'");
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy,https://azure/container,?sas", {});
-            REQUIRE(!parsed.has_value());
-        }
-        {
-            auto parsed = parse_binary_provider_configs("x-azcopy,https://azure/container,sas,readwrite", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy,https://azure/container,sas,readwrite",
+                                                col_after("x-azcopy,https://azure/container,sas,"),
+                                                "binary config 'x-azcopy' requires 1 or 2 arguments");
         }
     }
 
     SECTION ("azcopy with SAS token")
     {
+        constexpr StringLiteral requires_azcopy_sas_https_base_url_error =
+            "binary config 'x-azcopy-sas' requires a https:// base url as the first argument";
+        constexpr StringLiteral requires_valid_token_azcopy_sas_error =
+            "binary config 'x-azcopy-sas' requires a SAS token without a preceeding '?' as the second argument";
+        constexpr StringLiteral requires_base_url_and_token_azcopy_sas_error =
+            "binary config 'x-azcopy-sas' requires at least a base-url and a SAS token";
+
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,sas", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
-            REQUIRE(state.azcopy_read_templates.size() == 1);
-            const auto& azcopy_read = state.azcopy_read_templates.front();
-            CHECK(azcopy_read.url == "https://azure/container");
-            CHECK(azcopy_read.sas == "sas");
-            CHECK(azcopy_read.make_object_path("{sha}") == "https://azure/container/{sha}.zip?sas");
-            CHECK(azcopy_read.make_container_path() == "https://azure/container?sas");
-            CHECK(state.azcopy_write_templates.empty());
-            REQUIRE(state.secrets == std::vector<std::string>{"sas"});
+            auto parsed = parse_binary_provider_configs_or_exit("x-azcopy-sas,https://azure/container,sas", {});
+
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopySas,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  "https://azure/container",
+                                                                  "sas"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,sas,read", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
-            REQUIRE(state.azcopy_read_templates.size() == 1);
-            const auto& azcopy_read = state.azcopy_read_templates.front();
-            CHECK(azcopy_read.url == "https://azure/container");
-            CHECK(azcopy_read.sas == "sas");
-            CHECK(azcopy_read.make_object_path("{sha}") == "https://azure/container/{sha}.zip?sas");
-            CHECK(azcopy_read.make_container_path() == "https://azure/container?sas");
-            CHECK(state.azcopy_write_templates.empty());
-            REQUIRE(state.secrets == std::vector<std::string>{"sas"});
+            auto parsed = parse_binary_provider_configs_or_exit("x-azcopy-sas,https://azure/container,sas,read", {});
+
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] ==
+                  BinaryCacheProviderEntry{
+                      BinaryCacheProviderKind::AzCopySas, BinaryCacheAccess::Read, "https://azure/container", "sas"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,sas,write", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
-            CHECK(state.azcopy_read_templates.empty());
-            REQUIRE(state.azcopy_write_templates.size() == 1);
-            const auto& azcopy_write = state.azcopy_write_templates.front();
-            CHECK(azcopy_write.url == "https://azure/container");
-            CHECK(azcopy_write.sas == "sas");
-            CHECK(azcopy_write.make_object_path("{sha}") == "https://azure/container/{sha}.zip?sas");
-            CHECK(azcopy_write.make_container_path() == "https://azure/container?sas");
-            REQUIRE(state.secrets == std::vector<std::string>{"sas"});
+            auto parsed = parse_binary_provider_configs_or_exit("x-azcopy-sas,https://azure/container,sas,write", {});
+
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] ==
+                  BinaryCacheProviderEntry{
+                      BinaryCacheProviderKind::AzCopySas, BinaryCacheAccess::Write, "https://azure/container", "sas"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,sas,readwrite", {});
-            auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-            REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
-            REQUIRE(state.azcopy_read_templates.size() == 1);
-            const auto& azcopy_read = state.azcopy_read_templates.front();
-            CHECK(azcopy_read.url == "https://azure/container");
-            CHECK(azcopy_read.sas == "sas");
-            CHECK(azcopy_read.make_object_path("{sha}") == "https://azure/container/{sha}.zip?sas");
-            CHECK(azcopy_read.make_container_path() == "https://azure/container?sas");
-            REQUIRE(state.azcopy_write_templates.size() == 1);
-            const auto& azcopy_write = state.azcopy_write_templates.front();
-            CHECK(azcopy_write.url == "https://azure/container");
-            CHECK(azcopy_write.sas == "sas");
-            CHECK(azcopy_write.make_object_path("{sha}") == "https://azure/container/{sha}.zip?sas");
-            CHECK(azcopy_write.make_container_path() == "https://azure/container?sas");
-            REQUIRE(state.secrets == std::vector<std::string>{"sas"});
+            auto parsed =
+                parse_binary_provider_configs_or_exit("x-azcopy-sas,https://azure/container,sas,readwrite", {});
+
+            REQUIRE(parsed.providers.size() == 2);
+            CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  DEFAULT_ABSOLUTE_PATH});
+            CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzCopySas,
+                                                                  BinaryCacheAccess::ReadWrite,
+                                                                  "https://azure/container",
+                                                                  "sas"});
+            REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"azcopy-sas"}, {"default"}});
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error(
+                "x-azcopy-sas", col_after("x-azcopy-sas"), requires_base_url_and_token_azcopy_sas_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,,sas,readwrite", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error(
+                "x-azcopy-sas,,sas,readwrite", col_after("x-azcopy-sas,"), requires_azcopy_sas_https_base_url_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,http://not/container", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy-sas,http://not/container",
+                                                col_after("x-azcopy-sas,http://not/container"),
+                                                requires_base_url_and_token_azcopy_sas_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy-sas,http://not/container,sas",
+                                                col_after("x-azcopy-sas,"),
+                                                requires_azcopy_sas_https_base_url_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy-sas,https://azure/container",
+                                                col_after("x-azcopy-sas,https://azure/container"),
+                                                requires_base_url_and_token_azcopy_sas_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,?sas", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy-sas,https://azure/container,",
+                                                col_after("x-azcopy-sas,https://azure/container,"),
+                                                requires_valid_token_azcopy_sas_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,,readwrite", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy-sas,https://azure/container,?sas",
+                                                col_after("x-azcopy-sas,https://azure/container,"),
+                                                requires_valid_token_azcopy_sas_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,sas,invalid", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy-sas,https://azure/container,,readwrite",
+                                                col_after("x-azcopy-sas,https://azure/container,"),
+                                                requires_valid_token_azcopy_sas_error);
         }
         {
-            auto parsed = parse_binary_provider_configs("x-azcopy-sas,https://azure/container,sas,readwrite,extra", {});
-            REQUIRE(!parsed.has_value());
+            require_binary_provider_parse_error("x-azcopy-sas,https://azure/container,sas,invalid",
+                                                col_after("x-azcopy-sas,https://azure/container,sas,"),
+                                                "expected 'read', 'readwrite', or 'write'");
+        }
+        {
+            require_binary_provider_parse_error("x-azcopy-sas,https://azure/container,sas,readwrite,extra",
+                                                col_after("x-azcopy-sas,https://azure/container,sas,readwrite"),
+                                                "binary config 'x-azcopy-sas' requires 2 or 3 arguments");
         }
     }
 }
@@ -675,117 +973,373 @@ TEST_CASE ("BinaryConfigParser azcopy providers", "[binaryconfigparser]")
 TEST_CASE ("BinaryConfigParser GCS provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("x-gcs,gs://my-bucket/", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        require_binary_provider_parse_error(
+            "x-gcs", col_after("x-gcs"), "binary config 'gcs' requires a gs:// base url as the first argument");
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-gcs,gs://my-bucket/", {});
 
-        REQUIRE(state.gcs_read_prefixes == std::vector<std::string>{"gs://my-bucket/"});
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"gcs"}});
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS, BinaryCacheAccess::ReadWrite, "gs://my-bucket/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("x-gcs,gs://my-bucket/my-folder", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("x-gcs,gs://my-bucket/my-folder", {});
 
-        REQUIRE(state.gcs_read_prefixes == std::vector<std::string>{"gs://my-bucket/my-folder/"});
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"gcs"}});
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "gs://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("x-gcs,", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "x-gcs,", col_after("x-gcs,"), "binary config 'gcs' requires a gs:// base url as the first argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("x-gcs,gs://my-bucket/my-folder,invalid", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("x-gcs,gs://my-bucket/my-folder,invalid",
+                                            col_after("x-gcs,gs://my-bucket/my-folder,"),
+                                            "expected 'read', 'readwrite', or 'write'");
     }
     {
-        auto parsed = parse_binary_provider_configs("x-gcs,gs://my-bucket/my-folder,read", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("x-gcs,gs://my-bucket/my-folder,read", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"gcs"}});
-        REQUIRE(state.gcs_read_prefixes == std::vector<std::string>{"gs://my-bucket/my-folder/"});
-        REQUIRE(!state.archives_to_read.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
+                                                              BinaryCacheAccess::Read,
+                                                              "gs://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("x-gcs,gs://my-bucket/my-folder,write", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("x-gcs,gs://my-bucket/my-folder,write", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"gcs"}});
-        REQUIRE(state.gcs_write_prefixes == std::vector<std::string>{"gs://my-bucket/my-folder/"});
-        REQUIRE(!state.archives_to_write.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
+                                                              BinaryCacheAccess::Write,
+                                                              "gs://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("x-gcs,gs://my-bucket/my-folder,readwrite", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("x-gcs,gs://my-bucket/my-folder,readwrite", {});
 
-        REQUIRE(state.binary_cache_providers == std::set<StringLiteral>{{"default"}, {"gcs"}});
-        REQUIRE(state.gcs_write_prefixes == std::vector<std::string>{"gs://my-bucket/my-folder/"});
-        REQUIRE(state.gcs_read_prefixes == std::vector<std::string>{"gs://my-bucket/my-folder/"});
-        REQUIRE(!state.archives_to_write.empty());
-        REQUIRE(!state.archives_to_read.empty());
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::GCS,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "gs://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"gcs"}});
+    }
+}
+
+TEST_CASE ("BinaryConfigParser AWS provider", "[binaryconfigparser]")
+{
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-aws,s3://my-bucket/", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS, BinaryCacheAccess::ReadWrite, "s3://my-bucket/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-aws,s3://my-bucket/my-folder", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "s3://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
+    }
+    {
+        require_binary_provider_parse_error(
+            "x-aws,", col_after("x-aws,"), "binary config 'aws' requires a s3:// base url as the first argument");
+    }
+    {
+        require_binary_provider_parse_error("x-aws,s3://my-bucket/my-folder,invalid",
+                                            col_after("x-aws,s3://my-bucket/my-folder,"),
+                                            "expected 'read', 'readwrite', or 'write'");
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-aws,s3://my-bucket/my-folder,read", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
+                                                              BinaryCacheAccess::Read,
+                                                              "s3://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-aws,s3://my-bucket/my-folder,write", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
+                                                              BinaryCacheAccess::Write,
+                                                              "s3://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-aws,s3://my-bucket/my-folder,readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AWS,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "s3://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"aws"}});
+    }
+}
+
+TEST_CASE ("BinaryConfigParser AWS config provider", "[binaryconfigparser]")
+{
+    constexpr StringLiteral requires_single_string_argument_error =
+        "binary config 'x-aws-config' expects a single string argument";
+
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-aws-config,no-sign-request", {});
+
+        REQUIRE(parsed.providers.size() == 1);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        REQUIRE(parsed.aws_no_sign_request);
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}});
+    }
+    {
+        require_binary_provider_parse_error(
+            "x-aws-config", col_after("x-aws-config"), requires_single_string_argument_error);
+    }
+    {
+        require_binary_provider_parse_error("x-aws-config,invalid", col_after("x-aws-config,"), "invalid argument");
+    }
+    {
+        require_binary_provider_parse_error("x-aws-config,no-sign-request,extra",
+                                            col_after("x-aws-config,no-sign-request"),
+                                            requires_single_string_argument_error);
+    }
+}
+
+TEST_CASE ("BinaryConfigParser COS provider", "[binaryconfigparser]")
+{
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-cos,cos://my-bucket/", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::COS, BinaryCacheAccess::ReadWrite, "cos://my-bucket/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-cos,cos://my-bucket/my-folder", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "cos://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
+    }
+    {
+        require_binary_provider_parse_error(
+            "x-cos,", col_after("x-cos,"), "binary config 'cos' requires a cos:// base url as the first argument");
+    }
+    {
+        require_binary_provider_parse_error("x-cos,cos://my-bucket/my-folder,invalid",
+                                            col_after("x-cos,cos://my-bucket/my-folder,"),
+                                            "expected 'read', 'readwrite', or 'write'");
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-cos,cos://my-bucket/my-folder,read", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
+                                                              BinaryCacheAccess::Read,
+                                                              "cos://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-cos,cos://my-bucket/my-folder,write", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
+                                                              BinaryCacheAccess::Write,
+                                                              "cos://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("x-cos,cos://my-bucket/my-folder,readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::COS,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "cos://my-bucket/my-folder/"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"cos"}, {"default"}});
     }
 }
 
 TEST_CASE ("BinaryConfigParser HTTP provider", "[binaryconfigparser]")
 {
     {
-        auto parsed = parse_binary_provider_configs("http,http://example.org/", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-
-        REQUIRE(state.url_templates_to_get.size() == 1);
-        REQUIRE(state.url_templates_to_get[0].url_template == "http://example.org/{sha}.zip");
+        require_binary_provider_parse_error(
+            "http", col_after("http"), "binary config 'http' requires a https:// base url as the first argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("http,http://example.org", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-
-        REQUIRE(state.url_templates_to_get.size() == 1);
-        REQUIRE(state.url_templates_to_get[0].url_template == "http://example.org/{sha}.zip");
+        require_binary_provider_parse_error("http,ftp://example.org/",
+                                            col_after("http,"),
+                                            "binary config 'http' requires a https:// base url as the first argument");
     }
     {
-        auto parsed = parse_binary_provider_configs("http,http://example.org/{triplet}/{sha}", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
+        auto parsed = parse_binary_provider_configs_or_exit("http,http://example.org/", {});
 
-        REQUIRE(state.url_templates_to_get.size() == 1);
-        REQUIRE(state.url_templates_to_get[0].url_template == "http://example.org/{triplet}/{sha}");
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Http,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "http://example.org/{sha}.zip"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"http"}});
     }
     {
-        auto parsed = parse_binary_provider_configs("http,http://example.org/{triplet}", {});
-        REQUIRE(!parsed.has_value());
+        auto parsed = parse_binary_provider_configs_or_exit("http,http://example.org", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Http,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "http://example.org/{sha}.zip"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"http"}});
+    }
+    {
+        auto parsed = parse_binary_provider_configs_or_exit("http,http://example.org/{triplet}/{sha}", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Http,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "http://example.org/{triplet}/{sha}"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"http"}});
+    }
+    {
+        require_binary_provider_parse_error(
+            "http,http://example.org/{triplet}",
+            col_after("http,"),
+            "the {sha} variable must be used in the template if other variables are used");
+    }
+    {
+        require_binary_provider_parse_error("http,http://example.org/{other}/{sha}",
+                                            col_after("http,http://example.org/"),
+                                            "template contains unknown variable: other");
+    }
+    {
+        require_binary_provider_parse_error("http,http://example.org/,invalid",
+                                            col_after("http,http://example.org/,"),
+                                            "expected 'read', 'readwrite', or 'write'");
+    }
+    {
+        require_binary_provider_parse_error("http,http://example.org/,read,header,extra",
+                                            col_after("http,http://example.org/,read,header"),
+                                            "binary config 'http' requires 2 or 3 arguments");
     }
 }
 
 TEST_CASE ("BinaryConfigParser Universal Packages provider", "[binaryconfigparser]")
 {
+    constexpr StringLiteral requires_four_or_five_arguments_error =
+        "binary config 'Universal Packages' requires 4 or 5 arguments";
+
     // Scheme: x-az-universal,<organization>,<project>,<feed>[,<readwrite>]
     {
-        auto parsed =
-            parse_binary_provider_configs("x-az-universal,test_organization,test_project_name,test_feed,read", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(state.upkg_templates_to_get.size() == 1);
-        REQUIRE(state.upkg_templates_to_get[0].feed == "test_feed");
-        REQUIRE(state.upkg_templates_to_get[0].organization == "test_organization");
-        REQUIRE(state.upkg_templates_to_get[0].project == "test_project_name");
+        auto parsed = parse_binary_provider_configs_or_exit(
+            "x-az-universal,test_organization,test_project_name,test_feed,read", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzUniversal,
+                                                              BinaryCacheAccess::Read,
+                                                              "test_organization",
+                                                              "test_project_name",
+                                                              "test_feed"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"upkg"}});
     }
     {
-        auto parsed =
-            parse_binary_provider_configs("x-az-universal,test_organization,test_project_name,test_feed,readwrite", {});
-        auto state = parsed.value_or_exit(VCPKG_LINE_INFO);
-        REQUIRE(state.upkg_templates_to_get.size() == 1);
-        REQUIRE(state.upkg_templates_to_put.size() == 1);
-        REQUIRE(state.upkg_templates_to_get[0].feed == "test_feed");
-        REQUIRE(state.upkg_templates_to_get[0].organization == "test_organization");
-        REQUIRE(state.upkg_templates_to_get[0].project == "test_project_name");
-        REQUIRE(state.upkg_templates_to_put[0].feed == "test_feed");
-        REQUIRE(state.upkg_templates_to_put[0].organization == "test_organization");
-        REQUIRE(state.upkg_templates_to_put[0].project == "test_project_name");
+        auto parsed = parse_binary_provider_configs_or_exit(
+            "x-az-universal,test_organization,test_project_name,test_feed,readwrite", {});
+
+        REQUIRE(parsed.providers.size() == 2);
+        CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              DEFAULT_ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::AzUniversal,
+                                                              BinaryCacheAccess::ReadWrite,
+                                                              "test_organization",
+                                                              "test_project_name",
+                                                              "test_feed"});
+        REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"upkg"}});
     }
     {
-        auto parsed = parse_binary_provider_configs(
-            "x-az-universal,test_organization,test_project_name,test_feed,extra_argument,readwrite", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error(
+            "x-az-universal,test_organization,test_project_name,test_feed,extra_argument,readwrite",
+            col_after("x-az-universal,test_organization,test_project_name,test_feed,extra_argument"),
+            requires_four_or_five_arguments_error);
     }
     {
-        auto parsed = parse_binary_provider_configs("x-az-universal,missing_args,read", {});
-        REQUIRE(!parsed.has_value());
+        require_binary_provider_parse_error("x-az-universal,missing_args,read",
+                                            col_after("x-az-universal,missing_args,read"),
+                                            requires_four_or_five_arguments_error);
+    }
+    {
+        require_binary_provider_parse_error("x-az-universal,test_organization,test_project_name,test_feed,invalid",
+                                            col_after("x-az-universal,test_organization,test_project_name,test_feed,"),
+                                            "expected 'read', 'readwrite', or 'write'");
     }
 }
 

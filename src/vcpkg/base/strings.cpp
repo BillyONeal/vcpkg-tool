@@ -26,70 +26,53 @@ namespace vcpkg::Strings::details
     void append_internal(std::string& into, StringView s) { into.append(s.begin(), s.end()); }
 }
 
-Optional<std::string> vcpkg::details::api_stable_format_impl(DiagnosticContext& context,
-                                                             StringView sv,
-                                                             bool (*cb)(void*, std::string&, StringView),
-                                                             void* user)
+Optional<std::string> vcpkg::details::api_stable_format_impl(
+    DiagnosticContext& context,
+    const StackedEscapeParseDocument& fmtstr,
+    bool (*cb)(void*, DiagnosticContext&, std::string&, StringView, const StackedParseEnumerator&),
+    void* user)
 {
     // Transforms similarly to std::format -- "{xyz}" -> f(xyz), "{{" -> "{", "}}" -> "}"
-
-    static constexpr char s_brackets[] = "{}";
-
     std::string out;
-    auto prev = sv.begin();
-    const auto last = sv.end();
-    for (const char* p = std::find_first_of(prev, last, s_brackets, s_brackets + 2); p != last;
-         p = std::find_first_of(p, last, s_brackets, s_brackets + 2))
+    auto parser = fmtstr.enumerator();
+
+    for (;;)
     {
-        // p[0] == '{' or p[0] == '}'
-        out.append(prev, p);
-        const char ch = p[0];
-        ++p;
-        if (ch == '{')
+        auto before_brace = parser.match_while_ascii_passthrough([](char c) { return c != '{' && c != '}'; });
+        out.append(before_brace.begin(), before_brace.size());
+
+        if (parser.at_eof())
         {
-            if (p == last)
-            {
-                context.report_error(msg::format(msgInvalidFormatString, msg::actual = sv));
-                return nullopt;
-            }
-            else if (*p == '{')
+            return out;
+        }
+
+        auto match_position = parser;
+        if (parser.try_match_character('{'))
+        {
+            if (parser.try_match_character('{'))
             {
                 out.push_back('{');
-                prev = ++p;
+                continue;
             }
-            else
-            {
-                // Opened a group
-                const auto seq_start = p;
-                p = std::find_first_of(p, last, s_brackets, s_brackets + 2);
-                if (p == last || p[0] != '}')
-                {
-                    context.report_error(msg::format(msgInvalidFormatString, msg::actual = sv));
-                    return nullopt;
-                }
-                // p[0] == '}'
-                if (!cb(user, out, {seq_start, p}))
-                {
-                    return nullopt;
-                }
 
-                prev = ++p;
-            }
-        }
-        else if (ch == '}')
-        {
-            if (p == last || p[0] != '}')
+            auto variable_name = parser.match_while_ascii_passthrough([](char c) { return c != '{' && c != '}'; });
+            if (!parser.require_character(context, '}') || !cb(user, context, out, variable_name, match_position))
             {
-                context.report_error(msg::format(msgInvalidFormatString, msg::actual = sv));
                 return nullopt;
             }
-            out.push_back('}');
-            prev = ++p;
-        }
-    }
 
-    out.append(prev, last);
-    return out;
+            continue;
+        }
+
+        // parser is at '}' at this point
+        (void)parser.next(); // consume the '}'
+        if (!parser.require_character(context, '}'))
+        {
+            return nullopt;
+        }
+
+        out.push_back('}');
+    }
 }
 
 namespace

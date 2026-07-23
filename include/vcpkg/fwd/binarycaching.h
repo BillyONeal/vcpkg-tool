@@ -22,10 +22,43 @@ namespace vcpkg
         restored,  // the cache contains the ABI and it has been restored to the packages tree
     };
 
+    enum class BinaryCacheProviderKind
+    {
+        None,
+        Files,
+        NuGet,
+        NuGetConfig,
+        Http,
+        AzBlob,
+        AzCopy,
+        AzCopySas,
+        GCS,
+        AWS,
+        COS,
+        AzUniversal,
+    };
+
+    enum class BinaryCacheAccess
+    {
+        Read,
+        Write,
+        ReadWrite,
+    };
+
     struct IReadBinaryProvider;
     struct IWriteBinaryProvider;
     struct BinaryCache;
-    struct BinaryConfigParserState;
+    struct CacheStatus;
     struct BinaryPackageReadInfo;
     struct BinaryPackageWriteInfo;
+    struct UrlTemplate;
+    struct NuGetRepoInfo;
+    struct AzureUpkgSource;
+    struct AzCopyUrl;
+    struct BinaryCacheProviderEntry;
+    struct BinaryCacheParsedConfigs;
+    struct BinaryProviders;
+    struct ReadOnlyBinaryCache;
+    struct BinaryCacheSyncState;
+    struct BinaryCacheSynchronizer;
 }

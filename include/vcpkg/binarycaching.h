@@ -81,12 +81,12 @@ namespace vcpkg
         virtual ~IWriteBinaryProvider() = default;
 
         /// Called upon a successful build of `action` to store those contents in the binary cache.
-        /// returns the number of successful uploads
+        /// returns true if the upload succeeded
         ///
         /// Note that as this is considered non-fatal, only warnings or lower will be emitted to `context`.
-        virtual size_t push_success(DiagnosticContext& context,
-                                    const Filesystem& fs,
-                                    const BinaryPackageWriteInfo& request) = 0;
+        virtual bool push_success(DiagnosticContext& context,
+                                  const Filesystem& fs,
+                                  const BinaryPackageWriteInfo& request) = 0;
 
         virtual bool needs_nuspec_data() const = 0;
         virtual bool needs_zip_file() const = 0;
@@ -127,8 +127,9 @@ namespace vcpkg
     {
         std::string url_template;
         std::vector<std::string> headers;
+        bool has_sha = false;
+        bool has_other = false;
 
-        LocalizedString valid() const;
         std::string instantiate_variables(const BinaryPackageReadInfo& info) const;
     };
 
@@ -155,53 +156,61 @@ namespace vcpkg
         std::string make_container_path() const;
     };
 
-    struct BinaryConfigParserState
+    // Turns:
+    // - <XXXX>-<YY>-<ZZ><whatever> -> <X>.<Y>.<Z>-vcpkg<abitag>
+    // - v?<X> -> <X>.0.0-vcpkg<abitag>
+    //   - this avoids turning 20-01-01 into 20.0.0-vcpkg<abitag>
+    // - v?<X>.<Y><whatever> -> <X>.<Y>.0-vcpkg<abitag>
+    // - v?<X>.<Y>.<Z><whatever> -> <X>.<Y>.<Z>-vcpkg<abitag>
+    // - anything else -> 0.0.0-vcpkg<abitag>
+    std::string format_version_for_feedref(StringView version_text, StringView abi_tag);
+
+    struct FeedReference
     {
-        bool nuget_interactive = false;
-        std::set<StringLiteral> binary_cache_providers;
+        FeedReference(std::string id, std::string version);
 
-        std::string nugettimeout = "100";
+        std::string id;
+        std::string version;
 
-        std::vector<Path> archives_to_read;
-        std::vector<Path> archives_to_write;
-
-        std::vector<UrlTemplate> url_templates_to_get;
-        std::vector<UrlTemplate> url_templates_to_put;
-
-        std::vector<UrlTemplate> azblob_templates_to_put;
-
-        std::vector<AzCopyUrl> azcopy_read_templates;
-        std::vector<AzCopyUrl> azcopy_write_templates;
-
-        std::vector<std::string> gcs_read_prefixes;
-        std::vector<std::string> gcs_write_prefixes;
-
-        std::vector<std::string> aws_read_prefixes;
-        std::vector<std::string> aws_write_prefixes;
-        bool aws_no_sign_request = false;
-
-        std::vector<std::string> cos_read_prefixes;
-        std::vector<std::string> cos_write_prefixes;
-
-        std::vector<AzureUpkgSource> upkg_templates_to_get;
-        std::vector<AzureUpkgSource> upkg_templates_to_put;
-
-        std::vector<std::string> sources_to_read;
-        std::vector<std::string> sources_to_write;
-
-        std::vector<Path> configs_to_read;
-        std::vector<Path> configs_to_write;
-
-        std::vector<std::string> secrets;
-
-        // These are filled in after construction by reading from args and environment
-        std::string nuget_prefix;
-        bool use_nuget_cache = false;
-
-        void clear();
+        std::string nupkg_filename() const;
     };
 
-    ExpectedL<BinaryConfigParserState> parse_binary_provider_configs(const std::string& env_string,
+    FeedReference make_nugetref(const InstallPlanAction& action, StringView prefix);
+
+    std::string generate_nuspec(const Path& package_dir,
+                                const InstallPlanAction& action,
+                                StringView id_prefix,
+                                const NuGetRepoInfo& repo_info);
+    StringLiteral to_string_literal(BinaryCacheProviderKind kind);
+
+    StringLiteral to_string_literal(BinaryCacheAccess access);
+
+    struct BinaryCacheProviderEntry
+    {
+        BinaryCacheProviderKind kind;
+        BinaryCacheAccess access;
+        Optional<std::string> arg1;
+        Optional<std::string> arg2;
+        Optional<std::string> arg3;
+
+        friend bool operator==(const BinaryCacheProviderEntry& lhs, const BinaryCacheProviderEntry& rhs);
+        friend bool operator!=(const BinaryCacheProviderEntry& lhs, const BinaryCacheProviderEntry& rhs);
+        void to_string(std::string& out) const;
+        std::string to_string() const;
+    };
+
+    struct BinaryCacheParsedConfigs
+    {
+        std::vector<BinaryCacheProviderEntry> providers;
+        std::set<StringLiteral> telemetry_tags;
+        bool nuget_interactive = false;
+        bool aws_no_sign_request = false;
+        long nuget_timeout = 100;
+    };
+
+    Optional<BinaryCacheParsedConfigs> parse_binary_provider_configs(DiagnosticContext&,
+                                                                     const Path& default_cache_path,
+                                                                     const std::string& env_string,
                                                                      View<std::string> args);
 
     struct BinaryProviders
@@ -243,7 +252,6 @@ namespace vcpkg
         std::unordered_map<std::string, CacheStatus> m_status;
     };
 
-    struct BinaryCacheSyncState;
     struct BinaryCacheSynchronizer
     {
         using backing_uint_t = std::conditional_t<sizeof(size_t) == 4, uint32_t, uint64_t>;
@@ -337,3 +345,7 @@ namespace vcpkg
         const std::size_t fixed_len,
         const std::size_t separator_len);
 }
+
+VCPKG_FORMAT_WITH_TO_STRING_LITERAL_NONMEMBER(vcpkg::BinaryCacheProviderKind);
+VCPKG_FORMAT_WITH_TO_STRING_LITERAL_NONMEMBER(vcpkg::BinaryCacheAccess);
+VCPKG_FORMAT_WITH_TO_STRING(vcpkg::BinaryCacheProviderEntry);

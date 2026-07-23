@@ -19,7 +19,6 @@
 
 #include <vcpkg/archives.h>
 #include <vcpkg/binarycaching.h>
-#include <vcpkg/binarycaching.private.h>
 #include <vcpkg/dependencies.h>
 #include <vcpkg/documentation.h>
 #include <vcpkg/metrics.h>
@@ -248,63 +247,54 @@ namespace
 
     struct FilesWriteBinaryProvider : IWriteBinaryProvider
     {
-        FilesWriteBinaryProvider(std::vector<Path>&& dirs) : m_dirs(std::move(dirs)) { }
+        FilesWriteBinaryProvider(Path&& dir) : m_dir(std::move(dir)) { }
 
-        size_t push_success(DiagnosticContext& context,
-                            const Filesystem& fs,
-                            const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem& fs,
+                          const BinaryPackageWriteInfo& request) override
         {
             const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
-            size_t count_stored = 0;
-            // Can't rename if zip_path should be coppied to multiple locations;
-            // otherwise, the original file would be gone.
-            const bool can_attempt_rename = m_dirs.size() == 1 && request.unique_write_provider;
-            for (const auto& archives_root_dir : m_dirs)
+            const auto archive_parent_path = m_dir / files_archive_parent_path(request.package_abi);
+            fs.create_directories(archive_parent_path, IgnoreErrors{});
+            const auto archive_path = archive_parent_path / (request.package_abi + ".zip");
+            const auto archive_temp_path = Path(fmt::format("{}.{}", archive_path.native(), get_process_id()));
+            std::error_code ec;
+            if (request.unique_write_provider)
             {
-                const auto archive_parent_path = archives_root_dir / files_archive_parent_path(request.package_abi);
-                fs.create_directories(archive_parent_path, IgnoreErrors{});
-                const auto archive_path = archive_parent_path / (request.package_abi + ".zip");
-                const auto archive_temp_path = Path(fmt::format("{}.{}", archive_path.native(), get_process_id()));
-                std::error_code ec;
-                if (can_attempt_rename)
-                {
-                    fs.rename_or_delete(zip_path, archive_path, ec);
-                }
+                fs.rename_or_delete(zip_path, archive_path, ec);
+            }
 
-                if (!can_attempt_rename || (ec && ec == std::make_error_condition(std::errc::cross_device_link)))
+            if (!request.unique_write_provider || (ec && ec == std::make_error_condition(std::errc::cross_device_link)))
+            {
+                // either we need to make a copy or the rename failed because buildtrees and the binary
+                // cache write target are on different filesystems, copy to a sibling in that directory and rename
+                // into place
+                // First copy to temporary location to avoid race between different vcpkg instances trying to upload
+                // the same archive, e.g. if 2 machines try to upload to a shared binary cache.
+                fs.copy_file(zip_path, archive_temp_path, CopyOptions::overwrite_existing, ec);
+                if (!ec)
                 {
-                    // either we need to make a copy or the rename failed because buildtrees and the binary
-                    // cache write target are on different filesystems, copy to a sibling in that directory and rename
-                    // into place
-                    // First copy to temporary location to avoid race between different vcpkg instances trying to upload
-                    // the same archive, e.g. if 2 machines try to upload to a shared binary cache.
-                    fs.copy_file(zip_path, archive_temp_path, CopyOptions::overwrite_existing, ec);
-                    if (!ec)
-                    {
-                        fs.rename_or_delete(archive_temp_path, archive_path, ec);
-                    }
-                }
-
-                if (ec)
-                {
-                    context.report(DiagnosticLine{DiagKind::Warning,
-                                                  msg::format(msgFailedToStoreBinaryCache, msg::path = archive_path)
-                                                      .append_raw('\n')
-                                                      .append_raw(ec.message())});
-                }
-                else
-                {
-                    count_stored++;
+                    fs.rename_or_delete(archive_temp_path, archive_path, ec);
                 }
             }
-            return count_stored;
+
+            if (ec)
+            {
+                context.report(DiagnosticLine{DiagKind::Warning,
+                                              msg::format(msgFailedToStoreBinaryCache, msg::path = archive_path)
+                                                  .append_raw('\n')
+                                                  .append_raw(ec.message())});
+                return false;
+            }
+
+            return true;
         }
 
         bool needs_nuspec_data() const override { return false; }
         bool needs_zip_file() const override { return true; }
 
     private:
-        std::vector<Path> m_dirs;
+        Path m_dir;
     };
 
     enum class RemoveWhen
@@ -473,37 +463,25 @@ namespace
 
     struct HTTPPutBinaryProvider : IWriteBinaryProvider
     {
-        HTTPPutBinaryProvider(std::vector<UrlTemplate>&& urls, const std::vector<std::string>& secrets)
-            : m_urls(std::move(urls)), m_secrets(secrets)
+        HTTPPutBinaryProvider(UrlTemplate&& url, const std::vector<std::string>& secrets)
+            : m_url(std::move(url)), m_secrets(secrets)
         {
         }
 
-        size_t push_success(DiagnosticContext& context,
-                            const Filesystem&,
-                            const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
         {
-            if (!request.zip_path) return 0;
+            if (!request.zip_path) return false;
             const auto& zip_path = *request.zip_path.get();
-            size_t count_stored = 0;
-            for (auto&& templ : m_urls)
-            {
-                auto url = templ.instantiate_variables(request);
-                WarningDiagnosticContext wdc{context};
-                auto maybe_success =
-                    store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, templ.headers, zip_path);
-                if (maybe_success)
-                {
-                    count_stored++;
-                }
-            }
-            return count_stored;
+            auto url = m_url.instantiate_variables(request);
+            WarningDiagnosticContext wdc{context};
+            return store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url.headers, zip_path);
         }
 
         bool needs_nuspec_data() const override { return false; }
         bool needs_zip_file() const override { return true; }
 
     private:
-        std::vector<UrlTemplate> m_urls;
+        UrlTemplate m_url;
         std::vector<std::string> m_secrets;
     };
 
@@ -582,22 +560,21 @@ namespace
 
     struct AzureBlobPutBinaryProvider : IWriteBinaryProvider
     {
-        AzureBlobPutBinaryProvider(std::vector<UrlTemplate>&& urls, const std::vector<std::string>& secrets)
-            : m_urls(std::move(urls)), m_secrets(secrets)
+        AzureBlobPutBinaryProvider(UrlTemplate&& url, const std::vector<std::string>& secrets)
+            : m_url(std::move(url)), m_secrets(secrets)
         {
         }
 
-        size_t push_success(DiagnosticContext& context,
-                            const Filesystem& fs,
-                            const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem& fs,
+                          const BinaryPackageWriteInfo& request) override
         {
-            if (!request.zip_path) return 0;
+            if (!request.zip_path) return false;
 
             const auto& zip_path = *request.zip_path.get();
 
-            size_t count_stored = 0;
             const auto file_size = fs.file_size(zip_path, VCPKG_LINE_INFO);
-            if (file_size == 0) return count_stored;
+            if (file_size == 0) return false;
 
             // cf.
             // https://learn.microsoft.com/en-us/rest/api/storageservices/understanding-block-blobs--append-blobs--and-page-blobs?toc=%2Fazure%2Fstorage%2Fblobs%2Ftoc.json
@@ -605,26 +582,16 @@ namespace
             bool use_azcopy = file_size > max_single_write;
 
             WarningDiagnosticContext wdc{context};
-
-            for (auto&& templ : m_urls)
-            {
-                auto url = templ.instantiate_variables(request);
-                auto maybe_success =
-                    use_azcopy ? azcopy_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, zip_path)
-                               : store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, templ.headers, zip_path);
-                if (maybe_success)
-                {
-                    count_stored++;
-                }
-            }
-            return count_stored;
+            auto url = m_url.instantiate_variables(request);
+            return use_azcopy ? azcopy_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, zip_path)
+                              : store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url.headers, zip_path);
         }
 
         bool needs_nuspec_data() const override { return false; }
         bool needs_zip_file() const override { return true; }
 
     private:
-        std::vector<UrlTemplate> m_urls;
+        UrlTemplate m_url;
         std::vector<std::string> m_secrets;
     };
 
@@ -666,10 +633,8 @@ namespace
 
     struct NuGetTool
     {
-        NuGetTool(NuGetToolTools&& nuget_tools, const BinaryConfigParserState& shared)
-            : m_timeout(shared.nugettimeout)
-            , m_interactive(shared.nuget_interactive)
-            , m_use_nuget_cache(shared.use_nuget_cache)
+        NuGetTool(NuGetToolTools&& nuget_tools, long timeout, bool interactive, bool use_nuget_cache)
+            : m_timeout(std::to_string(timeout)), m_interactive(interactive), m_use_nuget_cache(use_nuget_cache)
         {
 #ifndef _WIN32
             m_cmd.string_arg(std::move(nuget_tools.mono_tool));
@@ -935,22 +900,19 @@ namespace
 
     struct NugetBinaryPushProvider : IWriteBinaryProvider, private NugetBaseBinaryProvider
     {
-        NugetBinaryPushProvider(const NugetBaseBinaryProvider& base,
-                                std::vector<std::string>&& sources,
-                                std::vector<Path>&& configs)
-            : NugetBaseBinaryProvider(base), m_sources(std::move(sources)), m_configs(std::move(configs))
+        NugetBinaryPushProvider(const NugetBaseBinaryProvider& base, NuGetSource src)
+            : NugetBaseBinaryProvider(base), m_src(std::move(src))
         {
         }
 
-        std::vector<std::string> m_sources;
-        std::vector<Path> m_configs;
+        NuGetSource m_src;
 
         bool needs_nuspec_data() const override { return true; }
         bool needs_zip_file() const override { return false; }
 
-        size_t push_success(DiagnosticContext& context,
-                            const Filesystem& fs,
-                            const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context,
+                          const Filesystem& fs,
+                          const BinaryPackageWriteInfo& request) override
         {
             auto& spec = request.spec;
             auto nuspec_path = m_buildtrees / spec.name() / spec.triplet().canonical_name() + ".nuspec";
@@ -962,38 +924,26 @@ namespace
                 context.report_error(
                     format_filesystem_call_error(ec, "write_contents", {nuspec_path, nuspec_contents}));
                 context.report(DiagnosticLine{DiagKind::Note, msg::format(msgWhilePackingNuGetPackage)});
-                return 0;
+                return false;
             }
 
             auto pack_result = m_cmd.pack(context, nuspec_path, m_buildtrees);
             fs.remove(nuspec_path, IgnoreErrors{});
             if (!pack_result)
             {
-                return 0;
+                return false;
             }
 
-            size_t count_stored = 0;
             auto nupkg_path = m_buildtrees / make_feedref(request, m_nuget_prefix).nupkg_filename();
-            for (auto&& write_src : m_sources)
-            {
-                context.statusln(msg::format(msgUploadingBinariesToVendor,
-                                             msg::spec = request.display_name,
-                                             msg::vendor = "NuGet",
-                                             msg::path = write_src));
-                count_stored += m_cmd.push(context, nupkg_path, nuget_sources_arg({&write_src, 1}));
-            }
-
-            for (auto&& write_cfg : m_configs)
-            {
-                context.statusln(msg::format(msgUploadingBinariesToVendor,
-                                             msg::spec = spec,
-                                             msg::vendor = "NuGet config",
-                                             msg::path = write_cfg));
-                count_stored += m_cmd.push(context, nupkg_path, nuget_configfile_arg(write_cfg));
-            }
+            const auto vendor = m_src.option == "-ConfigFile" ? "NuGet config" : "NuGet";
+            context.statusln(msg::format(msgUploadingBinariesToVendor,
+                                         msg::spec = request.display_name,
+                                         msg::vendor = vendor,
+                                         msg::path = m_src.value));
+            const auto stored = m_cmd.push(context, nupkg_path, m_src);
 
             fs.remove(nupkg_path, IgnoreErrors{});
-            return count_stored;
+            return stored;
         }
     };
 
@@ -1081,8 +1031,8 @@ namespace
     };
     struct ObjectStoragePushProvider : IWriteBinaryProvider
     {
-        ObjectStoragePushProvider(std::vector<std::string>&& prefixes, std::shared_ptr<const IObjectStorageTool> tool)
-            : m_prefixes(std::move(prefixes)), m_tool(std::move(tool))
+        ObjectStoragePushProvider(std::string&& prefix, std::shared_ptr<const IObjectStorageTool> tool)
+            : m_prefix(std::move(prefix)), m_tool(std::move(tool))
         {
         }
 
@@ -1091,27 +1041,21 @@ namespace
             return Strings::concat(prefix, abi, ".zip");
         }
 
-        size_t push_success(DiagnosticContext& context,
-                            const Filesystem&,
-                            const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
         {
-            size_t upload_count = 0;
             if (auto zip_path = request.zip_path.get())
             {
                 WarningDiagnosticContext wdc{context};
-                for (const auto& prefix : m_prefixes)
-                {
-                    upload_count += m_tool->upload_file(wdc, make_object_path(prefix, request.package_abi), *zip_path);
-                }
+                return m_tool->upload_file(wdc, make_object_path(m_prefix, request.package_abi), *zip_path);
             }
 
-            return upload_count;
+            return false;
         }
 
         bool needs_nuspec_data() const override { return false; }
         bool needs_zip_file() const override { return true; }
 
-        std::vector<std::string> m_prefixes;
+        std::string m_prefix;
         std::shared_ptr<const IObjectStorageTool> m_tool;
     };
 
@@ -1263,8 +1207,8 @@ namespace
     };
     struct AzCopyStoragePushProvider : IWriteBinaryProvider
     {
-        AzCopyStoragePushProvider(std::vector<AzCopyUrl>&& containers, const Path& tool)
-            : m_containers(std::move(containers)), m_tool(tool)
+        AzCopyStoragePushProvider(AzCopyUrl&& container, const Path& tool)
+            : m_container(std::move(container)), m_tool(tool)
         {
         }
 
@@ -1283,25 +1227,17 @@ namespace
             return check_zero_exit_code(context, cmd, maybe_code_and_output);
         }
 
-        size_t push_success(DiagnosticContext& context,
-                            const Filesystem&,
-                            const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
         {
             const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
-            size_t upload_count = 0;
             WarningDiagnosticContext wdc{context};
-            for (const auto& container : m_containers)
-            {
-                upload_count += upload_file(wdc, container.make_object_path(request.package_abi), zip_path);
-            }
-
-            return upload_count;
+            return upload_file(wdc, m_container.make_object_path(request.package_abi), zip_path);
         }
 
         bool needs_nuspec_data() const override { return false; }
         bool needs_zip_file() const override { return true; }
 
-        std::vector<AzCopyUrl> m_containers;
+        AzCopyUrl m_container;
         Path m_tool;
     };
 
@@ -1577,28 +1513,19 @@ namespace
 
     struct AzureUpkgPutBinaryProvider : public IWriteBinaryProvider
     {
-        AzureUpkgPutBinaryProvider(const Path& tool_path, std::vector<AzureUpkgSource>&& sources)
-            : m_azure_tool(tool_path), m_sources(std::move(sources))
+        AzureUpkgPutBinaryProvider(const Path& tool_path, AzureUpkgSource&& source)
+            : m_azure_tool(tool_path), m_source(std::move(source))
         {
         }
 
-        size_t push_success(DiagnosticContext& context,
-                            const Filesystem&,
-                            const BinaryPackageWriteInfo& request) override
+        bool push_success(DiagnosticContext& context, const Filesystem&, const BinaryPackageWriteInfo& request) override
         {
-            size_t count_stored = 0;
             auto ref = make_feedref(request, "");
             std::string package_description = "Cached package for " + ref.id;
 
             const Path& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
             WarningDiagnosticContext wdc{context};
-            for (auto&& write_src : m_sources)
-            {
-                count_stored +=
-                    m_azure_tool.publish(wdc, write_src, ref.id, ref.version, zip_path, package_description);
-            }
-
-            return count_stored;
+            return m_azure_tool.publish(wdc, m_source, ref.id, ref.version, zip_path, package_description);
         }
 
         bool needs_nuspec_data() const override { return false; }
@@ -1606,7 +1533,7 @@ namespace
 
     private:
         AzureUpkgTool m_azure_tool;
-        std::vector<AzureUpkgSource> m_sources;
+        AzureUpkgSource m_source;
     };
 
     struct AzureUpkgGetBinaryProvider : public ZipReadBinaryProvider
@@ -1671,7 +1598,7 @@ namespace
         const Path& m_buildtrees;
     };
 
-    ExpectedL<Path> default_cache_path_impl()
+    Optional<Path> default_cache_path(DiagnosticContext& context)
     {
         auto maybe_cachepath = get_environment_variable_nonempty(EnvironmentVariableVcpkgDefaultBinaryCache);
         if (const auto pcachepath = maybe_cachepath.get())
@@ -1681,546 +1608,39 @@ namespace
             path.make_preferred();
             if (!real_filesystem.is_directory(path))
             {
-                return msg::format(msgDefaultBinaryCacheRequiresDirectory, msg::path = path);
+                context.report(
+                    DiagnosticLine{DiagKind::Error, path, msg::format(msgDefaultBinaryCacheRequiresDirectory)});
+                return nullopt;
             }
 
             if (!path.is_absolute())
             {
-                return msg::format(msgDefaultBinaryCacheRequiresAbsolutePath, msg::path = path);
+                context.report(
+                    DiagnosticLine{DiagKind::Error, path, msg::format(msgDefaultBinaryCacheRequiresAbsolutePath)});
+                return nullopt;
             }
 
-            return std::move(path);
+            return path;
         }
 
-        return get_platform_cache_vcpkg().then([](Path p) -> ExpectedL<Path> {
-            if (p.is_absolute())
+        auto maybe_platform_cache = get_platform_cache_vcpkg();
+        if (auto platform_cache = maybe_platform_cache.get())
+        {
+            if (platform_cache->is_absolute())
             {
-                p /= "archives";
-                p.make_preferred();
-                return std::move(p);
+                *platform_cache /= "archives";
+                platform_cache->make_preferred();
+                return std::move(*platform_cache);
             }
 
-            return msg::format(msgDefaultBinaryCachePlatformCacheRequiresAbsolutePath, msg::path = p);
-        });
+            context.report(DiagnosticLine{
+                DiagKind::Error, *platform_cache, msg::format(msgDefaultBinaryCachePlatformCacheRequiresAbsolutePath)});
+            return nullopt;
+        }
+
+        context.report_error(LocalizedString{maybe_platform_cache.error()});
+        return nullopt;
     }
-
-    const ExpectedL<Path>& default_cache_path()
-    {
-        static auto cachepath = default_cache_path_impl();
-        return cachepath;
-    }
-
-    struct BinaryConfigParser : ConfigSegmentsParser
-    {
-        BinaryConfigParser(StringView text, Optional<StringView> origin, BinaryConfigParserState* state)
-            : ConfigSegmentsParser(text, origin, {0, 0}), state(state)
-        {
-        }
-
-        BinaryConfigParserState* state;
-
-        void parse()
-        {
-            auto all_segments = parse_all_segments();
-            for (auto&& x : all_segments)
-            {
-                if (messages().any_errors()) return;
-                handle_segments(std::move(x));
-            }
-        }
-
-    private:
-        bool check_azure_base_url(const std::pair<SourceLoc, std::string>& candidate_segment,
-                                  StringLiteral binary_source)
-        {
-            if (!Strings::starts_with(candidate_segment.second, "https://") &&
-                // Allow unencrypted Azurite for testing (not reflected in error msg)
-                !Strings::starts_with(candidate_segment.second, "http://127.0.0.1"))
-            {
-                add_error(msg::format(msgInvalidArgumentRequiresBaseUrl,
-                                      msg::base_url = "https://",
-                                      msg::binary_source = binary_source),
-                          candidate_segment.first);
-                return false;
-            }
-
-            return true;
-        }
-
-        void handle_azcopy_segments(const std::vector<std::pair<SourceLoc, std::string>>& segments)
-        {
-            // Scheme: x-azcopy,<baseurl>[,<readwrite>]
-            if (segments.size() < 2)
-            {
-                add_error(msg::format(msgInvalidArgumentRequiresBaseUrl,
-                                      msg::base_url = "https://",
-                                      msg::binary_source = "x-azcopy"),
-                          segments[0].first);
-                return;
-            }
-
-            if (segments.size() > 3)
-            {
-                add_error(msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "x-azcopy"),
-                          segments[3].first);
-                return;
-            }
-
-            // handle base URL
-            if (!check_azure_base_url(segments[1], "x-azcopy"))
-            {
-                return;
-            }
-
-            handle_readwrite(
-                state->azcopy_read_templates, state->azcopy_write_templates, {segments[1].second, ""}, segments, 2);
-
-            // We count azcopy and azcopy-sas as the same provider
-            state->binary_cache_providers.insert("azcopy");
-        }
-
-        void handle_azcopy_sas_segments(const std::vector<std::pair<SourceLoc, std::string>>& segments)
-        {
-            // Scheme: x-azcopy-sas,<baseurl>,<sas>[,<readwrite>]
-            if (segments.size() < 3)
-            {
-                add_error(msg::format(msgInvalidArgumentRequiresBaseUrlAndToken, msg::binary_source = "x-azcopy-sas"),
-                          segments[0].first);
-                return;
-            }
-
-            if (segments.size() > 4)
-            {
-                add_error(
-                    msg::format(msgInvalidArgumentRequiresTwoOrThreeArguments, msg::binary_source = "x-azcopy-sas"),
-                    segments[4].first);
-                return;
-            }
-
-            if (!check_azure_base_url(segments[1], "x-azcopy-sas"))
-            {
-                return;
-            }
-
-            // handle SAS token
-            const auto& sas = segments[2].second;
-            if (sas.empty() || Strings::starts_with(sas, "?"))
-            {
-                return add_error(msg::format(msgInvalidArgumentRequiresValidToken, msg::binary_source = "x-azcopy-sas"),
-                                 segments[2].first);
-            }
-            state->secrets.push_back(sas);
-
-            handle_readwrite(
-                state->azcopy_read_templates, state->azcopy_write_templates, {segments[1].second, sas}, segments, 3);
-
-            // We count azcopy and azcopy-sas as the same provider
-            state->binary_cache_providers.insert("azcopy-sas");
-        }
-
-        void handle_segments(std::vector<std::pair<SourceLoc, std::string>>&& segments)
-        {
-            Checks::check_exit(VCPKG_LINE_INFO, !segments.empty());
-            if (segments[0].second == "clear")
-            {
-                if (segments.size() != 1)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresNoneArguments, msg::binary_source = "clear"),
-                                     segments[1].first);
-                }
-
-                state->clear();
-            }
-            else if (segments[0].second == "files")
-            {
-                if (segments.size() < 2)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresPathArgument, msg::binary_source = "files"),
-                                     segments[0].first);
-                }
-
-                Path p = segments[1].second;
-                if (!p.is_absolute())
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresAbsolutePath, msg::binary_source = "files"),
-                                     segments[1].first);
-                }
-
-                handle_readwrite(state->archives_to_read, state->archives_to_write, std::move(p), segments, 2);
-                if (segments.size() > 3)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "files"),
-                        segments[3].first);
-                }
-                state->binary_cache_providers.insert("files");
-            }
-            else if (segments[0].second == "interactive")
-            {
-                if (segments.size() > 1)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresNoneArguments, msg::binary_source = "interactive"),
-                        segments[1].first);
-                }
-
-                state->nuget_interactive = true;
-            }
-            else if (segments[0].second == "nugetconfig")
-            {
-                if (segments.size() < 2)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresSourceArgument, msg::binary_source = "nugetconfig"),
-                        segments[0].first);
-                }
-
-                Path p = segments[1].second;
-                if (!p.is_absolute())
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresAbsolutePath, msg::binary_source = "nugetconfig"),
-                        segments[1].first);
-                }
-
-                handle_readwrite(state->configs_to_read, state->configs_to_write, std::move(p), segments, 2);
-                if (segments.size() > 3)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "nugetconfig"),
-                        segments[3].first);
-                }
-                state->binary_cache_providers.insert("nuget");
-            }
-            else if (segments[0].second == "nuget")
-            {
-                if (segments.size() < 2)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresSourceArgument, msg::binary_source = "nuget"),
-                        segments[0].first);
-                }
-
-                auto&& p = segments[1].second;
-                if (p.empty())
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresSourceArgument, msg::binary_source = "nuget"));
-                }
-
-                handle_readwrite(state->sources_to_read, state->sources_to_write, std::move(p), segments, 2);
-                if (segments.size() > 3)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "nuget"),
-                        segments[3].first);
-                }
-                state->binary_cache_providers.insert("nuget");
-            }
-            else if (segments[0].second == "nugettimeout")
-            {
-                if (segments.size() != 2)
-                {
-                    return add_error(msg::format(msgNuGetTimeoutExpectsSinglePositiveInteger));
-                }
-
-                long timeout = Strings::strto<long>(segments[1].second).value_or(-1);
-                if (timeout <= 0)
-                {
-                    return add_error(msg::format(msgNuGetTimeoutExpectsSinglePositiveInteger));
-                }
-
-                state->nugettimeout = std::to_string(timeout);
-                state->binary_cache_providers.insert("nuget");
-            }
-            else if (segments[0].second == "default")
-            {
-                if (segments.size() > 2)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresSingleArgument, msg::binary_source = "default"),
-                        segments[0].first);
-                }
-
-                const auto& maybe_home = default_cache_path();
-                if (!maybe_home)
-                {
-                    return add_error(LocalizedString{maybe_home.error()}, segments[0].first);
-                }
-
-                handle_readwrite(
-                    state->archives_to_read, state->archives_to_write, Path(*maybe_home.get()), segments, 1);
-                state->binary_cache_providers.insert("default");
-            }
-            else if (segments[0].second == "x-azblob")
-            {
-                // Scheme: x-azblob,<baseurl>,<sas>[,<readwrite>]
-                if (segments.size() < 3)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresBaseUrlAndToken, msg::binary_source = "azblob"),
-                        segments[0].first);
-                }
-
-                if (!check_azure_base_url(segments[1], "azblob"))
-                {
-                    return;
-                }
-
-                // <url>/{sha}.zip[?<sas>]
-                AzCopyUrl p;
-                p.url = segments[1].second;
-
-                const auto& sas = segments[2].second;
-                if (sas.empty() || Strings::starts_with(sas, "?"))
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresValidToken, msg::binary_source = "azblob"),
-                                     segments[2].first);
-                }
-                state->secrets.push_back(sas);
-                p.sas = sas;
-
-                if (segments.size() > 4)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresTwoOrThreeArguments, msg::binary_source = "azblob"),
-                        segments[4].first);
-                }
-
-                UrlTemplate url_template = {p.make_object_path("{sha}")};
-                bool read = false, write = false;
-                handle_readwrite(read, write, segments, 3);
-                if (read) state->url_templates_to_get.push_back(url_template);
-                auto headers = azure_blob_headers();
-                url_template.headers.assign(headers.begin(), headers.end());
-                if (write) state->azblob_templates_to_put.push_back(url_template);
-
-                state->binary_cache_providers.insert("azblob");
-            }
-            else if (segments[0].second == "x-gcs")
-            {
-                // Scheme: x-gcs,<prefix>[,<readwrite>]
-                if (segments.size() < 2)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresPrefix, msg::binary_source = "gcs"),
-                                     segments[0].first);
-                }
-
-                if (!Strings::starts_with(segments[1].second, "gs://"))
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresBaseUrl,
-                                                 msg::base_url = "gs://",
-                                                 msg::binary_source = "gcs"),
-                                     segments[1].first);
-                }
-
-                if (segments.size() > 3)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "gcs"),
-                        segments[3].first);
-                }
-
-                auto p = segments[1].second;
-                if (p.back() != '/')
-                {
-                    p.push_back('/');
-                }
-
-                handle_readwrite(state->gcs_read_prefixes, state->gcs_write_prefixes, std::move(p), segments, 2);
-
-                state->binary_cache_providers.insert("gcs");
-            }
-            else if (segments[0].second == "x-aws")
-            {
-                // Scheme: x-aws,<prefix>[,<readwrite>]
-                if (segments.size() < 2)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresPrefix, msg::binary_source = "aws"),
-                                     segments[0].first);
-                }
-
-                if (!Strings::starts_with(segments[1].second, "s3://"))
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresBaseUrl,
-                                                 msg::base_url = "s3://",
-                                                 msg::binary_source = "aws"),
-                                     segments[1].first);
-                }
-
-                if (segments.size() > 3)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "aws"),
-                        segments[3].first);
-                }
-
-                auto p = segments[1].second;
-                if (p.back() != '/')
-                {
-                    p.push_back('/');
-                }
-
-                handle_readwrite(state->aws_read_prefixes, state->aws_write_prefixes, std::move(p), segments, 2);
-
-                state->binary_cache_providers.insert("aws");
-            }
-            else if (segments[0].second == "x-aws-config")
-            {
-                if (segments.size() != 2)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresSingleStringArgument,
-                                                 msg::binary_source = "x-aws-config"));
-                }
-
-                bool no_sign_request = false;
-                if (segments[1].second == "no-sign-request")
-                {
-                    no_sign_request = true;
-                }
-                else
-                {
-                    return add_error(msg::format(msgInvalidArgument), segments[1].first);
-                }
-
-                state->aws_no_sign_request = no_sign_request;
-                state->binary_cache_providers.insert("aws");
-            }
-            else if (segments[0].second == "x-cos")
-            {
-                // Scheme: x-cos,<prefix>[,<readwrite>]
-                if (segments.size() < 2)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresPrefix, msg::binary_source = "cos"),
-                                     segments[0].first);
-                }
-
-                if (!Strings::starts_with(segments[1].second, "cos://"))
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresBaseUrl,
-                                                 msg::base_url = "cos://",
-                                                 msg::binary_source = "cos"),
-                                     segments[1].first);
-                }
-
-                if (segments.size() > 3)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "cos"),
-                        segments[3].first);
-                }
-
-                auto p = segments[1].second;
-                if (p.back() != '/')
-                {
-                    p.push_back('/');
-                }
-
-                handle_readwrite(state->cos_read_prefixes, state->cos_write_prefixes, std::move(p), segments, 2);
-                state->binary_cache_providers.insert("cos");
-            }
-            else if (segments[0].second == "x-gha")
-            {
-                add_warning(msg::format(msgGhaBinaryCacheDeprecated, msg::url = docs::binarycaching_url));
-            }
-            else if (segments[0].second == "http")
-            {
-                // Scheme: http,<url_template>[,<readwrite>[,<header>]]
-                if (segments.size() < 2)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresPrefix, msg::binary_source = "http"),
-                                     segments[0].first);
-                }
-
-                if (!Strings::starts_with(segments[1].second, "http://") &&
-                    !Strings::starts_with(segments[1].second, "https://"))
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresBaseUrl,
-                                                 msg::base_url = "https://",
-                                                 msg::binary_source = "http"),
-                                     segments[1].first);
-                }
-
-                if (segments.size() > 4)
-                {
-                    return add_error(
-                        msg::format(msgInvalidArgumentRequiresTwoOrThreeArguments, msg::binary_source = "http"),
-                        segments[3].first);
-                }
-
-                UrlTemplate url_template{segments[1].second};
-                if (auto err = url_template.valid(); !err.empty())
-                {
-                    return add_error(std::move(err), segments[1].first);
-                }
-                bool has_sha = false;
-                bool has_other = false;
-                api_stable_format(
-                    null_diagnostic_context, url_template.url_template, [&](std::string&, StringView key) {
-                        if (key == "sha")
-                        {
-                            has_sha = true;
-                        }
-                        else
-                        {
-                            has_other = true;
-                        }
-
-                        return true;
-                    });
-                if (!has_sha)
-                {
-                    if (has_other)
-                    {
-                        return add_error(msg::format(msgMissingShaVariable), segments[1].first);
-                    }
-                    if (url_template.url_template.back() != '/')
-                    {
-                        url_template.url_template.push_back('/');
-                    }
-                    url_template.url_template.append("{sha}.zip");
-                }
-                if (segments.size() == 4)
-                {
-                    url_template.headers.push_back(segments[3].second);
-                }
-
-                handle_readwrite(
-                    state->url_templates_to_get, state->url_templates_to_put, std::move(url_template), segments, 2);
-                state->binary_cache_providers.insert("http");
-            }
-            else if (segments[0].second == "x-az-universal")
-            {
-                // Scheme: x-az-universal,<organization>,<project>,<feed>[,<readwrite>]
-                if (segments.size() < 4 || segments.size() > 5)
-                {
-                    return add_error(msg::format(msgInvalidArgumentRequiresFourOrFiveArguments,
-                                                 msg::binary_source = "Universal Packages"));
-                }
-                AzureUpkgSource upkg_template{
-                    segments[1].second,
-                    segments[2].second,
-                    segments[3].second,
-                };
-
-                state->binary_cache_providers.insert("upkg");
-                handle_readwrite(
-                    state->upkg_templates_to_get, state->upkg_templates_to_put, std::move(upkg_template), segments, 4);
-            }
-            else if (segments[0].second == "x-azcopy")
-            {
-                handle_azcopy_segments(segments);
-            }
-            else if (segments[0].second == "x-azcopy-sas")
-            {
-                handle_azcopy_sas_segments(segments);
-            }
-            else
-            {
-                return add_error(msg::format(msgUnknownBinaryProviderType), segments[0].first);
-            }
-        }
-    };
 
     struct AssetSourcesState
     {
@@ -2344,66 +1764,82 @@ namespace
 
 namespace vcpkg
 {
-    LocalizedString UrlTemplate::valid() const
+    FeedReference::FeedReference(std::string id, std::string version) : id(std::move(id)), version(std::move(version))
     {
-        SinkBufferedDiagnosticContext bdc{out_sink};
-        std::vector<std::string> invalid_keys;
-        auto result = api_stable_format(bdc, url_template, [&](std::string&, StringView key) {
-            static constexpr StringLiteral valid_keys[] = {"name", "version", "sha", "triplet"};
-            if (!Util::Vectors::contains(valid_keys, key))
-            {
-                invalid_keys.push_back(key.to_string());
-            }
+    }
 
-            return true;
-        });
+    std::string FeedReference::nupkg_filename() const { return Strings::concat(id, '.', version, ".nupkg"); }
 
-        if (!invalid_keys.empty())
+    static Optional<UrlTemplate> validate_url_template(DiagnosticContext& context,
+                                                       const StackedEscapeParseDocument& candidate)
+    {
+        Optional<UrlTemplate> result;
+        auto& url_template = result.emplace();
+        url_template.url_template = std::string{candidate.text()};
+        auto maybe_formatted = api_stable_format(
+            context,
+            candidate,
+            [&url_template](DiagnosticContext& context,
+                            std::string&,
+                            StringView variable_name,
+                            const StackedParseEnumerator& position) {
+                if (variable_name == "sha")
+                {
+                    url_template.has_sha = true;
+                    return true;
+                }
+                static constexpr StringLiteral other_valid_keys[] = {"name", "version", "triplet"};
+                if (Util::Vectors::contains(other_valid_keys, variable_name))
+                {
+                    url_template.has_other = true;
+                    return true;
+                }
+
+                position.report_error_with_caret_line(
+                    context, msg::format(msgUnknownVariablesInTemplate).append_raw(": ").append_raw(variable_name));
+                return false;
+            });
+
+        if (!maybe_formatted.has_value())
         {
-            bdc.report_error(msg::format(msgUnknownVariablesInTemplate,
-                                         msg::value = url_template,
-                                         msg::list = Strings::join(", ", invalid_keys)));
             result.clear();
         }
 
-        if (result.has_value())
-        {
-            return {};
-        }
-
-        return LocalizedString::from_raw(std::move(bdc).to_string());
+        return result;
     }
 
     std::string UrlTemplate::instantiate_variables(const BinaryPackageReadInfo& info) const
     {
-        return api_stable_format(console_diagnostic_context,
-                                 url_template,
-                                 [&](std::string& out, StringView key) {
-                                     if (key == "version")
-                                     {
-                                         out += info.version.text;
-                                     }
-                                     else if (key == "name")
-                                     {
-                                         out += info.spec.name();
-                                     }
-                                     else if (key == "triplet")
-                                     {
-                                         out += info.spec.triplet().canonical_name();
-                                     }
-                                     else if (key == "sha")
-                                     {
-                                         out += info.package_abi;
-                                     }
-                                     else
-                                     {
-                                         Checks::unreachable(
-                                             VCPKG_LINE_INFO,
-                                             "used instantiate_variables without checking valid() first");
-                                     };
+        ParsedDocument doc{url_template, nullopt};
+        const auto stacked = doc.stacked(console_diagnostic_context).value_or_exit(VCPKG_LINE_INFO);
+        return api_stable_format(
+                   console_diagnostic_context,
+                   stacked,
+                   [&](DiagnosticContext&, std::string& out, StringView key, const StackedParseEnumerator&) {
+                       if (key == "version")
+                       {
+                           out += info.version.text;
+                       }
+                       else if (key == "name")
+                       {
+                           out += info.spec.name();
+                       }
+                       else if (key == "triplet")
+                       {
+                           out += info.spec.triplet().canonical_name();
+                       }
+                       else if (key == "sha")
+                       {
+                           out += info.package_abi;
+                       }
+                       else
+                       {
+                           Checks::unreachable(VCPKG_LINE_INFO,
+                                               "used instantiate_variables without validating UrlTemplate first");
+                       };
 
-                                     return true;
-                                 })
+                       return true;
+                   })
             .value_or_exit(VCPKG_LINE_INFO);
     }
 
@@ -2626,19 +2062,6 @@ namespace vcpkg
         auto& tools = paths.get_tool_cache();
         if (args.binary_caching_enabled())
         {
-            if (Debug::g_debugging)
-            {
-                const auto& maybe_cachepath = default_cache_path();
-                if (const auto cachepath = maybe_cachepath.get())
-                {
-                    Debug::print("Default binary cache path is: ", *cachepath, '\n');
-                }
-                else
-                {
-                    Debug::print("No binary cache path. Reason: ", maybe_cachepath.error(), '\n');
-                }
-            }
-
             if (args.env_binary_sources.has_value())
             {
                 get_global_metrics_collector().track_define(DefineMetric::VcpkgBinarySources);
@@ -2649,14 +2072,20 @@ namespace vcpkg
                 get_global_metrics_collector().track_define(DefineMetric::BinaryCachingSource);
             }
 
-            auto sRawHolder =
-                parse_binary_provider_configs(args.env_binary_sources.value_or(""), args.cli_binary_sources);
-            if (!sRawHolder)
+            auto maybe_default_cache_path = default_cache_path(context);
+            auto default_cache_path = maybe_default_cache_path.get();
+            if (!default_cache_path)
             {
-                context.report_error(std::move(sRawHolder).error());
                 return false;
             }
-            auto& s = *sRawHolder.get();
+
+            auto maybe_parsed = parse_binary_provider_configs(
+                context, *default_cache_path, args.env_binary_sources.value_or(""), args.cli_binary_sources);
+            auto parsed = maybe_parsed.get();
+            if (!parsed)
+            {
+                return false;
+            }
 
             static const std::map<StringLiteral, DefineMetric> metric_names{
                 {"aws", DefineMetric::BinaryCachingAws},
@@ -2673,7 +2102,7 @@ namespace vcpkg
             };
 
             MetricsSubmission metrics;
-            for (const auto& cache_provider : s.binary_cache_providers)
+            for (const auto& cache_provider : parsed->telemetry_tags)
             {
                 auto it = metric_names.find(cache_provider);
                 if (it != metric_names.end())
@@ -2684,115 +2113,46 @@ namespace vcpkg
 
             get_global_metrics_collector().track_submission(std::move(metrics));
 
-            s.nuget_prefix = args.nuget_id_prefix.value_or("");
-            if (!s.nuget_prefix.empty()) s.nuget_prefix.push_back('_');
-            m_config.nuget_prefix = s.nuget_prefix;
-
-            s.use_nuget_cache = args.use_nuget_cache.value_or(false);
+            m_config.nuget_prefix = args.nuget_id_prefix.value_or("");
+            if (!m_config.nuget_prefix.empty()) m_config.nuget_prefix.push_back('_');
 
             m_config.nuget_repo = get_nuget_repo_info_from_env(args);
 
             const auto& buildtrees = paths.buildtrees();
 
-            m_config.nuget_prefix = s.nuget_prefix;
+            std::vector<std::string> secrets;
+            for (const auto& provider : parsed->providers)
+            {
+                if (provider.kind == BinaryCacheProviderKind::AzBlob ||
+                    provider.kind == BinaryCacheProviderKind::AzCopySas)
+                {
+                    secrets.push_back(provider.arg2.value_or_exit(VCPKG_LINE_INFO));
+                }
+            }
+
+            ZipTool zip_tool;
+            bool has_zip_tool = false;
+            auto ensure_zip_tool = [&]() -> bool {
+                if (!has_zip_tool)
+                {
+                    if (!zip_tool.setup(context, fs, tools))
+                    {
+                        return false;
+                    }
+
+                    has_zip_tool = true;
+                }
+
+                return true;
+            };
 
             std::shared_ptr<const GcsStorageTool> gcs_tool;
-            if (!s.gcs_read_prefixes.empty() || !s.gcs_write_prefixes.empty())
-            {
-                if (auto gcs_tool_path = tools.get_tool_path(context, fs, Tools::GSUTIL))
+            auto ensure_gcs_tool = [&]() -> bool {
+                if (!gcs_tool)
                 {
-                    gcs_tool = std::make_shared<GcsStorageTool>(*gcs_tool_path);
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            std::shared_ptr<const AwsStorageTool> aws_tool;
-            if (!s.aws_read_prefixes.empty() || !s.aws_write_prefixes.empty())
-            {
-                if (auto aws_tool_path = tools.get_tool_path(context, fs, Tools::AWSCLI))
-                {
-                    aws_tool = std::make_shared<AwsStorageTool>(*aws_tool_path, s.aws_no_sign_request);
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            std::shared_ptr<const CosStorageTool> cos_tool;
-            if (!s.cos_read_prefixes.empty() || !s.cos_write_prefixes.empty())
-            {
-                if (auto cos_tool_path = tools.get_tool_path(context, fs, Tools::COSCLI))
-                {
-                    cos_tool = std::make_shared<CosStorageTool>(*cos_tool_path);
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            Path azcopy_tool;
-            if (!s.azcopy_read_templates.empty() || !s.azcopy_write_templates.empty())
-            {
-                if (auto tool = tools.get_tool_path(context, fs, Tools::AZCOPY))
-                {
-                    azcopy_tool = *tool;
-                }
-                else
-                {
-                    return false;
-                }
-            }
-
-            if (!s.archives_to_read.empty() || !s.url_templates_to_get.empty() || !s.gcs_read_prefixes.empty() ||
-                !s.aws_read_prefixes.empty() || !s.cos_read_prefixes.empty() || !s.upkg_templates_to_get.empty() ||
-                !s.azcopy_read_templates.empty())
-            {
-                ZipTool zip_tool;
-                if (!zip_tool.setup(context, fs, tools))
-                {
-                    return false;
-                }
-
-                for (auto&& dir : s.archives_to_read)
-                {
-                    m_config.read.push_back(std::make_unique<FilesReadBinaryProvider>(zip_tool, std::move(dir)));
-                }
-
-                for (auto&& url : s.url_templates_to_get)
-                {
-                    m_config.read.push_back(
-                        std::make_unique<HttpGetBinaryProvider>(zip_tool, buildtrees, std::move(url), s.secrets));
-                }
-
-                for (auto&& prefix : s.gcs_read_prefixes)
-                {
-                    m_config.read.push_back(
-                        std::make_unique<ObjectStorageProvider>(zip_tool, buildtrees, std::move(prefix), gcs_tool));
-                }
-
-                for (auto&& prefix : s.aws_read_prefixes)
-                {
-                    m_config.read.push_back(
-                        std::make_unique<ObjectStorageProvider>(zip_tool, buildtrees, std::move(prefix), aws_tool));
-                }
-
-                for (auto&& prefix : s.cos_read_prefixes)
-                {
-                    m_config.read.push_back(
-                        std::make_unique<ObjectStorageProvider>(zip_tool, buildtrees, std::move(prefix), cos_tool));
-                }
-
-                if (!s.upkg_templates_to_get.empty())
-                {
-                    if (const auto* azcli_tool = tools.get_tool_path(context, fs, Tools::AZCLI))
+                    if (auto gcs_tool_path = tools.get_tool_path(context, fs, Tools::GSUTIL))
                     {
-                        for (auto&& src : s.upkg_templates_to_get)
-                        {
-                            m_config.read.push_back(std::make_unique<AzureUpkgGetBinaryProvider>(
-                                zip_tool, *azcli_tool, std::move(src), buildtrees));
-                        }
+                        gcs_tool = std::make_shared<GcsStorageTool>(*gcs_tool_path);
                     }
                     else
                     {
@@ -2800,84 +2160,318 @@ namespace vcpkg
                     }
                 }
 
-                for (auto&& prefix : s.azcopy_read_templates)
-                {
-                    m_config.read.push_back(
-                        std::make_unique<AzCopyStorageProvider>(zip_tool, buildtrees, std::move(prefix), azcopy_tool));
-                }
-            }
-            if (!s.upkg_templates_to_put.empty())
-            {
-                if (const auto* azcli_tool = tools.get_tool_path(context, fs, Tools::AZCLI))
-                {
-                    m_config.write.push_back(
-                        std::make_unique<AzureUpkgPutBinaryProvider>(*azcli_tool, std::move(s.upkg_templates_to_put)));
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            if (!s.archives_to_write.empty())
-            {
-                m_config.write.push_back(std::make_unique<FilesWriteBinaryProvider>(std::move(s.archives_to_write)));
-            }
-            if (!s.azblob_templates_to_put.empty())
-            {
-                m_config.write.push_back(
-                    std::make_unique<AzureBlobPutBinaryProvider>(std::move(s.azblob_templates_to_put), s.secrets));
-            }
-            if (!s.url_templates_to_put.empty())
-            {
-                m_config.write.push_back(
-                    std::make_unique<HTTPPutBinaryProvider>(std::move(s.url_templates_to_put), s.secrets));
-            }
-            if (!s.gcs_write_prefixes.empty())
-            {
-                m_config.write.push_back(
-                    std::make_unique<ObjectStoragePushProvider>(std::move(s.gcs_write_prefixes), gcs_tool));
-            }
-            if (!s.aws_write_prefixes.empty())
-            {
-                m_config.write.push_back(
-                    std::make_unique<ObjectStoragePushProvider>(std::move(s.aws_write_prefixes), aws_tool));
-            }
-            if (!s.cos_write_prefixes.empty())
-            {
-                m_config.write.push_back(
-                    std::make_unique<ObjectStoragePushProvider>(std::move(s.cos_write_prefixes), cos_tool));
-            }
+                return true;
+            };
 
-            if (!s.sources_to_read.empty() || !s.configs_to_read.empty() || !s.sources_to_write.empty() ||
-                !s.configs_to_write.empty())
-            {
-                auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
-                if (auto* nuget_tools = maybe_nuget_tools.get())
+            std::shared_ptr<const AwsStorageTool> aws_tool;
+            auto ensure_aws_tool = [&]() -> bool {
+                if (!aws_tool)
                 {
-                    NugetBaseBinaryProvider nuget_base(
-                        NuGetTool(std::move(*nuget_tools), s), paths.packages(), buildtrees, s.nuget_prefix);
-                    if (!s.sources_to_read.empty())
-                        m_config.read.push_back(std::make_unique<NugetReadBinaryProvider>(
-                            nuget_base, nuget_sources_arg(s.sources_to_read)));
-                    for (auto&& config : s.configs_to_read)
-                        m_config.read.push_back(
-                            std::make_unique<NugetReadBinaryProvider>(nuget_base, nuget_configfile_arg(config)));
-                    if (!s.sources_to_write.empty() || !s.configs_to_write.empty())
+                    if (auto aws_tool_path = tools.get_tool_path(context, fs, Tools::AWSCLI))
                     {
-                        m_config.write.push_back(std::make_unique<NugetBinaryPushProvider>(
-                            nuget_base, std::move(s.sources_to_write), std::move(s.configs_to_write)));
+                        aws_tool = std::make_shared<AwsStorageTool>(*aws_tool_path, parsed->aws_no_sign_request);
+                    }
+                    else
+                    {
+                        return false;
                     }
                 }
-                else
-                {
-                    return false;
-                }
-            }
 
-            if (!s.azcopy_write_templates.empty())
+                return true;
+            };
+
+            std::shared_ptr<const CosStorageTool> cos_tool;
+            auto ensure_cos_tool = [&]() -> bool {
+                if (!cos_tool)
+                {
+                    if (auto cos_tool_path = tools.get_tool_path(context, fs, Tools::COSCLI))
+                    {
+                        cos_tool = std::make_shared<CosStorageTool>(*cos_tool_path);
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            };
+
+            Path azcopy_tool;
+            bool has_azcopy_tool = false;
+            auto ensure_azcopy_tool = [&]() -> bool {
+                if (!has_azcopy_tool)
+                {
+                    if (auto tool = tools.get_tool_path(context, fs, Tools::AZCOPY))
+                    {
+                        azcopy_tool = *tool;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+
+                    has_azcopy_tool = true;
+                }
+
+                return true;
+            };
+
+            Path azcli_tool;
+            bool has_azcli_tool = false;
+            auto ensure_azcli_tool = [&]() -> bool {
+                if (!has_azcli_tool)
+                {
+                    if (auto tool = tools.get_tool_path(context, fs, Tools::AZCLI))
+                    {
+                        azcli_tool = *tool;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+
+                    has_azcli_tool = true;
+                }
+
+                return true;
+            };
+
+            std::unique_ptr<NugetBaseBinaryProvider> nuget_base;
+            auto ensure_nuget_base = [&]() -> bool {
+                if (!nuget_base)
+                {
+                    auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
+                    if (auto* nuget_tools = maybe_nuget_tools.get())
+                    {
+                        nuget_base =
+                            std::make_unique<NugetBaseBinaryProvider>(NuGetTool(std::move(*nuget_tools),
+                                                                                parsed->nuget_timeout,
+                                                                                parsed->nuget_interactive,
+                                                                                args.use_nuget_cache.value_or(false)),
+                                                                      paths.packages(),
+                                                                      buildtrees,
+                                                                      m_config.nuget_prefix);
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            };
+
+            auto installs_read = [](BinaryCacheAccess access) {
+                return access == BinaryCacheAccess::Read || access == BinaryCacheAccess::ReadWrite;
+            };
+            auto installs_write = [](BinaryCacheAccess access) {
+                return access == BinaryCacheAccess::Write || access == BinaryCacheAccess::ReadWrite;
+            };
+
+            for (const auto& provider : parsed->providers)
             {
-                m_config.write.push_back(
-                    std::make_unique<AzCopyStoragePushProvider>(std::move(s.azcopy_write_templates), azcopy_tool));
+                switch (provider.kind)
+                {
+                    case BinaryCacheProviderKind::Files:
+                    {
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<FilesReadBinaryProvider>(
+                                zip_tool, Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)}));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(std::make_unique<FilesWriteBinaryProvider>(
+                                Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)}));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::NuGet:
+                    {
+                        if (!ensure_nuget_base()) return false;
+                        const auto& source = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
+                        if (installs_read(provider.access))
+                        {
+                            m_config.read.push_back(std::make_unique<NugetReadBinaryProvider>(
+                                *nuget_base, nuget_sources_arg({&source, 1})));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(std::make_unique<NugetBinaryPushProvider>(
+                                *nuget_base, nuget_sources_arg({&source, 1})));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::NuGetConfig:
+                    {
+                        if (!ensure_nuget_base()) return false;
+                        Path config_path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)};
+                        if (installs_read(provider.access))
+                        {
+                            m_config.read.push_back(std::make_unique<NugetReadBinaryProvider>(
+                                *nuget_base, nuget_configfile_arg(config_path)));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(std::make_unique<NugetBinaryPushProvider>(
+                                *nuget_base, nuget_configfile_arg(config_path)));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::Http:
+                    {
+                        UrlTemplate url_template{provider.arg1.value_or_exit(VCPKG_LINE_INFO)};
+                        if (const auto header = provider.arg2.get())
+                        {
+                            url_template.headers.push_back(*header);
+                        }
+
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<HttpGetBinaryProvider>(
+                                zip_tool, buildtrees, UrlTemplate{url_template}, secrets));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(
+                                std::make_unique<HTTPPutBinaryProvider>(std::move(url_template), secrets));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::AzBlob:
+                    {
+                        AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
+                                         provider.arg2.value_or_exit(VCPKG_LINE_INFO)};
+                        UrlTemplate url_template{az_url.make_object_path("{sha}")};
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<HttpGetBinaryProvider>(
+                                zip_tool, buildtrees, UrlTemplate{url_template}, secrets));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            auto headers = azure_blob_headers();
+                            url_template.headers.assign(headers.begin(), headers.end());
+                            m_config.write.push_back(
+                                std::make_unique<AzureBlobPutBinaryProvider>(std::move(url_template), secrets));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::AzCopy:
+                    case BinaryCacheProviderKind::AzCopySas:
+                    {
+                        if (!ensure_azcopy_tool()) return false;
+                        AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO), provider.arg2.value_or("")};
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<AzCopyStorageProvider>(
+                                zip_tool, buildtrees, AzCopyUrl{az_url}, azcopy_tool));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(
+                                std::make_unique<AzCopyStoragePushProvider>(std::move(az_url), azcopy_tool));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::GCS:
+                    {
+                        if (!ensure_gcs_tool()) return false;
+                        auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<ObjectStorageProvider>(
+                                zip_tool, buildtrees, std::string{prefix}, gcs_tool));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(
+                                std::make_unique<ObjectStoragePushProvider>(std::string{prefix}, gcs_tool));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::AWS:
+                    {
+                        if (!ensure_aws_tool()) return false;
+                        auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<ObjectStorageProvider>(
+                                zip_tool, buildtrees, std::string{prefix}, aws_tool));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(
+                                std::make_unique<ObjectStoragePushProvider>(std::string{prefix}, aws_tool));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::COS:
+                    {
+                        if (!ensure_cos_tool()) return false;
+                        auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<ObjectStorageProvider>(
+                                zip_tool, buildtrees, std::string{prefix}, cos_tool));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(
+                                std::make_unique<ObjectStoragePushProvider>(std::string{prefix}, cos_tool));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::AzUniversal:
+                    {
+                        if (!ensure_azcli_tool()) return false;
+                        AzureUpkgSource source{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
+                                               provider.arg2.value_or_exit(VCPKG_LINE_INFO),
+                                               provider.arg3.value_or_exit(VCPKG_LINE_INFO)};
+                        if (installs_read(provider.access))
+                        {
+                            if (!ensure_zip_tool()) return false;
+                            m_config.read.push_back(std::make_unique<AzureUpkgGetBinaryProvider>(
+                                zip_tool, azcli_tool, AzureUpkgSource{source}, buildtrees));
+                        }
+
+                        if (installs_write(provider.access))
+                        {
+                            m_config.write.push_back(
+                                std::make_unique<AzureUpkgPutBinaryProvider>(azcli_tool, std::move(source)));
+                        }
+
+                        break;
+                    }
+                    case BinaryCacheProviderKind::None: break;
+                    default: Checks::unreachable(VCPKG_LINE_INFO);
+                }
             }
         }
 
@@ -3102,12 +2696,6 @@ namespace vcpkg
         }
     }
 
-    void BinaryConfigParserState::clear()
-    {
-        *this = BinaryConfigParserState();
-        binary_cache_providers.insert("clear");
-    }
-
     BinaryPackageReadInfo::BinaryPackageReadInfo(const InstallPlanAction& action)
         : package_abi(action.package_abi_or_exit(VCPKG_LINE_INFO))
         , spec(action.spec)
@@ -3116,326 +2704,1199 @@ namespace vcpkg
         , package_dir(action.package_dir)
     {
     }
-}
 
-ExpectedL<AssetCachingSettings> vcpkg::parse_download_configuration(const Optional<std::string>& arg)
-{
-    AssetCachingSettings result;
-    if (!arg || arg.get()->empty()) return result;
-
-    get_global_metrics_collector().track_define(DefineMetric::AssetSource);
-
-    AssetSourcesState s;
-    const auto source = format_environment_variable(EnvironmentVariableXVcpkgAssetSources);
-    AssetSourcesParser parser(*arg.get(), source, &s);
-    parser.parse();
-    if (parser.messages().any_errors())
+    ExpectedL<AssetCachingSettings> parse_download_configuration(const Optional<std::string>& arg)
     {
-        auto&& messages = std::move(parser).extract_messages();
-        messages.add_line(DiagnosticLine{DiagKind::Note, msg::format(msgSeeURL, msg::url = docs::assetcaching_url)});
-        return messages.join();
+        AssetCachingSettings result;
+        if (!arg || arg.get()->empty()) return result;
+
+        get_global_metrics_collector().track_define(DefineMetric::AssetSource);
+
+        AssetSourcesState s;
+        const auto source = format_environment_variable(EnvironmentVariableXVcpkgAssetSources);
+        AssetSourcesParser parser(*arg.get(), source, &s);
+        parser.parse();
+        if (parser.messages().any_errors())
+        {
+            auto&& messages = std::move(parser).extract_messages();
+            messages.add_line(
+                DiagnosticLine{DiagKind::Note, msg::format(msgSeeURL, msg::url = docs::assetcaching_url)});
+            return messages.join();
+        }
+
+        if (s.azblob_templates_to_put.size() > 1)
+        {
+            return msg::format_error(msgAMaximumOfOneAssetWriteUrlCanBeSpecified)
+                .append_raw('\n')
+                .append_raw(NotePrefix)
+                .append(msgSeeURL, msg::url = docs::assetcaching_url);
+        }
+        if (s.url_templates_to_get.size() > 1)
+        {
+            return msg::format_error(msgAMaximumOfOneAssetReadUrlCanBeSpecified)
+                .append_raw('\n')
+                .append_raw(NotePrefix)
+                .append(msgSeeURL, msg::url = docs::assetcaching_url);
+        }
+
+        if (!s.url_templates_to_get.empty())
+        {
+            result.m_read_url_template = std::move(s.url_templates_to_get.back());
+        }
+
+        if (!s.azblob_templates_to_put.empty())
+        {
+            result.m_write_url_template = std::move(s.azblob_templates_to_put.back());
+            auto v = azure_blob_headers();
+            result.m_write_headers.assign(v.begin(), v.end());
+        }
+
+        result.m_secrets = std::move(s.secrets);
+        result.m_block_origin = s.block_origin;
+        result.m_script = std::move(s.script);
+        return result;
     }
 
-    if (s.azblob_templates_to_put.size() > 1)
+    StringLiteral to_string_literal(BinaryCacheProviderKind kind)
     {
-        return msg::format_error(msgAMaximumOfOneAssetWriteUrlCanBeSpecified)
+        switch (kind)
+        {
+            case BinaryCacheProviderKind::None: return "none";
+            case BinaryCacheProviderKind::Files: return "files";
+            case BinaryCacheProviderKind::NuGet: return "nuget";
+            case BinaryCacheProviderKind::NuGetConfig: return "nugetconfig";
+            case BinaryCacheProviderKind::Http: return "http";
+            case BinaryCacheProviderKind::AzBlob: return "x-azblob";
+            case BinaryCacheProviderKind::AzCopy: return "x-azcopy";
+            case BinaryCacheProviderKind::AzCopySas: return "x-azcopy-sas";
+            case BinaryCacheProviderKind::GCS: return "x-gcs";
+            case BinaryCacheProviderKind::AWS: return "x-aws";
+            case BinaryCacheProviderKind::COS: return "x-cos";
+            case BinaryCacheProviderKind::AzUniversal: return "x-az-universal";
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
+
+    StringLiteral to_string_literal(BinaryCacheAccess access)
+    {
+        switch (access)
+        {
+            case BinaryCacheAccess::Read: return "read";
+            case BinaryCacheAccess::Write: return "write";
+            case BinaryCacheAccess::ReadWrite: return "readwrite";
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
+
+    bool operator==(const BinaryCacheProviderEntry& lhs, const BinaryCacheProviderEntry& rhs)
+    {
+        return lhs.kind == rhs.kind && lhs.access == rhs.access && lhs.arg1 == rhs.arg1 && lhs.arg2 == rhs.arg2 &&
+               lhs.arg3 == rhs.arg3;
+    }
+
+    bool operator!=(const BinaryCacheProviderEntry& lhs, const BinaryCacheProviderEntry& rhs) { return !(lhs == rhs); }
+
+    void BinaryCacheProviderEntry::to_string(std::string& out) const
+    {
+        fmt::format_to(std::back_inserter(out), "kind: {}, access: {}", kind, access);
+
+        if (const auto actual_arg1 = arg1.get())
+        {
+            fmt::format_to(std::back_inserter(out), ", arg1: {}", *actual_arg1);
+        }
+
+        if (const auto actual_arg2 = arg2.get())
+        {
+            fmt::format_to(std::back_inserter(out), ", arg2: {}", *actual_arg2);
+        }
+
+        if (const auto actual_arg3 = arg3.get())
+        {
+            fmt::format_to(std::back_inserter(out), ", arg3: {}", *actual_arg3);
+        }
+    }
+
+    std::string BinaryCacheProviderEntry::to_string() const { return adapt_to_string(*this); }
+
+    static Optional<BinaryCacheAccess> parse_access_terminal(DiagnosticContext& context,
+                                                             ParseEnumerator& e,
+                                                             char32_t matched_terminal,
+                                                             StringLiteral binary_source,
+                                                             const msg::MessageT<msg::binary_source_t>& overlong_error)
+    {
+        Optional<BinaryCacheAccess> result;
+        if (matched_terminal != ',')
+        {
+            // default to readwrite if no access is specified
+            result.emplace(BinaryCacheAccess::ReadWrite);
+            return result;
+        }
+
+        auto maybe_access = e.match_escaped(context, matched_terminal, '`', ",;");
+        auto access = maybe_access.get();
+        if (!access)
+        {
+            return result;
+        }
+
+        if (matched_terminal == ',')
+        {
+            access->report_error_with_caret_line_end_delimiter(
+                context, msg::format(overlong_error, msg::binary_source = binary_source));
+            return result;
+        }
+
+        if (access->text() == "readwrite")
+        {
+            result.emplace(BinaryCacheAccess::ReadWrite);
+        }
+        else if (access->text() == "read")
+        {
+            result.emplace(BinaryCacheAccess::Read);
+        }
+        else if (access->text() == "write")
+        {
+            result.emplace(BinaryCacheAccess::Write);
+        }
+        else
+        {
+            access->report_error_with_caret_line(context, msg::format(msgExpectedReadWriteReadWrite));
+        }
+
+        return result;
+    }
+
+    static bool parse_absolute_path_provider(DiagnosticContext& context,
+                                             ParseEnumerator& e,
+                                             char32_t matched_terminal,
+                                             const StackedEscapeParseDocument& kind,
+                                             BinaryCacheParsedConfigs& result,
+                                             BinaryCacheProviderKind provider_kind,
+                                             StringLiteral binary_source,
+                                             StringLiteral telemetry_tag)
+    {
+        // match <provider>,<absolute path>[,<rw>]
+        if (matched_terminal != ',')
+        {
+            kind.report_error_with_caret_line_end_delimiter(
+                context, msg::format(msgInvalidArgumentRequiresPathArgument, msg::binary_source = binary_source));
+            return false;
+        }
+
+        auto maybe_path = e.match_escaped(context, matched_terminal, '`', ",;");
+        const auto path = maybe_path.get();
+        if (!path)
+        {
+            return false;
+        }
+
+        Path as_path(path->move_text());
+        if (!as_path.is_absolute())
+        {
+            path->report_error_with_caret_line(context, msg::format(msgInvalidArgumentRequiresAbsolutePath));
+            return false;
+        }
+
+        auto maybe_access = parse_access_terminal(
+            context, e, matched_terminal, binary_source, msgInvalidArgumentRequiresOneOrTwoArguments);
+        const auto access = maybe_access.get();
+        if (!access)
+        {
+            return false;
+        }
+
+        result.providers.push_back({provider_kind, *access, std::move(as_path).native(), nullopt, nullopt});
+        result.telemetry_tags.insert(telemetry_tag);
+        return true;
+    }
+
+    static bool check_azure_base_url(DiagnosticContext& context,
+                                     const StackedEscapeParseDocument& candidate_segment,
+                                     StringLiteral binary_source)
+    {
+        if (!Strings::starts_with(candidate_segment.text(), "https://") &&
+            // Allow unencrypted Azurite for testing (not reflected in error msg)
+            !Strings::starts_with(candidate_segment.text(), "http://127.0.0.1"))
+        {
+            candidate_segment.report_error_with_caret_line(context,
+                                                           msg::format(msgInvalidArgumentRequiresBaseUrl,
+                                                                       msg::base_url = "https://",
+                                                                       msg::binary_source = binary_source));
+            return false;
+        }
+
+        return true;
+    }
+
+    static bool parse_object_storage_provider(DiagnosticContext& context,
+                                              ParseEnumerator& e,
+                                              char32_t matched_terminal,
+                                              const StackedEscapeParseDocument& kind,
+                                              BinaryCacheParsedConfigs& result,
+                                              BinaryCacheProviderKind provider_kind,
+                                              StringLiteral binary_source,
+                                              StringLiteral expected_base_url)
+    {
+        // match <provider>,<prefix>[,<rw>]
+        if (matched_terminal != ',')
+        {
+            kind.report_error_with_caret_line_end_delimiter(context,
+                                                            msg::format(msgInvalidArgumentRequiresBaseUrl,
+                                                                        msg::base_url = expected_base_url,
+                                                                        msg::binary_source = binary_source));
+            return false;
+        }
+
+        auto maybe_prefix = e.match_escaped(context, matched_terminal, '`', ",;");
+        auto prefix = maybe_prefix.get();
+        if (!prefix)
+        {
+            return false;
+        }
+
+        if (!Strings::starts_with(prefix->text(), expected_base_url))
+        {
+            prefix->report_error_with_caret_line(context,
+                                                 msg::format(msgInvalidArgumentRequiresBaseUrl,
+                                                             msg::base_url = expected_base_url,
+                                                             msg::binary_source = binary_source));
+            return false;
+        }
+
+        auto maybe_access = parse_access_terminal(
+            context, e, matched_terminal, binary_source, msgInvalidArgumentRequiresOneOrTwoArguments);
+        const auto access = maybe_access.get();
+        if (!access)
+        {
+            return false;
+        }
+
+        auto normalized_prefix = prefix->move_text();
+        if (normalized_prefix.back() != '/')
+        {
+            normalized_prefix.push_back('/');
+        }
+
+        result.providers.push_back({provider_kind, *access, std::move(normalized_prefix), nullopt, nullopt});
+        result.telemetry_tags.insert(binary_source);
+        return true;
+    }
+
+    static bool parse_azure_base_url_and_token_provider(DiagnosticContext& context,
+                                                        ParseEnumerator& e,
+                                                        char32_t& matched_terminal,
+                                                        const StackedEscapeParseDocument& kind,
+                                                        BinaryCacheParsedConfigs& result,
+                                                        BinaryCacheProviderKind provider_kind,
+                                                        StringLiteral binary_source,
+                                                        StringLiteral telemetry_tag)
+    {
+        // match <provider>,<baseurl>,<sas>[,...]
+        if (matched_terminal != ',')
+        {
+            kind.report_error_with_caret_line_end_delimiter(
+                context, msg::format(msgInvalidArgumentRequiresBaseUrlAndToken, msg::binary_source = binary_source));
+            return false;
+        }
+
+        auto maybe_baseuri = e.match_escaped(context, matched_terminal, '`', ",;");
+        auto baseuri = maybe_baseuri.get();
+        if (!baseuri)
+        {
+            return false;
+        }
+
+        if (matched_terminal != ',')
+        {
+            baseuri->report_error_with_caret_line_end_delimiter(
+                context, msg::format(msgInvalidArgumentRequiresBaseUrlAndToken, msg::binary_source = binary_source));
+            return false;
+        }
+
+        if (!check_azure_base_url(context, *baseuri, binary_source))
+        {
+            return false;
+        }
+
+        auto maybe_sas = e.match_escaped(context, matched_terminal, '`', ",;");
+        auto sas = maybe_sas.get();
+        if (!sas)
+        {
+            return false;
+        }
+
+        if (sas->text().empty() || sas->text()[0] == '?')
+        {
+            sas->report_error_with_caret_line(
+                context, msg::format(msgInvalidArgumentRequiresValidToken, msg::binary_source = binary_source));
+            return false;
+        }
+
+        auto maybe_access = parse_access_terminal(
+            context, e, matched_terminal, binary_source, msgInvalidArgumentRequiresTwoOrThreeArguments);
+        const auto access = maybe_access.get();
+        if (!access)
+        {
+            return false;
+        }
+
+        result.providers.push_back({provider_kind, *access, baseuri->move_text(), sas->move_text(), nullopt});
+        result.telemetry_tags.insert(telemetry_tag);
+        return true;
+    }
+
+    static Optional<std::string> parse_azure_base_url(DiagnosticContext& context,
+                                                      ParseEnumerator& e,
+                                                      char32_t& matched_terminal,
+                                                      const StackedEscapeParseDocument& kind,
+                                                      StringLiteral binary_source)
+    {
+        // match <provider>,<baseurl>[,...]
+        if (matched_terminal != ',')
+        {
+            kind.report_error_with_caret_line_end_delimiter(context,
+                                                            msg::format(msgInvalidArgumentRequiresBaseUrl,
+                                                                        msg::base_url = "https://",
+                                                                        msg::binary_source = binary_source));
+            return nullopt;
+        }
+
+        auto maybe_baseuri = e.match_escaped(context, matched_terminal, '`', ",;");
+        auto baseuri = maybe_baseuri.get();
+        if (!baseuri)
+        {
+            return nullopt;
+        }
+
+        if (!check_azure_base_url(context, *baseuri, binary_source))
+        {
+            return nullopt;
+        }
+
+        return baseuri->move_text();
+    }
+
+    static Optional<BinaryCacheAccess> parse_access_value(DiagnosticContext& context,
+                                                          const StackedEscapeParseDocument& access)
+    {
+        if (access.text() == "readwrite")
+        {
+            return BinaryCacheAccess::ReadWrite;
+        }
+        else if (access.text() == "read")
+        {
+            return BinaryCacheAccess::Read;
+        }
+        else if (access.text() == "write")
+        {
+            return BinaryCacheAccess::Write;
+        }
+
+        access.report_error_with_caret_line(context, msg::format(msgExpectedReadWriteReadWrite));
+        return nullopt;
+    }
+
+    static bool parse_binary_provider_configs_append(DiagnosticContext& context,
+                                                     BinaryCacheParsedConfigs& result,
+                                                     const Path& default_cache_path,
+                                                     const std::string& input_text,
+                                                     Optional<StringView> origin)
+    {
+        ParsedDocument doc{input_text, origin};
+        auto e = doc.enumerator();
+        while (!e.at_eof())
+        {
+            char32_t matched_terminal;
+            auto maybe_kind = e.match_escaped(context, matched_terminal, '`', ",;");
+            const auto kind = maybe_kind.get();
+            if (!kind)
+            {
+                return false;
+            }
+
+            if (kind->text().empty() && matched_terminal == ';')
+            {
+                // allow and ignore empty ; segments
+                continue;
+            }
+
+            if (kind->text() == "clear")
+            {
+                if (matched_terminal == ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context, msg::format(msgInvalidArgumentRequiresNoneArguments, msg::binary_source = "clear"));
+                    return false;
+                }
+
+                result.providers.clear();
+                result.telemetry_tags.clear();
+                continue;
+            }
+
+            if (kind->text() == "files")
+            {
+                if (!parse_absolute_path_provider(
+                        context, e, matched_terminal, *kind, result, BinaryCacheProviderKind::Files, "files", "files"))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (kind->text() == "nugetconfig")
+            {
+                if (!parse_absolute_path_provider(context,
+                                                  e,
+                                                  matched_terminal,
+                                                  *kind,
+                                                  result,
+                                                  BinaryCacheProviderKind::NuGetConfig,
+                                                  "nugetconfig",
+                                                  "nuget"))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (kind->text() == "nuget")
+            {
+                // nuget,<source>[,<rw>]
+                if (matched_terminal != ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context, msg::format(msgInvalidArgumentRequiresSourceArgument, msg::binary_source = "nuget"));
+                    return false;
+                }
+
+                auto maybe_source = e.match_escaped(context, matched_terminal, '`', ",;");
+                const auto source = maybe_source.get();
+                if (!source)
+                {
+                    return false;
+                }
+
+                auto maybe_access = parse_access_terminal(
+                    context, e, matched_terminal, "nuget", msgInvalidArgumentRequiresOneOrTwoArguments);
+                const auto access = maybe_access.get();
+                if (!access)
+                {
+                    return false;
+                }
+
+                result.providers.push_back(
+                    {BinaryCacheProviderKind::NuGet, *access, source->move_text(), nullopt, nullopt});
+                result.telemetry_tags.insert("nuget");
+                continue;
+            }
+
+            if (kind->text() == "nugettimeout")
+            {
+                // nugettimeout,<seconds>
+                if (matched_terminal != ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context, msg::format(msgNuGetTimeoutExpectsSinglePositiveInteger));
+                    return false;
+                }
+
+                auto maybe_timeout = e.match_escaped(context, matched_terminal, '`', ",;");
+                const auto timeout = maybe_timeout.get();
+                if (!timeout)
+                {
+                    return false;
+                }
+
+                if (matched_terminal == ',')
+                {
+                    timeout->report_error_with_caret_line_end_delimiter(
+                        context, msg::format(msgNuGetTimeoutExpectsSinglePositiveInteger));
+                    return false;
+                }
+
+                auto timeout_enumerator = timeout->enumerator();
+                auto timeout_digits = timeout_enumerator.match_while_ascii(ParserBase::is_ascii_digit);
+                if (!timeout_enumerator.at_eof() || timeout_digits.empty())
+                {
+                    timeout_enumerator.report_error_with_caret_line(
+                        context, msg::format(msgNuGetTimeoutExpectsSinglePositiveInteger));
+                    return false;
+                }
+
+                auto maybe_seconds = Strings::strto<long>(timeout_digits);
+                auto seconds = maybe_seconds.get();
+                if (!seconds || *seconds <= 0)
+                {
+                    timeout->report_error_with_caret_line(context,
+                                                          msg::format(msgNuGetTimeoutExpectsSinglePositiveInteger));
+                    return false;
+                }
+
+                result.nuget_timeout = *seconds;
+                continue;
+            }
+
+            if (kind->text() == "interactive")
+            {
+                if (matched_terminal == ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context,
+                        msg::format(msgInvalidArgumentRequiresNoneArguments, msg::binary_source = "interactive"));
+                    return false;
+                }
+
+                result.nuget_interactive = true;
+                continue;
+            }
+
+            if (kind->text() == "default")
+            {
+                // default[,<rw>]
+                auto maybe_access = parse_access_terminal(
+                    context, e, matched_terminal, "default", msgInvalidArgumentRequiresSingleArgument);
+                auto access = maybe_access.get();
+                if (!access)
+                {
+                    return false;
+                }
+
+                result.providers.push_back(
+                    {BinaryCacheProviderKind::Files, *access, default_cache_path.native(), nullopt, nullopt});
+                result.telemetry_tags.insert("default");
+                continue;
+            }
+
+            if (kind->text() == "x-azblob")
+            {
+                // x-azblob,<baseurl>,<sas>[,<rw>]
+                if (!parse_azure_base_url_and_token_provider(context,
+                                                             e,
+                                                             matched_terminal,
+                                                             *kind,
+                                                             result,
+                                                             BinaryCacheProviderKind::AzBlob,
+                                                             "azblob",
+                                                             "azblob"))
+                {
+                    return false;
+                }
+                continue;
+            }
+
+            if (kind->text() == "x-gcs")
+            {
+                // x-gcs,<prefix>[,<rw>]
+                if (!parse_object_storage_provider(
+                        context, e, matched_terminal, *kind, result, BinaryCacheProviderKind::GCS, "gcs", "gs://"))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (kind->text() == "x-aws")
+            {
+                // x-aws,<prefix>[,<rw>]
+                if (!parse_object_storage_provider(
+                        context, e, matched_terminal, *kind, result, BinaryCacheProviderKind::AWS, "aws", "s3://"))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (kind->text() == "x-aws-config")
+            {
+                // x-aws-config,setting
+                // (only "no-sign-request" is currently accepted as a setting)
+                if (matched_terminal != ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context,
+                        msg::format(msgInvalidArgumentRequiresSingleStringArgument,
+                                    msg::binary_source = "x-aws-config"));
+                    return false;
+                }
+
+                auto maybe_setting = e.match_escaped(context, matched_terminal, '`', ",;");
+                auto setting = maybe_setting.get();
+                if (!setting)
+                {
+                    return false;
+                }
+
+                if (matched_terminal == ',')
+                {
+                    setting->report_error_with_caret_line_end_delimiter(
+                        context,
+                        msg::format(msgInvalidArgumentRequiresSingleStringArgument,
+                                    msg::binary_source = "x-aws-config"));
+                    return false;
+                }
+
+                if (setting->text() != "no-sign-request")
+                {
+                    setting->report_error_with_caret_line(context, msg::format(msgInvalidArgument));
+                    return false;
+                }
+
+                result.aws_no_sign_request = true;
+                continue;
+            }
+
+            if (kind->text() == "x-cos")
+            {
+                // x-cos,<prefix>[,<rw>]
+                if (!parse_object_storage_provider(
+                        context, e, matched_terminal, *kind, result, BinaryCacheProviderKind::COS, "cos", "cos://"))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (kind->text() == "x-gha")
+            {
+                WarningDiagnosticContext wdc{context};
+                kind->report_error_with_caret_line(
+                    wdc, msg::format(msgGhaBinaryCacheDeprecated, msg::url = docs::binarycaching_url));
+                while (matched_terminal == ',')
+                {
+                    if (!e.match_escaped(context, matched_terminal, '`', ",;").has_value())
+                    {
+                        return false;
+                    }
+                }
+
+                continue;
+            }
+
+            if (kind->text() == "http")
+            {
+                // http,<url_template>[,<rw>[,<header>]]
+                // plus URL template validation stuff from above
+                if (matched_terminal != ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(context,
+                                                                     msg::format(msgInvalidArgumentRequiresBaseUrl,
+                                                                                 msg::base_url = "https://",
+                                                                                 msg::binary_source = "http"));
+                    return false;
+                }
+
+                auto maybe_url = e.match_escaped(context, matched_terminal, '`', ",;");
+                auto url = maybe_url.get();
+                if (!url)
+                {
+                    return false;
+                }
+
+                if (!Strings::starts_with(url->text(), "http://") && !Strings::starts_with(url->text(), "https://"))
+                {
+                    url->report_error_with_caret_line(context,
+                                                      msg::format(msgInvalidArgumentRequiresBaseUrl,
+                                                                  msg::base_url = "https://",
+                                                                  msg::binary_source = "http"));
+                    return false;
+                }
+
+                auto maybe_url_template = validate_url_template(context, *url);
+                auto url_template = maybe_url_template.get();
+                if (!url_template)
+                {
+                    return false;
+                }
+
+                if (!url_template->has_sha)
+                {
+                    if (url_template->has_other)
+                    {
+                        url->report_error_with_caret_line(context, msg::format(msgMissingShaVariable));
+                        return false;
+                    }
+
+                    if (url_template->url_template.back() != '/')
+                    {
+                        url_template->url_template.push_back('/');
+                    }
+
+                    url_template->url_template.append("{sha}.zip");
+                }
+
+                BinaryCacheAccess access = BinaryCacheAccess::ReadWrite;
+                Optional<std::string> header;
+                if (matched_terminal == ',')
+                {
+                    auto maybe_access = e.match_escaped(context, matched_terminal, '`', ",;");
+                    auto access_text = maybe_access.get();
+                    if (!access_text)
+                    {
+                        return false;
+                    }
+
+                    if (access_text->text() == "readwrite")
+                    {
+                        access = BinaryCacheAccess::ReadWrite;
+                    }
+                    else if (access_text->text() == "read")
+                    {
+                        access = BinaryCacheAccess::Read;
+                    }
+                    else if (access_text->text() == "write")
+                    {
+                        access = BinaryCacheAccess::Write;
+                    }
+                    else
+                    {
+                        access_text->report_error_with_caret_line(context, msg::format(msgExpectedReadWriteReadWrite));
+                        return false;
+                    }
+
+                    if (matched_terminal == ',')
+                    {
+                        auto maybe_header = e.match_escaped(context, matched_terminal, '`', ",;");
+                        auto parsed_header = maybe_header.get();
+                        if (!parsed_header)
+                        {
+                            return false;
+                        }
+
+                        if (matched_terminal == ',')
+                        {
+                            parsed_header->report_error_with_caret_line_end_delimiter(
+                                context,
+                                msg::format(msgInvalidArgumentRequiresTwoOrThreeArguments,
+                                            msg::binary_source = "http"));
+                            return false;
+                        }
+
+                        header.emplace(parsed_header->move_text());
+                    }
+                }
+
+                result.providers.push_back({BinaryCacheProviderKind::Http,
+                                            access,
+                                            std::move(url_template->url_template),
+                                            std::move(header),
+                                            nullopt});
+                result.telemetry_tags.insert("http");
+                continue;
+            }
+
+            if (kind->text() == "x-az-universal")
+            {
+                // x-az-universal,<organization>,<project>,<feed>[,<rw>]
+                if (matched_terminal != ',')
+                {
+                    kind->report_error_with_caret_line_end_delimiter(
+                        context,
+                        msg::format(msgInvalidArgumentRequiresFourOrFiveArguments,
+                                    msg::binary_source = "Universal Packages"));
+                    return false;
+                }
+
+                auto maybe_organization = e.match_escaped(context, matched_terminal, '`', ",;");
+                auto organization = maybe_organization.get();
+                if (!organization)
+                {
+                    return false;
+                }
+
+                if (matched_terminal != ',')
+                {
+                    organization->report_error_with_caret_line_end_delimiter(
+                        context,
+                        msg::format(msgInvalidArgumentRequiresFourOrFiveArguments,
+                                    msg::binary_source = "Universal Packages"));
+                    return false;
+                }
+
+                auto maybe_project = e.match_escaped(context, matched_terminal, '`', ",;");
+                auto project = maybe_project.get();
+                if (!project)
+                {
+                    return false;
+                }
+
+                if (matched_terminal != ',')
+                {
+                    project->report_error_with_caret_line_end_delimiter(
+                        context,
+                        msg::format(msgInvalidArgumentRequiresFourOrFiveArguments,
+                                    msg::binary_source = "Universal Packages"));
+                    return false;
+                }
+
+                auto maybe_feed = e.match_escaped(context, matched_terminal, '`', ",;");
+                auto feed = maybe_feed.get();
+                if (!feed)
+                {
+                    return false;
+                }
+
+                BinaryCacheAccess access = BinaryCacheAccess::ReadWrite;
+                if (matched_terminal == ',')
+                {
+                    auto maybe_access_doc = e.match_escaped(context, matched_terminal, '`', ",;");
+                    const auto access_doc = maybe_access_doc.get();
+                    if (!access_doc)
+                    {
+                        return false;
+                    }
+
+                    if (matched_terminal == ',')
+                    {
+                        access_doc->report_error_with_caret_line_end_delimiter(
+                            context,
+                            msg::format(msgInvalidArgumentRequiresFourOrFiveArguments,
+                                        msg::binary_source = "Universal Packages"));
+                        return false;
+                    }
+
+                    auto maybe_access = parse_access_value(context, *access_doc);
+                    const auto parsed_access = maybe_access.get();
+                    if (!parsed_access)
+                    {
+                        return false;
+                    }
+
+                    access = *parsed_access;
+                }
+
+                result.providers.push_back({BinaryCacheProviderKind::AzUniversal,
+                                            access,
+                                            organization->move_text(),
+                                            project->move_text(),
+                                            feed->move_text()});
+                result.telemetry_tags.insert("upkg");
+                continue;
+            }
+
+            if (kind->text() == "x-azcopy")
+            {
+                // x-azcopy,<baseurl>[,<rw>]
+                auto maybe_base_url = parse_azure_base_url(context, e, matched_terminal, *kind, "x-azcopy");
+                auto base_url = maybe_base_url.get();
+                if (!base_url)
+                {
+                    return false;
+                }
+
+                BinaryCacheAccess access = BinaryCacheAccess::ReadWrite;
+                if (matched_terminal == ',')
+                {
+                    auto maybe_access_doc = e.match_escaped(context, matched_terminal, '`', ",;");
+                    const auto access_doc = maybe_access_doc.get();
+                    if (!access_doc)
+                    {
+                        return false;
+                    }
+
+                    if (matched_terminal == ',')
+                    {
+                        e.report_error_with_caret_line(
+                            context,
+                            msg::format(msgInvalidArgumentRequiresOneOrTwoArguments, msg::binary_source = "x-azcopy"));
+                        return false;
+                    }
+
+                    auto maybe_access = parse_access_value(context, *access_doc);
+                    const auto parsed_access = maybe_access.get();
+                    if (!parsed_access)
+                    {
+                        return false;
+                    }
+
+                    access = *parsed_access;
+                }
+
+                result.providers.push_back(
+                    {BinaryCacheProviderKind::AzCopy, access, std::move(*base_url), nullopt, nullopt});
+                result.telemetry_tags.insert("azcopy");
+                continue;
+            }
+
+            if (kind->text() == "x-azcopy-sas")
+            {
+                // x-azcopy-sas,<baseurl>,<sas>[,<rw>]
+                if (!parse_azure_base_url_and_token_provider(context,
+                                                             e,
+                                                             matched_terminal,
+                                                             *kind,
+                                                             result,
+                                                             BinaryCacheProviderKind::AzCopySas,
+                                                             "x-azcopy-sas",
+                                                             "azcopy-sas"))
+                {
+                    return false;
+                }
+                continue;
+            }
+
+            kind->report_error_with_caret_line(context, msg::format(msgUnknownBinaryProviderType));
+            return false;
+        }
+
+        return true;
+    }
+
+    Optional<BinaryCacheParsedConfigs> parse_binary_provider_configs(DiagnosticContext& context,
+                                                                     const Path& default_cache_path,
+                                                                     const std::string& env_string,
+                                                                     View<std::string> args)
+    {
+        Optional<BinaryCacheParsedConfigs> out;
+        auto& result = out.emplace();
+
+        result.providers.push_back(
+            {BinaryCacheProviderKind::Files, BinaryCacheAccess::ReadWrite, default_cache_path.native(), nullopt});
+        result.telemetry_tags.insert("default");
+        if (!parse_binary_provider_configs_append(
+                context, result, default_cache_path, env_string, format_environment_variable("VCPKG_BINARY_SOURCES")))
+        {
+            out.clear();
+            return out;
+        }
+
+        for (const auto& arg : args)
+        {
+            if (!parse_binary_provider_configs_append(context, result, default_cache_path, arg, nullopt))
+            {
+                out.clear();
+                return out;
+            }
+        }
+
+        return out;
+    }
+
+    std::string format_version_for_feedref(StringView version_text, StringView abi_tag)
+    {
+        // this cannot use DotVersion::try_parse or DateVersion::try_parse,
+        // since this is a subtly different algorithm
+        // and ignores random extra stuff from the end
+
+        ParsedExternalVersion parsed_version;
+        if (try_extract_external_date_version(parsed_version, version_text))
+        {
+            parsed_version.normalize();
+            return fmt::format(
+                "{}.{}.{}-vcpkg{}", parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
+        }
+
+        if (!version_text.empty() && version_text[0] == 'v')
+        {
+            version_text = version_text.substr(1);
+        }
+        if (try_extract_external_dot_version(parsed_version, version_text))
+        {
+            parsed_version.normalize();
+            return fmt::format(
+                "{}.{}.{}-vcpkg{}", parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
+        }
+
+        return Strings::concat("0.0.0-vcpkg", abi_tag);
+    }
+
+    std::string generate_nuspec(const Path& package_dir,
+                                const InstallPlanAction& action,
+                                StringView id_prefix,
+                                const NuGetRepoInfo& rinfo)
+    {
+        auto& spec = action.spec;
+        auto& scf = *action.source_control_file_and_location().source_control_file;
+        auto& version = scf.core_paragraph->version;
+        const auto& abi_info = action.abi_info.value_or_exit(VCPKG_LINE_INFO);
+        Checks::check_exit(VCPKG_LINE_INFO, abi_info.compiler_info != nullptr);
+        const auto& compiler_info = *abi_info.compiler_info;
+        Checks::check_exit(VCPKG_LINE_INFO, abi_info.triplet_abi != nullptr);
+        auto ref = make_nugetref(action, id_prefix);
+        std::string description =
+            Strings::concat("NOT FOR DIRECT USE. Automatically generated cache package.\n\n",
+                            Strings::join("\n    ", scf.core_paragraph->description),
+                            "\n\nVersion: ",
+                            version,
+                            "\nTriplet: ",
+                            spec.triplet().to_string(),
+                            "\nCXX Compiler id: ",
+                            compiler_info.id,
+                            "\nCXX Compiler version: ",
+                            compiler_info.version,
+                            "\nTriplet/Compiler hash: ",
+                            *abi_info.triplet_abi,
+                            "\nFeatures:",
+                            Strings::join(",", action.feature_list, [](const std::string& s) { return " " + s; }),
+                            "\nDependencies:\n");
+
+        for (auto&& dep : action.package_dependencies)
+        {
+            Strings::append(description, "    ", dep.name(), '\n');
+        }
+
+        XmlSerializer xml;
+        xml.open_tag("package").line_break();
+        xml.open_tag("metadata").line_break();
+        xml.simple_tag("id", ref.id).line_break();
+        xml.simple_tag("version", ref.version).line_break();
+        if (!scf.core_paragraph->homepage.empty())
+        {
+            xml.simple_tag("projectUrl", scf.core_paragraph->homepage);
+        }
+
+        xml.simple_tag("authors", "vcpkg").line_break();
+        xml.simple_tag("description", description).line_break();
+        xml.open_tag("packageTypes");
+        xml.start_complex_open_tag("packageType").text_attr("name", "vcpkg").finish_self_closing_complex_tag();
+        xml.close_tag("packageTypes").line_break();
+        if (!rinfo.repo.empty())
+        {
+            xml.start_complex_open_tag("repository").text_attr("type", "git").text_attr("url", rinfo.repo);
+            if (!rinfo.branch.empty())
+            {
+                xml.text_attr("branch", rinfo.branch);
+            }
+
+            if (!rinfo.commit.empty())
+            {
+                xml.text_attr("commit", rinfo.commit);
+            }
+
+            xml.finish_self_closing_complex_tag().line_break();
+        }
+
+        xml.close_tag("metadata").line_break();
+        xml.open_tag("files");
+        xml.start_complex_open_tag("file")
+            .text_attr("src", package_dir / "**")
+            .text_attr("target", "")
+            .finish_self_closing_complex_tag();
+        xml.close_tag("files").line_break();
+        xml.close_tag("package").line_break();
+        return std::move(xml.buf);
+    }
+
+    LocalizedString format_help_topic_asset_caching()
+    {
+        HelpTableFormatter table;
+        table.format("clear", msg::format(msgHelpCachingClear));
+        table.format("x-azurl,<url>[,<sas>[,<rw>]]", msg::format(msgHelpAssetCachingAzUrl));
+        table.format("x-script,<template>", msg::format(msgHelpAssetCachingScript));
+        table.format("x-block-origin", msg::format(msgHelpAssetCachingBlockOrigin));
+        return msg::format(msgHelpAssetCaching)
             .append_raw('\n')
-            .append_raw(NotePrefix)
-            .append(msgSeeURL, msg::url = docs::assetcaching_url);
-    }
-    if (s.url_templates_to_get.size() > 1)
-    {
-        return msg::format_error(msgAMaximumOfOneAssetReadUrlCanBeSpecified)
+            .append_raw(table.m_str)
             .append_raw('\n')
-            .append_raw(NotePrefix)
-            .append(msgSeeURL, msg::url = docs::assetcaching_url);
+            .append(msgExtendedDocumentationAtUrl, msg::url = docs::assetcaching_url);
     }
 
-    if (!s.url_templates_to_get.empty())
+    LocalizedString format_help_topic_binary_caching()
     {
-        result.m_read_url_template = std::move(s.url_templates_to_get.back());
-    }
+        HelpTableFormatter table;
 
-    if (!s.azblob_templates_to_put.empty())
-    {
-        result.m_write_url_template = std::move(s.azblob_templates_to_put.back());
-        auto v = azure_blob_headers();
-        result.m_write_headers.assign(v.begin(), v.end());
-    }
-
-    result.m_secrets = std::move(s.secrets);
-    result.m_block_origin = s.block_origin;
-    result.m_script = std::move(s.script);
-    return result;
-}
-
-ExpectedL<BinaryConfigParserState> vcpkg::parse_binary_provider_configs(const std::string& env_string,
-                                                                        View<std::string> args)
-{
-    BinaryConfigParserState s;
-
-    BinaryConfigParser default_parser("default,readwrite", "<defaults>", &s);
-    default_parser.parse();
-    if (default_parser.messages().any_errors())
-    {
-        return default_parser.messages().join();
-    }
-
-    for (const auto& line : default_parser.messages().lines())
-    {
-        line.print_to(out_sink);
-    }
-
-    // must live until the end of the function due to StringView in BinaryConfigParser
-    const auto source = format_environment_variable("VCPKG_BINARY_SOURCES");
-    BinaryConfigParser env_parser(env_string, source, &s);
-    env_parser.parse();
-    if (env_parser.messages().any_errors())
-    {
-        return env_parser.messages().join();
-    }
-
-    for (const auto& line : env_parser.messages().lines())
-    {
-        line.print_to(out_sink);
-    }
-
-    for (auto&& arg : args)
-    {
-        BinaryConfigParser arg_parser(arg, nullopt, &s);
-        arg_parser.parse();
-        if (arg_parser.messages().any_errors())
+        // General sources:
+        table.format("clear", msg::format(msgHelpCachingClear));
+        SinkBufferedDiagnosticContext sdc{null_sink};
+        auto p = default_cache_path(sdc);
+        if (p)
         {
-            return arg_parser.messages().join();
+            table.format("default[,<rw>]", msg::format(msgHelpBinaryCachingDefaults, msg::path = *p.get()));
+        }
+        else
+        {
+            table.format("default[,<rw>]", msg::format(msgHelpBinaryCachingDefaultsError));
         }
 
-        for (const auto& line : arg_parser.messages().lines())
+        table.format("files,<path>[,<rw>]", msg::format(msgHelpBinaryCachingFiles));
+        table.format("http,<url_template>[,<rw>[,<header>]]", msg::format(msgHelpBinaryCachingHttp));
+        table.format("x-azblob,<url>,<sas>[,<rw>]", msg::format(msgHelpBinaryCachingAzBlob));
+        table.format("x-gcs,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingGcs));
+        table.format("x-cos,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingCos));
+        table.format("x-az-universal,<organization>,<project>,<feed>[,<rw>]", msg::format(msgHelpBinaryCachingAzUpkg));
+        table.blank();
+
+        // NuGet sources:
+        table.header(msg::format(msgHelpBinaryCachingNuGetHeader));
+        table.format("nuget,<uri>[,<rw>]", msg::format(msgHelpBinaryCachingNuGet));
+        table.format("nugetconfig,<path>[,<rw>]", msg::format(msgHelpBinaryCachingNuGetConfig));
+        table.format("nugettimeout,<seconds>", msg::format(msgHelpBinaryCachingNuGetTimeout));
+        table.format("interactive", msg::format(msgHelpBinaryCachingNuGetInteractive));
+        table.text(msg::format(msgHelpBinaryCachingNuGetFooter), 2);
+        table.text("\n<repository type=\"git\" url=\"${VCPKG_NUGET_REPOSITORY}\"/>\n"
+                   "<repository type=\"git\"\n"
+                   "            url=\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git\"\n"
+                   "            branch=\"${GITHUB_REF}\"\n"
+                   "            commit=\"${GITHUB_SHA}\"/>",
+                   4);
+        table.blank();
+
+        // AWS sources:
+        table.blank();
+        table.header(msg::format(msgHelpBinaryCachingAwsHeader));
+        table.format("x-aws,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingAws));
+        table.format("x-aws-config,<parameter>", msg::format(msgHelpBinaryCachingAwsConfig));
+
+        return msg::format(msgHelpBinaryCaching)
+            .append_raw('\n')
+            .append_raw(table.m_str)
+            .append_raw('\n')
+            .append(msgExtendedDocumentationAtUrl, msg::url = docs::binarycaching_url);
+    }
+
+    std::string generate_nuget_packages_config(const ActionPlan& plan, StringView prefix)
+    {
+        XmlSerializer xml;
+        xml.emit_declaration().line_break();
+        xml.open_tag("packages").line_break();
+        for (auto&& action : plan.install_actions)
         {
-            line.print_to(out_sink);
-        }
-    }
-
-    return s;
-}
-
-std::string vcpkg::format_version_for_feedref(StringView version_text, StringView abi_tag)
-{
-    // this cannot use DotVersion::try_parse or DateVersion::try_parse,
-    // since this is a subtly different algorithm
-    // and ignores random extra stuff from the end
-
-    ParsedExternalVersion parsed_version;
-    if (try_extract_external_date_version(parsed_version, version_text))
-    {
-        parsed_version.normalize();
-        return fmt::format(
-            "{}.{}.{}-vcpkg{}", parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
-    }
-
-    if (!version_text.empty() && version_text[0] == 'v')
-    {
-        version_text = version_text.substr(1);
-    }
-    if (try_extract_external_dot_version(parsed_version, version_text))
-    {
-        parsed_version.normalize();
-        return fmt::format(
-            "{}.{}.{}-vcpkg{}", parsed_version.major, parsed_version.minor, parsed_version.patch, abi_tag);
-    }
-
-    return Strings::concat("0.0.0-vcpkg", abi_tag);
-}
-
-std::string vcpkg::generate_nuspec(const Path& package_dir,
-                                   const InstallPlanAction& action,
-                                   StringView id_prefix,
-                                   const NuGetRepoInfo& rinfo)
-{
-    auto& spec = action.spec;
-    auto& scf = *action.source_control_file_and_location().source_control_file;
-    auto& version = scf.core_paragraph->version;
-    const auto& abi_info = action.abi_info.value_or_exit(VCPKG_LINE_INFO);
-    Checks::check_exit(VCPKG_LINE_INFO, abi_info.compiler_info != nullptr);
-    const auto& compiler_info = *abi_info.compiler_info;
-    Checks::check_exit(VCPKG_LINE_INFO, abi_info.triplet_abi != nullptr);
-    auto ref = make_nugetref(action, id_prefix);
-    std::string description =
-        Strings::concat("NOT FOR DIRECT USE. Automatically generated cache package.\n\n",
-                        Strings::join("\n    ", scf.core_paragraph->description),
-                        "\n\nVersion: ",
-                        version,
-                        "\nTriplet: ",
-                        spec.triplet().to_string(),
-                        "\nCXX Compiler id: ",
-                        compiler_info.id,
-                        "\nCXX Compiler version: ",
-                        compiler_info.version,
-                        "\nTriplet/Compiler hash: ",
-                        *abi_info.triplet_abi,
-                        "\nFeatures:",
-                        Strings::join(",", action.feature_list, [](const std::string& s) { return " " + s; }),
-                        "\nDependencies:\n");
-
-    for (auto&& dep : action.package_dependencies)
-    {
-        Strings::append(description, "    ", dep.name(), '\n');
-    }
-
-    XmlSerializer xml;
-    xml.open_tag("package").line_break();
-    xml.open_tag("metadata").line_break();
-    xml.simple_tag("id", ref.id).line_break();
-    xml.simple_tag("version", ref.version).line_break();
-    if (!scf.core_paragraph->homepage.empty())
-    {
-        xml.simple_tag("projectUrl", scf.core_paragraph->homepage);
-    }
-
-    xml.simple_tag("authors", "vcpkg").line_break();
-    xml.simple_tag("description", description).line_break();
-    xml.open_tag("packageTypes");
-    xml.start_complex_open_tag("packageType").text_attr("name", "vcpkg").finish_self_closing_complex_tag();
-    xml.close_tag("packageTypes").line_break();
-    if (!rinfo.repo.empty())
-    {
-        xml.start_complex_open_tag("repository").text_attr("type", "git").text_attr("url", rinfo.repo);
-        if (!rinfo.branch.empty())
-        {
-            xml.text_attr("branch", rinfo.branch);
+            auto ref = make_nugetref(action, prefix);
+            xml.start_complex_open_tag("package")
+                .text_attr("id", ref.id)
+                .text_attr("version", ref.version)
+                .finish_self_closing_complex_tag()
+                .line_break();
         }
 
-        if (!rinfo.commit.empty())
+        xml.close_tag("packages").line_break();
+        return std::move(xml.buf);
+    }
+
+    FeedReference make_nugetref(const InstallPlanAction& action, StringView prefix)
+    {
+        return ::make_feedref(
+            action.spec, action.version, action.abi_info.value_or_exit(VCPKG_LINE_INFO).package_abi, prefix);
+    }
+
+    std::vector<std::vector<std::string>> batch_command_arguments_with_fixed_length(
+        const std::vector<std::string>& entries,
+        const std::size_t reserved_len,
+        const std::size_t max_len,
+        const std::size_t fixed_len,
+        const std::size_t separator_len)
+    {
+        const auto available_len = static_cast<ptrdiff_t>(max_len) - reserved_len;
+
+        // Not enough space for even one entry
+        if (available_len < fixed_len) return {};
+
+        const size_t entries_per_batch = 1 + (available_len - fixed_len) / (fixed_len + separator_len);
+
+        auto first = entries.begin();
+        const auto last = entries.end();
+        std::vector<std::vector<std::string>> batches;
+        while (first != last)
         {
-            xml.text_attr("commit", rinfo.commit);
+            auto end_of_batch = first + std::min(static_cast<size_t>(last - first), entries_per_batch);
+            batches.emplace_back(first, end_of_batch);
+            first = end_of_batch;
         }
-
-        xml.finish_self_closing_complex_tag().line_break();
+        return batches;
     }
-
-    xml.close_tag("metadata").line_break();
-    xml.open_tag("files");
-    xml.start_complex_open_tag("file")
-        .text_attr("src", package_dir / "**")
-        .text_attr("target", "")
-        .finish_self_closing_complex_tag();
-    xml.close_tag("files").line_break();
-    xml.close_tag("package").line_break();
-    return std::move(xml.buf);
-}
-
-LocalizedString vcpkg::format_help_topic_asset_caching()
-{
-    HelpTableFormatter table;
-    table.format("clear", msg::format(msgHelpCachingClear));
-    table.format("x-azurl,<url>[,<sas>[,<rw>]]", msg::format(msgHelpAssetCachingAzUrl));
-    table.format("x-script,<template>", msg::format(msgHelpAssetCachingScript));
-    table.format("x-block-origin", msg::format(msgHelpAssetCachingBlockOrigin));
-    return msg::format(msgHelpAssetCaching)
-        .append_raw('\n')
-        .append_raw(table.m_str)
-        .append_raw('\n')
-        .append(msgExtendedDocumentationAtUrl, msg::url = docs::assetcaching_url);
-}
-
-LocalizedString vcpkg::format_help_topic_binary_caching()
-{
-    HelpTableFormatter table;
-
-    // General sources:
-    table.format("clear", msg::format(msgHelpCachingClear));
-    const auto& maybe_cachepath = default_cache_path();
-    if (auto p = maybe_cachepath.get())
-    {
-        table.format("default[,<rw>]", msg::format(msgHelpBinaryCachingDefaults, msg::path = *p));
-    }
-    else
-    {
-        table.format("default[,<rw>]", msg::format(msgHelpBinaryCachingDefaultsError));
-    }
-
-    table.format("files,<path>[,<rw>]", msg::format(msgHelpBinaryCachingFiles));
-    table.format("http,<url_template>[,<rw>[,<header>]]", msg::format(msgHelpBinaryCachingHttp));
-    table.format("x-azblob,<url>,<sas>[,<rw>]", msg::format(msgHelpBinaryCachingAzBlob));
-    table.format("x-gcs,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingGcs));
-    table.format("x-cos,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingCos));
-    table.format("x-az-universal,<organization>,<project>,<feed>[,<rw>]", msg::format(msgHelpBinaryCachingAzUpkg));
-    table.blank();
-
-    // NuGet sources:
-    table.header(msg::format(msgHelpBinaryCachingNuGetHeader));
-    table.format("nuget,<uri>[,<rw>]", msg::format(msgHelpBinaryCachingNuGet));
-    table.format("nugetconfig,<path>[,<rw>]", msg::format(msgHelpBinaryCachingNuGetConfig));
-    table.format("nugettimeout,<seconds>", msg::format(msgHelpBinaryCachingNuGetTimeout));
-    table.format("interactive", msg::format(msgHelpBinaryCachingNuGetInteractive));
-    table.text(msg::format(msgHelpBinaryCachingNuGetFooter), 2);
-    table.text("\n<repository type=\"git\" url=\"${VCPKG_NUGET_REPOSITORY}\"/>\n"
-               "<repository type=\"git\"\n"
-               "            url=\"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git\"\n"
-               "            branch=\"${GITHUB_REF}\"\n"
-               "            commit=\"${GITHUB_SHA}\"/>",
-               4);
-    table.blank();
-
-    // AWS sources:
-    table.blank();
-    table.header(msg::format(msgHelpBinaryCachingAwsHeader));
-    table.format("x-aws,<prefix>[,<rw>]", msg::format(msgHelpBinaryCachingAws));
-    table.format("x-aws-config,<parameter>", msg::format(msgHelpBinaryCachingAwsConfig));
-
-    return msg::format(msgHelpBinaryCaching)
-        .append_raw('\n')
-        .append_raw(table.m_str)
-        .append_raw('\n')
-        .append(msgExtendedDocumentationAtUrl, msg::url = docs::binarycaching_url);
-}
-
-std::string vcpkg::generate_nuget_packages_config(const ActionPlan& plan, StringView prefix)
-{
-    XmlSerializer xml;
-    xml.emit_declaration().line_break();
-    xml.open_tag("packages").line_break();
-    for (auto&& action : plan.install_actions)
-    {
-        auto ref = make_nugetref(action, prefix);
-        xml.start_complex_open_tag("package")
-            .text_attr("id", ref.id)
-            .text_attr("version", ref.version)
-            .finish_self_closing_complex_tag()
-            .line_break();
-    }
-
-    xml.close_tag("packages").line_break();
-    return std::move(xml.buf);
-}
-
-FeedReference vcpkg::make_nugetref(const InstallPlanAction& action, StringView prefix)
-{
-    return ::make_feedref(
-        action.spec, action.version, action.abi_info.value_or_exit(VCPKG_LINE_INFO).package_abi, prefix);
-}
-
-std::vector<std::vector<std::string>> vcpkg::batch_command_arguments_with_fixed_length(
-    const std::vector<std::string>& entries,
-    const std::size_t reserved_len,
-    const std::size_t max_len,
-    const std::size_t fixed_len,
-    const std::size_t separator_len)
-{
-    const auto available_len = static_cast<ptrdiff_t>(max_len) - reserved_len;
-
-    // Not enough space for even one entry
-    if (available_len < fixed_len) return {};
-
-    const size_t entries_per_batch = 1 + (available_len - fixed_len) / (fixed_len + separator_len);
-
-    auto first = entries.begin();
-    const auto last = entries.end();
-    std::vector<std::vector<std::string>> batches;
-    while (first != last)
-    {
-        auto end_of_batch = first + std::min(static_cast<size_t>(last - first), entries_per_batch);
-        batches.emplace_back(first, end_of_batch);
-        first = end_of_batch;
-    }
-    return batches;
 }

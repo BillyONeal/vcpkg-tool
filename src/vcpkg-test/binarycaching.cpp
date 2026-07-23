@@ -3,7 +3,6 @@
 #include <vcpkg/base/xmlserializer.h>
 
 #include <vcpkg/binarycaching.h>
-#include <vcpkg/binarycaching.private.h>
 #include <vcpkg/dependencies.h>
 #include <vcpkg/paragraphs.h>
 #include <vcpkg/sourceparagraph.h>

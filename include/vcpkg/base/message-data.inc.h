@@ -250,22 +250,22 @@ DECLARE_MESSAGE(AssetCacheProviderAcceptsNoArguments,
                 "{value} is a asset caching provider name such as azurl, clear, or x-block-origin",
                 "unexpected arguments: '{value}' does not accept arguments")
 DECLARE_MESSAGE(AssetCacheScriptBadVariable,
-                (msg::value, msg::list),
-                "{value} is the script template passed to x-script, {list} is the name of the unknown replacement",
-                "the script template {value} contains unknown replacement {list}")
+                (msg::list),
+                "{list} is the name of the unknown replacement",
+                "the script template contains unknown replacement {list}")
 DECLARE_MESSAGE(AssetCacheScriptBadVariableHint,
                 (msg::list),
                 "{list} is the name of the unknown replacement",
                 "if you want this on the literal command line, use {{{{{list}}}}}")
 DECLARE_MESSAGE(AssetCacheScriptCommandLine, (), "", "the full script command line was")
 DECLARE_MESSAGE(AssetCacheScriptNeedsSha,
-                (msg::value, msg::url),
-                "{value} is the script template the user supplied to x-script",
-                "the script template {value} requires a SHA, but no SHA is known for attempted download of {url}")
+                (msg::url),
+                "",
+                "the script template requires a SHA, but no SHA is known for attempted download of {url}")
 DECLARE_MESSAGE(AssetCacheScriptNeedsUrl,
-                (msg::value, msg::sha),
-                "{value} is the script template the user supplied to x-script",
-                "the script template {value} requires a URL, but no URL is known for attempted download of {sha}")
+                (msg::sha),
+                "",
+                "the script template requires a URL, but no URL is known for attempted download of {sha}")
 DECLARE_MESSAGE(AssetCacheScriptFailed,
                 (msg::exit_code),
                 "",
@@ -1012,17 +1012,17 @@ DECLARE_MESSAGE(CurrentCommitBaseline,
                 "You can use the current commit as a baseline, which is:\n\t\"builtin-baseline\": \"{commit_sha}\"")
 DECLARE_MESSAGE(CycleDetectedDuring, (msg::spec), "", "cycle detected during {spec}:")
 DECLARE_MESSAGE(DefaultBinaryCachePlatformCacheRequiresAbsolutePath,
-                (msg::path),
+                (),
                 "",
-                "Environment variable VCPKG_DEFAULT_BINARY_CACHE must be a directory (was: {path})")
+                "platform cache path for vcpkg must be absolute")
 DECLARE_MESSAGE(DefaultBinaryCacheRequiresAbsolutePath,
-                (msg::path),
+                (),
                 "",
-                "Environment variable VCPKG_DEFAULT_BINARY_CACHE must be absolute (was: {path})")
+                "environment variable VCPKG_DEFAULT_BINARY_CACHE must be absolute")
 DECLARE_MESSAGE(DefaultBinaryCacheRequiresDirectory,
-                (msg::path),
+                (),
                 "",
-                "Environment variable VCPKG_DEFAULT_BINARY_CACHE must be a directory (was: {path})")
+                "environment variable VCPKG_DEFAULT_BINARY_CACHE must be a directory")
 DECLARE_MESSAGE(DefaultFeatureCore,
                 (),
                 "The word \"core\" is an on-disk name that must not be localized.",
@@ -1280,7 +1280,7 @@ DECLARE_MESSAGE(ExpectedPathToExistAfterExtractingTool,
                 "",
                 "expected this path to exist after extracting {tool_name}")
 DECLARE_MESSAGE(ExpectedPortName, (), "", "expected a port name here (must be lowercase, digits, '-')")
-DECLARE_MESSAGE(ExpectedReadWriteReadWrite, (), "", "unexpected argument: expected 'read', readwrite', or 'write'")
+DECLARE_MESSAGE(ExpectedReadWriteReadWrite, (), "", "expected 'read', 'readwrite', or 'write'")
 DECLARE_MESSAGE(ExpectedStatusField, (), "", "Expected 'status' field in status paragraph")
 DECLARE_MESSAGE(ExpectedTextHere,
                 (msg::expected),
@@ -1328,7 +1328,7 @@ DECLARE_MESSAGE(FailedToDetermineCurrentCommit, (), "", "Failed to determine the
 DECLARE_MESSAGE(MissingShaVariable,
                 (),
                 "{{sha}} should not be translated",
-                "The {{sha}} variable must be used in the template if other variables are used.")
+                "the {{sha}} variable must be used in the template if other variables are used")
 DECLARE_MESSAGE(FailedToFetchRepo, (msg::url), "", "Failed to fetch {url}.")
 DECLARE_MESSAGE(FailedToFindPortFeature,
                 (msg::feature, msg::package_name),
@@ -1892,28 +1892,26 @@ DECLARE_MESSAGE(
     "{value} is an unknown CPU architecture type, {expected} is the list of accepted CPU architecture values",
     "Invalid architecture: {value}. Expected one of: {expected}")
 DECLARE_MESSAGE(InvalidArgument, (), "", "invalid argument")
-DECLARE_MESSAGE(
-    InvalidArgumentRequiresAbsolutePath,
-    (msg::binary_source),
-    "",
-    "invalid argument: binary config '{binary_source}' path arguments for binary config strings must be absolute")
-DECLARE_MESSAGE(
-    InvalidArgumentRequiresBaseUrl,
-    (msg::base_url, msg::binary_source),
-    "",
-    "invalid argument: binary config '{binary_source}' requires a {base_url} base url as the first argument")
+DECLARE_MESSAGE(InvalidArgumentRequiresAbsolutePath,
+                (),
+                "",
+                "path arguments for binary config strings must be absolute")
+DECLARE_MESSAGE(InvalidArgumentRequiresBaseUrl,
+                (msg::base_url, msg::binary_source),
+                "",
+                "binary config '{binary_source}' requires a {base_url} base url as the first argument")
 DECLARE_MESSAGE(InvalidArgumentRequiresBaseUrlAndToken,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' requires at least a base-url and a SAS token")
+                "binary config '{binary_source}' requires at least a base-url and a SAS token")
 DECLARE_MESSAGE(InvalidArgumentRequiresFourOrFiveArguments,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' requires 4 or 5 arguments")
+                "binary config '{binary_source}' requires 4 or 5 arguments")
 DECLARE_MESSAGE(InvalidArgumentRequiresNoneArguments,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' does not take arguments")
+                "binary config '{binary_source}' does not take arguments")
 DECLARE_MESSAGE(InvalidArgumentRequiresNoWildcards,
                 (msg::path),
                 "",
@@ -1921,35 +1919,31 @@ DECLARE_MESSAGE(InvalidArgumentRequiresNoWildcards,
 DECLARE_MESSAGE(InvalidArgumentRequiresOneOrTwoArguments,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' requires 1 or 2 arguments")
+                "binary config '{binary_source}' requires 1 or 2 arguments")
 DECLARE_MESSAGE(InvalidArgumentRequiresPathArgument,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' requires at least one path argument")
-DECLARE_MESSAGE(InvalidArgumentRequiresPrefix,
-                (msg::binary_source),
-                "",
-                "invalid argument: binary config '{binary_source}' requires at least one prefix")
+                "binary config '{binary_source}' requires at least one path argument")
 DECLARE_MESSAGE(InvalidArgumentRequiresSingleArgument,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' does not take more than 1 argument")
+                "binary config '{binary_source}' does not take more than 1 argument")
 DECLARE_MESSAGE(InvalidArgumentRequiresSingleStringArgument,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' expects a single string argument")
+                "binary config '{binary_source}' expects a single string argument")
 DECLARE_MESSAGE(InvalidArgumentRequiresSourceArgument,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' requires at least one source argument")
+                "binary config '{binary_source}' requires at least one source argument")
 DECLARE_MESSAGE(InvalidArgumentRequiresTwoOrThreeArguments,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' requires 2 or 3 arguments")
+                "binary config '{binary_source}' requires 2 or 3 arguments")
 DECLARE_MESSAGE(InvalidArgumentRequiresValidToken,
                 (msg::binary_source),
                 "",
-                "invalid argument: binary config '{binary_source}' requires a SAS token without a "
+                "binary config '{binary_source}' requires a SAS token without a "
                 "preceeding '?' as the second argument")
 DECLARE_MESSAGE(InvalidBuildInfo, (msg::error_msg), "", "Invalid BUILD_INFO file for package: {error_msg}")
 DECLARE_MESSAGE(
@@ -1990,10 +1984,6 @@ DECLARE_MESSAGE(InvalidFilename,
                 "Filename cannot contain invalid chars {value}, but was {path}")
 DECLARE_MESSAGE(InvalidFileType, (msg::path), "", "failed: {path} cannot handle file type")
 DECLARE_MESSAGE(InvalidFloatingPointConst, (msg::count), "", "Invalid floating point constant: {count}")
-DECLARE_MESSAGE(InvalidFormatString,
-                (msg::actual),
-                "{actual} is the provided format string",
-                "invalid format string: {actual}")
 DECLARE_MESSAGE(InvalidGitObjectSha,
                 (msg::sha),
                 "",
@@ -2293,7 +2283,7 @@ DECLARE_MESSAGE(NuGetPackageFileSucceededButCreationFailed,
 DECLARE_MESSAGE(NuGetTimeoutExpectsSinglePositiveInteger,
                 (),
                 "",
-                "unexpected arguments: binary config 'nugettimeout' expects a single positive integer argument")
+                "binary config 'nugettimeout' expects a single positive integer argument")
 DECLARE_MESSAGE(OnlySupports,
                 (msg::feature_spec, msg::supports_expression),
                 "",
@@ -3062,10 +3052,7 @@ DECLARE_MESSAGE(UnknownTopic,
                 (msg::value),
                 "{value} the value a user passed to `vcpkg help` that we don't understand",
                 "unknown topic {value}")
-DECLARE_MESSAGE(UnknownVariablesInTemplate,
-                (msg::value, msg::list),
-                "{value} is the value provided by the user and {list} a list of unknown variables seperated by comma",
-                "invalid argument: url template '{value}' contains unknown variables: {list}")
+DECLARE_MESSAGE(UnknownVariablesInTemplate, (), "", "template contains unknown variable")
 DECLARE_MESSAGE(UnrecognizedConfigField, (), "", "configuration contains the following unrecognized fields:")
 DECLARE_MESSAGE(UnrecognizedIdentifier,
                 (msg::value),

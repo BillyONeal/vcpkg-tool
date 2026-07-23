@@ -89,8 +89,8 @@ Throw-IfNotFailed
 
 $expected = @"
 error: unknown binary provider type: valid providers are 'clear', 'default', 'nuget', 'nugetconfig', 'nugettimeout', 'interactive', 'x-azblob', 'x-gcs', 'x-aws', 'x-aws-config', 'http', and 'files'
-  on expression: clear;not-a-backend
-                       ^
+clear;not-a-backend
+      ^
 
 "@
 

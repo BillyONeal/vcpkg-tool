@@ -1,6 +1,7 @@
 #include <vcpkg-test/util.h>
 
 #include <vcpkg/base/api-stable-format.h>
+#include <vcpkg/base/parse.h>
 #include <vcpkg/base/strings.h>
 
 #include <stdint.h>
@@ -210,63 +211,102 @@ TEST_CASE ("inplace_replace_all(char)", "[strings]")
     REQUIRE(target == "hewwo");
 }
 
-TEST_CASE ("api_stable_format(sv,append_f)", "[strings]")
+TEST_CASE ("api_stable_format(stacked,append_f)", "[strings]")
 {
-    for (auto&& invalid_format_string : {"{", "}", "{ {", "{ {}"})
     {
-        FullyBufferedDiagnosticContext bdc_invalid{};
-        auto res = api_stable_format(bdc_invalid, invalid_format_string, [](std::string&, StringView) {
-            CHECK(false);
-            return true;
-        });
-        REQUIRE(bdc_invalid.to_string() == fmt::format("error: invalid format string: {}", invalid_format_string));
-    }
-
-    FullyBufferedDiagnosticContext bdc{};
-    {
-        auto res = api_stable_format(bdc, "}}", [](std::string&, StringView) {
-            CHECK(false);
-            return true;
-        });
+        FullyBufferedDiagnosticContext bdc{};
+        ParsedDocument doc("}}", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res = api_stable_format(
+            bdc, *maybe_fmt.get(), [](DiagnosticContext&, std::string&, StringView, const StackedParseEnumerator&) {
+                CHECK(false);
+                return true;
+            });
         REQUIRE(bdc.empty());
         REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "}");
     }
     {
-        auto res = api_stable_format(bdc, "{{", [](std::string&, StringView) {
-            CHECK(false);
-            return true;
-        });
+        FullyBufferedDiagnosticContext bdc{};
+        ParsedDocument doc("{{", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res = api_stable_format(
+            bdc, *maybe_fmt.get(), [](DiagnosticContext&, std::string&, StringView, const StackedParseEnumerator&) {
+                CHECK(false);
+                return true;
+            });
         REQUIRE(bdc.empty());
         REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "{");
     }
     {
-        auto res = api_stable_format(bdc, "{x}{y}{z}", [](std::string& out, StringView t) {
-            CHECK((t == "x" || t == "y" || t == "z"));
-            Strings::append(out, t, t);
-            return true;
-        });
+        FullyBufferedDiagnosticContext bdc{};
+        ParsedDocument doc("{x}{y}{z}", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res =
+            api_stable_format(bdc,
+                              *maybe_fmt.get(),
+                              [](DiagnosticContext&, std::string& out, StringView t, const StackedParseEnumerator&) {
+                                  CHECK((t == "x" || t == "y" || t == "z"));
+                                  Strings::append(out, t, t);
+                                  return true;
+                              });
         REQUIRE(bdc.empty());
         REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "xxyyzz");
     }
     {
-        auto res = api_stable_format(bdc, "{x}}}", [](std::string& out, StringView t) {
-            CHECK(t == "x");
-            Strings::append(out, "hello");
-            return true;
-        });
+        FullyBufferedDiagnosticContext bdc{};
+        ParsedDocument doc("{x}}}", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res =
+            api_stable_format(bdc,
+                              *maybe_fmt.get(),
+                              [](DiagnosticContext&, std::string& out, StringView t, const StackedParseEnumerator&) {
+                                  CHECK(t == "x");
+                                  Strings::append(out, "hello");
+                                  return true;
+                              });
 
         REQUIRE(bdc.empty());
         REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "hello}");
     }
     {
-        auto res = api_stable_format(bdc, "123{x}456", [](std::string& out, StringView t) {
-            CHECK(t == "x");
-            Strings::append(out, "hello");
-            return true;
-        });
+        FullyBufferedDiagnosticContext bdc{};
+        ParsedDocument doc("123{x}456", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res =
+            api_stable_format(bdc,
+                              *maybe_fmt.get(),
+                              [](DiagnosticContext&, std::string& out, StringView t, const StackedParseEnumerator&) {
+                                  CHECK(t == "x");
+                                  Strings::append(out, "hello");
+                                  return true;
+                              });
 
         REQUIRE(bdc.empty());
         REQUIRE(res.value_or_exit(VCPKG_LINE_INFO) == "123hello456");
+    }
+    {
+        FullyBufferedDiagnosticContext bdc{};
+        ParsedDocument doc("abc{bogus}def", StringView{"format.txt"});
+        auto maybe_fmt = doc.stacked(bdc);
+        REQUIRE(maybe_fmt.has_value());
+        auto res = api_stable_format(
+            bdc,
+            *maybe_fmt.get(),
+            [](DiagnosticContext& context, std::string&, StringView t, const StackedParseEnumerator& position) {
+                position.report_error_with_caret_line(
+                    context, msg::format(msgUnknownVariablesInTemplate).append_raw(": ").append_raw(t));
+                return false;
+            });
+
+        REQUIRE(!res.has_value());
+        REQUIRE(bdc.to_string() == "format.txt:1:4: error: template contains unknown variable: bogus\n"
+                                   "abc{bogus}def\n"
+                                   "   ^");
     }
 }
 
