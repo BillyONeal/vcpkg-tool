@@ -27,7 +27,6 @@ namespace vcpkg
         None,
         Files,
         NuGet,
-        NuGetConfig,
         Http,
         AzBlob,
         AzCopy,
@@ -48,8 +47,11 @@ namespace vcpkg
     struct IBinaryProvider;
     struct BinaryCache;
     struct CacheStatus;
+    struct BinaryPackageArchiveRequest;
+    struct BinaryPackageArchivers;
     struct BinaryPackageReadInfo;
     struct BinaryPackageWriteInfo;
+    struct NuGetTool;
     struct UrlTemplate;
     struct NuGetRepoInfo;
     struct AzureUpkgSource;

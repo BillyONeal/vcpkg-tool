@@ -15,17 +15,14 @@ struct KnowNothingBinaryProvider : IBinaryProvider
 {
     void fetch(DiagnosticContext&,
                const Filesystem& fs,
-               const ZipTool*,
                const Path&,
-               View<const InstallPlanAction*> actions,
-               Span<RestoreResult> out_status) const override
+               const BinaryPackageArchivers&,
+               Span<BinaryPackageArchiveRequest*> requests) const override
     {
         REQUIRE(&fs == &always_failing_filesystem);
-        REQUIRE(actions.size() == out_status.size());
-        for (size_t idx = 0; idx < out_status.size(); ++idx)
+        for (auto request : requests)
         {
-            CHECK(actions[idx]->package_abi());
-            CHECK(out_status[idx] == RestoreResult::unavailable);
+            CHECK(!request->package().package_abi.empty());
         }
     }
     void precheck(DiagnosticContext&,
@@ -46,12 +43,51 @@ struct KnowNothingBinaryProvider : IBinaryProvider
         return LocalizedString::from_raw("Nothing");
     }
 
-    bool push_success(DiagnosticContext&, const Filesystem&, const Path&, const BinaryPackageWriteInfo&) override
+    bool push_success(DiagnosticContext&,
+                      const Filesystem&,
+                      const Path&,
+                      const BinaryPackageArchivers&,
+                      BinaryPackageArchiveRequest&,
+                      AllowArchiveMove) override
     {
         return false;
     }
 
     CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::None; }
+};
+
+struct ArchiveTrackingBinaryProvider : KnowNothingBinaryProvider
+{
+    struct State
+    {
+        size_t fetch_count = 0;
+        bool reused_archive = false;
+    };
+
+    explicit ArchiveTrackingBinaryProvider(State& state) : state(state) { }
+
+    void fetch(DiagnosticContext& context,
+               const Filesystem&,
+               const Path& packages,
+               const BinaryPackageArchivers& archivers,
+               Span<BinaryPackageArchiveRequest*> requests) const override
+    {
+        REQUIRE(requests.size() == 1);
+        if (state.fetch_count == 0)
+        {
+            requests[0]->reference_archive(CacheArchiveFormat::Zip, Path{"provided.zip"});
+        }
+        else
+        {
+            state.reused_archive =
+                requests[0]->get_or_create(context, packages, archivers, CacheArchiveFormat::Zip) != nullptr;
+        }
+        ++state.fetch_count;
+    }
+
+    CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
+
+    State& state;
 };
 
 TEST_CASE ("CacheStatus operations", "[BinaryCache]")
@@ -376,6 +412,90 @@ Description:
     FullyBufferedDiagnosticContext fbdc;
     uut.fetch(fbdc, install_plan); // should have no effects
     REQUIRE(fbdc.empty());
+}
+
+TEST_CASE ("ReadOnlyBinaryCache shares archive requests between providers", "[BinaryCache]")
+{
+    ReadOnlyBinaryCache uut(always_failing_filesystem, Path{"pkgs"});
+    ArchiveTrackingBinaryProvider::State state;
+    uut.install_provider(CacheAccessControl::Read, std::make_unique<ArchiveTrackingBinaryProvider>(state));
+    uut.install_provider(CacheAccessControl::Read, std::make_unique<ArchiveTrackingBinaryProvider>(state));
+
+    auto pghs = Paragraphs::parse_paragraphs(R"(
+Source: archive-test
+Version: 1
+)",
+                                             "<testdata>");
+    REQUIRE(pghs.has_value());
+    auto maybe_scf = SourceControlFile::parse_control_file("test-origin", std::move(*pghs.get()));
+    REQUIRE(maybe_scf.has_value());
+    SourceControlFileAndLocation scfl{std::move(*maybe_scf.get()), Path()};
+    PackagesDirAssigner packages_dir_assigner{"test_packages_root"};
+    std::vector<InstallPlanAction> install_plan;
+    install_plan.emplace_back(PackageSpec{"archive-test", Test::X64_WINDOWS},
+                              scfl,
+                              packages_dir_assigner,
+                              RequestType::USER_REQUESTED,
+                              UseHeadVersion::No,
+                              Editable::No,
+                              std::map<std::string, std::vector<FeatureSpec>>{},
+                              std::vector<DiagnosticLine>{},
+                              std::vector<std::string>{});
+    install_plan.back().abi_info = AbiInfo{};
+    install_plan.back().abi_info.get()->package_abi = "archive-test-abi";
+
+    FullyBufferedDiagnosticContext diagnostics;
+    uut.fetch(diagnostics, install_plan);
+
+    REQUIRE(state.fetch_count == 2);
+    REQUIRE(state.reused_archive);
+}
+
+TEST_CASE ("BinaryPackageArchiveRequest reuses and cleans provided archives", "[BinaryCache]")
+{
+    const auto test_root = Test::base_temporary_directory() / "binary-package-archive-provider";
+    real_filesystem.remove_all(test_root, IgnoreErrors{});
+    real_filesystem.create_directories(test_root, VCPKG_LINE_INFO);
+
+    auto pghs = Paragraphs::parse_paragraphs(R"(
+Source: archive-test
+Version: 1
+)",
+                                             "<testdata>");
+    REQUIRE(pghs.has_value());
+    auto maybe_scf = SourceControlFile::parse_control_file("test-origin", std::move(*pghs.get()));
+    REQUIRE(maybe_scf.has_value());
+    SourceControlFileAndLocation scfl{std::move(*maybe_scf.get()), Path()};
+    PackagesDirAssigner packages_dir_assigner{test_root};
+    InstallPlanAction action(PackageSpec{"archive-test", Test::X64_WINDOWS},
+                             scfl,
+                             packages_dir_assigner,
+                             RequestType::USER_REQUESTED,
+                             UseHeadVersion::No,
+                             Editable::No,
+                             {},
+                             {},
+                             {});
+    action.abi_info = AbiInfo{};
+    action.abi_info.get()->package_abi = "archive-test-abi";
+
+    const auto archive_path = test_root / "archive.zip";
+    real_filesystem.write_contents(archive_path, "archive contents", VCPKG_LINE_INFO);
+    BinaryPackageArchivers archivers;
+
+    FullyBufferedDiagnosticContext diagnostics;
+    {
+        BinaryPackageArchiveRequest request{real_filesystem, BinaryPackageWriteInfo{action}};
+        request.provide_temporary_archive(CacheArchiveFormat::Zip, Path{archive_path});
+        const auto first = request.get_or_create(diagnostics, test_root, archivers, CacheArchiveFormat::Zip);
+        const auto second = request.get_or_create(diagnostics, test_root, archivers, CacheArchiveFormat::Zip);
+        REQUIRE(first != nullptr);
+        REQUIRE(second == first);
+        REQUIRE(real_filesystem.exists(*first, VCPKG_LINE_INFO));
+    }
+
+    REQUIRE(!real_filesystem.exists(archive_path, VCPKG_LINE_INFO));
+    real_filesystem.remove_all(test_root, VCPKG_LINE_INFO);
 }
 
 TEST_CASE ("XmlSerializer", "[XmlSerializer]")

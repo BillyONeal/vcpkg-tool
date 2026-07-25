@@ -283,7 +283,8 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "relative-path"});
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "-Source", "relative-path"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -293,9 +294,9 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
-        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet,
-                                                              CacheAccessControl::ReadWrite,
-                                                              "http://example.org/"});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "-Source", "http://example.org/"});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -306,7 +307,8 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "-Source", ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -322,7 +324,8 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "-Source", ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -338,7 +341,7 @@ TEST_CASE ("BinaryConfigParser nuget source provider", "[binaryconfigparser]")
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, ""});
+              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "-Source", ""});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
 }
@@ -415,9 +418,9 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
-        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig,
-                                                              CacheAccessControl::ReadWrite,
-                                                              ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "-ConfigFile", ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -433,7 +436,8 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, CacheAccessControl::Read, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::Read, "-ConfigFile", ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -444,7 +448,8 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
         CHECK(parsed.providers[1] ==
-              BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig, CacheAccessControl::Write, ABSOLUTE_PATH});
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::Write, "-ConfigFile", ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {
@@ -454,9 +459,9 @@ TEST_CASE ("BinaryConfigParser nuget config provider", "[binaryconfigparser]")
         CHECK(parsed.providers[0] == BinaryCacheProviderEntry{BinaryCacheProviderKind::Files,
                                                               CacheAccessControl::ReadWrite,
                                                               DEFAULT_ABSOLUTE_PATH});
-        CHECK(parsed.providers[1] == BinaryCacheProviderEntry{BinaryCacheProviderKind::NuGetConfig,
-                                                              CacheAccessControl::ReadWrite,
-                                                              ABSOLUTE_PATH});
+        CHECK(parsed.providers[1] ==
+              BinaryCacheProviderEntry{
+                  BinaryCacheProviderKind::NuGet, CacheAccessControl::ReadWrite, "-ConfigFile", ABSOLUTE_PATH});
         REQUIRE(parsed.telemetry_tags == std::set<StringLiteral>{{"default"}, {"nuget"}});
     }
     {

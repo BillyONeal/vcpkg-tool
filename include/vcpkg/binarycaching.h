@@ -69,14 +69,6 @@ namespace vcpkg
 
         // Filled if BinaryCache has a writable NuGet provider.
         Optional<std::string> nuspec;
-        // Filled if BinaryCache has a provider that uses NuGet packages.
-        // Note: this can be empty if an error occurred while packing.
-        Optional<Path> nupkg_path;
-        // Set to true if there is only one write provider, meaning that one provider can take ownership of the zip file
-        bool unique_write_provider = false;
-        // Filled if BinaryCache has a provider that returns true for needs_zip_file()
-        // Note: this can be empty if an error occurred while compressing.
-        Optional<Path> zip_path;
     };
 
     enum class CacheArchiveFormat
@@ -84,6 +76,85 @@ namespace vcpkg
         None,
         Zip,
         NuPkg,
+    };
+
+    enum class AllowArchiveMove : bool
+    {
+        No,
+        Yes,
+    };
+
+    struct BinaryPackageArchivers
+    {
+        BinaryPackageArchivers();
+        BinaryPackageArchivers(const BinaryPackageArchivers&) = delete;
+        BinaryPackageArchivers& operator=(const BinaryPackageArchivers&) = delete;
+        ~BinaryPackageArchivers();
+
+        bool ensure_zip(DiagnosticContext& context, const Filesystem& fs, const ToolCache& tools);
+        void ensure_nupkg(const Path& nuget_tool, const Optional<Path>& mono_tool, StringView nuget_prefix);
+        const NuGetTool& nuget_tool() const;
+        bool has(CacheArchiveFormat format) const noexcept;
+        Optional<Path> compress(DiagnosticContext& context,
+                                const Filesystem& fs,
+                                const Path& packages,
+                                CacheArchiveFormat format,
+                                const BinaryPackageWriteInfo& package) const;
+        // May be called concurrently after archiver setup is complete. Each call must target a distinct package_dir.
+        bool decompress(DiagnosticContext& context,
+                        const Filesystem& fs,
+                        CacheArchiveFormat format,
+                        const BinaryPackageReadInfo& package,
+                        const Path& archive) const;
+
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_impl;
+    };
+
+    // BinaryPackageWriteInfo is movable package metadata suitable for queuing between threads.
+    // BinaryPackageArchiveRequest owns that metadata and the per-package archive state used by cache providers.
+    // It retains the filesystem for RAII cleanup; archive tools and the packages root are supplied to each operation.
+    struct BinaryPackageArchiveRequest
+    {
+        BinaryPackageArchiveRequest(const Filesystem& fs, BinaryPackageWriteInfo&& package);
+        BinaryPackageArchiveRequest(const BinaryPackageArchiveRequest&) = delete;
+        BinaryPackageArchiveRequest& operator=(const BinaryPackageArchiveRequest&) = delete;
+        ~BinaryPackageArchiveRequest();
+
+        const BinaryPackageWriteInfo& package() const noexcept { return m_package; }
+        Path temp_archive_path(CacheArchiveFormat format) const;
+
+        void provide_temporary_archive(CacheArchiveFormat format, Path&& path);
+        void reference_archive(CacheArchiveFormat format, Path&& path);
+        void provide_unpacked(Path&& path);
+        std::uint64_t archive_size(CacheArchiveFormat format) const noexcept;
+        // May run concurrently with restore() on other requests, but not on this request.
+        RestoreResult restore(DiagnosticContext& context,
+                              const BinaryPackageArchivers& archivers,
+                              CacheArchiveFormat format);
+        const Path* get_or_create(DiagnosticContext& context,
+                                  const Path& packages,
+                                  const BinaryPackageArchivers& archivers,
+                                  CacheArchiveFormat format);
+
+    private:
+        struct Archive
+        {
+            Path path;
+            bool temporary;
+        };
+
+        Optional<Archive>& archive_slot(CacheArchiveFormat format);
+        void provide_archive(CacheArchiveFormat format, Path&& path, bool temporary);
+        void remove_temporary_archive(Optional<Archive>& archive) noexcept;
+
+        const Filesystem& m_fs;
+        BinaryPackageWriteInfo m_package;
+        Optional<Archive> m_zip;
+        Optional<Archive> m_nupkg;
+        Optional<Archive> m_unpacked;
+        bool m_restored = false;
     };
 
     struct IBinaryProvider
@@ -98,10 +169,9 @@ namespace vcpkg
         /// Prerequisites: actions[i].package_abi(), out_status.size() == actions.size()
         virtual void fetch(DiagnosticContext& context,
                            const Filesystem& fs,
-                           const ZipTool* zip_tool,
                            const Path& packages,
-                           View<const InstallPlanAction*> actions,
-                           Span<RestoreResult> out_status) const = 0;
+                           const BinaryPackageArchivers& archivers,
+                           Span<BinaryPackageArchiveRequest*> requests) const = 0;
 
         /// Checks whether the `actions` are present in the cache, without restoring them.
         /// Note that as this API can't fail, only warnings or lower will be emitted to `context`.
@@ -125,7 +195,9 @@ namespace vcpkg
         virtual bool push_success(DiagnosticContext& context,
                                   const Filesystem& fs,
                                   const Path& packages,
-                                  const BinaryPackageWriteInfo& request) = 0;
+                                  const BinaryPackageArchivers& archivers,
+                                  BinaryPackageArchiveRequest& request,
+                                  AllowArchiveMove allow_archive_move) = 0;
 
         virtual CacheArchiveFormat archive_format() const = 0;
     };
@@ -258,7 +330,7 @@ namespace vcpkg
     protected:
         const Filesystem& m_fs;
         Path m_packages;
-        ZipTool m_zip_tool;
+        BinaryPackageArchivers m_archivers;
         BinaryProviders m_config;
 
         std::unordered_map<std::string, CacheStatus> m_status;
@@ -298,8 +370,6 @@ namespace vcpkg
         bool submission_complete;
     };
 
-    struct NugetPackagePacker;
-
     // compression and upload of binary cache entries happens on a single 'background' thread, `m_push_thread`
     // Thread safety is achieved within the binary cache providers by:
     //   1. Only using one thread in the background for this work.
@@ -330,8 +400,6 @@ namespace vcpkg
             BinaryPackageWriteInfo request;
             CleanPackages clean_after_push;
         };
-        std::unique_ptr<NugetPackagePacker> m_nuget_package_packer;
-        bool m_needs_zip_file = false;
 
         CleanPackages m_clean_packages;
 

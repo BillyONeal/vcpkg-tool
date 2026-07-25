@@ -90,139 +90,112 @@ namespace
     Path files_archive_parent_path(const std::string& abi) { return Path(abi.substr(0, 2)); }
     Path files_archive_subpath(const std::string& abi) { return files_archive_parent_path(abi) / (abi + ".zip"); }
 
-    enum class RemoveWhen
+    struct ZipPackageArchiver
     {
-        nothing,
-        always,
-    };
+#if defined(_WIN32)
+        explicit ZipPackageArchiver(Path seven_zip) : m_seven_zip(std::move(seven_zip)) { }
+#else
+        ZipPackageArchiver() = default;
+#endif
 
-    struct ZipResource
-    {
-        ZipResource(Path&& p, RemoveWhen t) : path(std::move(p)), to_remove(t) { }
-
-        Path path;
-        RemoveWhen to_remove;
-    };
-
-    // This middleware class contains logic for BinaryProviders that operate on zip files.
-    // Derived classes must implement:
-    // - acquire_zips()
-    // - IBinaryProvider::precheck()
-    struct ZipReadBinaryProvider : IBinaryProvider
-    {
-        struct UnzipJob
+        Optional<Path> compress(DiagnosticContext& context,
+                                const Filesystem& fs,
+                                const Path&,
+                                const BinaryPackageWriteInfo& package) const
         {
-            const Path* package_dir;
-            const ZipResource* zip_resource;
-            uint64_t zip_size;
-            size_t action_idx;
-            FullyBufferedDiagnosticContext fbdc;
-            bool success = false;
-        };
-
-        void fetch(DiagnosticContext& context,
-                   const Filesystem& fs,
-                   const ZipTool* zip_tool,
-                   const Path& packages,
-                   View<const InstallPlanAction*> actions,
-                   Span<RestoreResult> out_status) const override
-        {
-            Checks::check_exit(VCPKG_LINE_INFO, zip_tool != nullptr);
-            const ElapsedTimer timer;
-            std::vector<Optional<ZipResource>> zip_paths(actions.size(), nullopt);
-            acquire_zips(context, fs, packages, actions, zip_paths);
-            std::vector<UnzipJob> jobs;
-            jobs.reserve(actions.size());
-            for (size_t i = 0; i < actions.size(); ++i)
+            Path zip_path = package.package_dir + ".zip";
+            fs.remove(zip_path, VCPKG_LINE_INFO);
+#if defined(_WIN32)
+            RedirectedProcessLaunchSettings settings;
+            settings.environment = get_clean_environment();
+            Command seven_zip_command{m_seven_zip};
+            seven_zip_command.string_arg("a").string_arg(zip_path).string_arg(package.package_dir / "*");
+            auto output = cmd_execute_and_capture_output(context, seven_zip_command, settings);
+            if (check_zero_exit_code(context, seven_zip_command, output))
+#else
+            RedirectedProcessLaunchSettings settings;
+            settings.working_directory = package.package_dir;
+            Command zip_command{"zip"};
+            zip_command.string_arg("--quiet")
+                .string_arg("-y")
+                .string_arg("-r")
+                .string_arg(zip_path)
+                .raw_arg("*")
+                .string_arg("--exclude")
+                .string_arg(FileDotDsStore);
+            auto output = cmd_execute_and_capture_output(context, zip_command, settings);
+            if (check_zero_exit_code(context, zip_command, output))
+#endif
             {
-                if (auto zip_resource = zip_paths[i].get())
-                {
-                    jobs.push_back(
-                        {&actions[i]->package_dir, zip_resource, fs.file_size(zip_resource->path, IgnoreErrors{}), i});
-                }
+                return zip_path;
             }
 
-            std::sort(
-                jobs.begin(), jobs.end(), [](const UnzipJob& l, const UnzipJob& r) { return l.zip_size > r.zip_size; });
-
-            parallel_for_each(jobs, [zip_tool, &fs, &out_status](UnzipJob& job) {
-                WarningDiagnosticContext wdc{job.fbdc};
-                if (clean_prepare_dir(wdc, fs, *job.package_dir))
-                {
-                    auto cmd = zip_tool->decompress_zip_archive_cmd(*job.package_dir, job.zip_resource->path);
-                    auto maybe_output = cmd_execute_and_capture_output(wdc, cmd);
-                    if (check_zero_exit_code(wdc, cmd, maybe_output)
-#ifdef _WIN32
-                        // On windows the ziptool does restore file times, we don't want that because this breaks file
-                        // time based change detection.
-                        && directory_last_write_time(wdc, fs, *job.package_dir)
-#endif // ^^^ _WIN32
-                    )
-                    {
-                        out_status[job.action_idx] = RestoreResult::restored;
-                        job.success = true;
-                    }
-                    else
-                    {
-                        wdc.report(DiagnosticLine{
-                            DiagKind::Note, job.zip_resource->path, msg::format(msgWhileExtractingThisArchive)});
-                    }
-                }
-
-                if (job.zip_resource->to_remove == RemoveWhen::always)
-                {
-                    fs.remove(job.zip_resource->path, IgnoreErrors{});
-                }
-            });
-
-            for (auto&& job : jobs)
-            {
-                job.fbdc.print_to(out_sink);
-                if (Debug::g_debugging && job.success)
-                {
-                    console_diagnostic_context.report(
-                        DiagnosticLine{DiagKind::Note,
-                                       job.zip_resource->path,
-                                       msg::format(msgExtractedInto, msg::path = *job.package_dir)});
-                }
-            }
+            return nullopt;
         }
 
-        // For every action denoted by actions, at corresponding indicies in out_zips, stores a ZipResource indicating
-        // the downloaded location.
-        //
-        // Leaving an Optional disengaged indicates that the cache does not contain the requested zip.
-        //
-        // Note that as this API can't fail, only warnings or lower will be emitted to `context`.
-        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
+        bool decompress(DiagnosticContext& context,
+                        const Filesystem& fs,
+                        const BinaryPackageReadInfo& package,
+                        const Path& archive) const
+        {
+            if (clean_prepare_dir(context, fs, package.package_dir))
+            {
+                Command cmd;
+#if defined(_WIN32)
+                cmd.string_arg(m_seven_zip)
+                    .string_arg("x")
+                    .string_arg(archive)
+                    .string_arg("-o" + package.package_dir.native())
+                    .string_arg("-y");
+#else
+                cmd.string_arg("unzip").string_arg("-DD").string_arg("-qq").string_arg(archive).string_arg(
+                    "-d" + package.package_dir.native());
+#endif
+                auto maybe_output = cmd_execute_and_capture_output(context, cmd);
+                if (check_zero_exit_code(context, cmd, maybe_output)
+#ifdef _WIN32
+                    // On windows the ziptool does restore file times, we don't want that because this breaks file
+                    // time based change detection.
+                    && directory_last_write_time(context, fs, package.package_dir)
+#endif // ^^^ _WIN32
+                )
+                {
+                    return true;
+                }
+            }
 
-        virtual void acquire_zips(DiagnosticContext& context,
-                                  const Filesystem& fs,
-                                  const Path& packages,
-                                  View<const InstallPlanAction*> actions,
-                                  Span<Optional<ZipResource>> out_zips) const = 0;
+            context.report(DiagnosticLine{DiagKind::Note, archive, msg::format(msgWhileExtractingThisArchive)});
+            return false;
+        }
+
+    private:
+#if defined(_WIN32)
+        Path m_seven_zip;
+#endif
     };
 
-    struct FilesBinaryProvider : ZipReadBinaryProvider
+    struct FilesBinaryProvider : IBinaryProvider
     {
         explicit FilesBinaryProvider(Path&& dir) : m_dir(std::move(dir)) { }
 
-        void acquire_zips(DiagnosticContext&,
-                          const Filesystem& fs,
-                          const Path&,
-                          View<const InstallPlanAction*> actions,
-                          Span<Optional<ZipResource>> out_zip_paths) const override
+        void fetch(DiagnosticContext&,
+                   const Filesystem& fs,
+                   const Path&,
+                   const BinaryPackageArchivers&,
+                   Span<BinaryPackageArchiveRequest*> requests) const override
         {
-            for (size_t i = 0; i < actions.size(); ++i)
+            for (auto request : requests)
             {
-                const auto& abi_tag = actions[i]->package_abi_or_exit(VCPKG_LINE_INFO);
+                const auto& abi_tag = request->package().package_abi;
                 auto archive_path = m_dir / files_archive_subpath(abi_tag);
                 if (fs.exists(archive_path, IgnoreErrors{}))
                 {
-                    out_zip_paths[i].emplace(std::move(archive_path), RemoveWhen::nothing);
+                    request->reference_archive(CacheArchiveFormat::Zip, std::move(archive_path));
                 }
             }
         }
+
+        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
 
         void precheck(DiagnosticContext&,
                       const Filesystem& fs,
@@ -249,28 +222,33 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem& fs,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
+                          const Path& packages,
+                          const BinaryPackageArchivers& archivers,
+                          BinaryPackageArchiveRequest& request,
+                          AllowArchiveMove allow_archive_move) override
         {
-            const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
-            const auto archive_parent_path = m_dir / files_archive_parent_path(request.package_abi);
+            const auto zip_path = request.get_or_create(context, packages, archivers, CacheArchiveFormat::Zip);
+            if (!zip_path) return false;
+            const auto& package = request.package();
+            const auto archive_parent_path = m_dir / files_archive_parent_path(package.package_abi);
             fs.create_directories(archive_parent_path, IgnoreErrors{});
-            const auto archive_path = archive_parent_path / (request.package_abi + ".zip");
+            const auto archive_path = archive_parent_path / (package.package_abi + ".zip");
             const auto archive_temp_path = Path(fmt::format("{}.{}", archive_path.native(), get_process_id()));
             std::error_code ec;
-            if (request.unique_write_provider)
+            if (allow_archive_move == AllowArchiveMove::Yes)
             {
-                fs.rename_or_delete(zip_path, archive_path, ec);
+                fs.rename_or_delete(*zip_path, archive_path, ec);
             }
 
-            if (!request.unique_write_provider || (ec && ec == std::make_error_condition(std::errc::cross_device_link)))
+            if (allow_archive_move == AllowArchiveMove::No ||
+                (ec && ec == std::make_error_condition(std::errc::cross_device_link)))
             {
                 // either we need to make a copy or the rename failed because packages and the binary
                 // cache write target are on different filesystems, copy to a sibling in that directory and rename
                 // into place
                 // First copy to temporary location to avoid race between different vcpkg instances trying to upload
                 // the same archive, e.g. if 2 machines try to upload to a shared binary cache.
-                fs.copy_file(zip_path, archive_temp_path, CopyOptions::overwrite_existing, ec);
+                fs.copy_file(*zip_path, archive_temp_path, CopyOptions::overwrite_existing, ec);
                 if (!ec)
                 {
                     fs.rename_or_delete(archive_temp_path, archive_path, ec);
@@ -295,26 +273,24 @@ namespace
 
     // Abstract base class for HTTP-based binary providers.
     // Derived classes must implement push_success and archive_format.
-    struct HttpGetBinaryProvider : ZipReadBinaryProvider
+    struct HttpGetBinaryProvider : IBinaryProvider
     {
         HttpGetBinaryProvider(UrlTemplate&& url_template, const std::vector<std::string>& secrets)
             : m_url_template(std::move(url_template)), m_secrets(secrets)
         {
         }
 
-        void acquire_zips(DiagnosticContext& context,
-                          const Filesystem&,
-                          const Path&,
-                          View<const InstallPlanAction*> actions,
-                          Span<Optional<ZipResource>> out_zip_paths) const override
+        void fetch(DiagnosticContext& context,
+                   const Filesystem&,
+                   const Path&,
+                   const BinaryPackageArchivers&,
+                   Span<BinaryPackageArchiveRequest*> requests) const override
         {
             std::vector<std::pair<std::string, Path>> url_paths;
-            for (size_t idx = 0; idx < actions.size(); ++idx)
+            for (auto request : requests)
             {
-                auto&& action = *actions[idx];
-                auto read_info = BinaryPackageReadInfo{action};
-                url_paths.emplace_back(m_url_template.instantiate_variables(read_info),
-                                       make_temp_archive_path(read_info.package_dir, read_info.package_abi));
+                url_paths.emplace_back(m_url_template.instantiate_variables(request->package()),
+                                       request->temp_archive_path(CacheArchiveFormat::Zip));
             }
 
             WarningDiagnosticContext wdc{context};
@@ -323,10 +299,12 @@ namespace
             {
                 if (codes[i] == 200)
                 {
-                    out_zip_paths[i].emplace(std::move(url_paths[i].second), RemoveWhen::always);
+                    requests[i]->provide_temporary_archive(CacheArchiveFormat::Zip, std::move(url_paths[i].second));
                 }
             }
         }
+
+        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
 
         void precheck(DiagnosticContext& context,
                       const Filesystem&,
@@ -371,14 +349,16 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
+                          const Path& packages,
+                          const BinaryPackageArchivers& archivers,
+                          BinaryPackageArchiveRequest& request,
+                          AllowArchiveMove) override
         {
-            if (!request.zip_path) return false;
-            const auto& zip_path = *request.zip_path.get();
-            auto url = m_url_template.instantiate_variables(request);
+            auto zip_path = request.get_or_create(context, packages, archivers, CacheArchiveFormat::Zip);
+            if (!zip_path) return false;
+            auto url = m_url_template.instantiate_variables(request.package());
             WarningDiagnosticContext wdc{context};
-            return store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url_template.headers, zip_path);
+            return store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_url_template.headers, *zip_path);
         }
     };
 
@@ -393,14 +373,15 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem& fs,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
+                          const Path& packages,
+                          const BinaryPackageArchivers& archivers,
+                          BinaryPackageArchiveRequest& request,
+                          AllowArchiveMove) override
         {
-            if (!request.zip_path) return false;
+            auto zip_path = request.get_or_create(context, packages, archivers, CacheArchiveFormat::Zip);
+            if (!zip_path) return false;
 
-            const auto& zip_path = *request.zip_path.get();
-
-            const auto file_size = fs.file_size(zip_path, VCPKG_LINE_INFO);
+            const auto file_size = fs.file_size(*zip_path, VCPKG_LINE_INFO);
             if (file_size == 0) return false;
 
             // cf.
@@ -409,9 +390,10 @@ namespace
             bool use_azcopy = file_size > max_single_write;
 
             WarningDiagnosticContext wdc{context};
-            auto url = m_url_template.instantiate_variables(request);
-            return use_azcopy ? azcopy_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, zip_path)
-                              : store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_write_headers, zip_path);
+            auto url = m_url_template.instantiate_variables(request.package());
+            return use_azcopy
+                       ? azcopy_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, *zip_path)
+                       : store_to_asset_cache(wdc, url, SanitizedUrl{url, m_secrets}, m_write_headers, *zip_path);
         }
 
     private:
@@ -420,12 +402,9 @@ namespace
 
     struct NuGetSource
     {
-        StringLiteral option;
+        std::string option;
         std::string value;
     };
-
-    NuGetSource nuget_sources_arg(View<std::string> sources) { return {"-Source", Strings::join(";", sources)}; }
-    NuGetSource nuget_configfile_arg(const Path& config_path) { return {"-ConfigFile", config_path.native()}; }
 
     struct NuGetToolTools
     {
@@ -454,10 +433,13 @@ namespace
         return nullopt;
     }
 
+}
+
+namespace vcpkg
+{
     struct NuGetTool
     {
-        NuGetTool(NuGetToolTools&& nuget_tools, long timeout, bool interactive, bool use_nuget_cache)
-            : m_timeout(std::to_string(timeout)), m_interactive(interactive), m_use_nuget_cache(use_nuget_cache)
+        NuGetTool(NuGetToolTools&& nuget_tools, StringView nuget_prefix) : m_nuget_prefix(nuget_prefix.to_string())
         {
 #ifndef _WIN32
             m_cmd.string_arg(std::move(nuget_tools.mono_tool));
@@ -465,9 +447,42 @@ namespace
             m_cmd.string_arg(std::move(nuget_tools.nuget_tool));
         }
 
-        bool push(DiagnosticContext& context, const Path& nupkg_path, const NuGetSource& src) const
+        StringView nuget_prefix() const noexcept { return m_nuget_prefix; }
+
+        Optional<Path> make_package_archive(DiagnosticContext& context,
+                                            const Filesystem& fs,
+                                            const Path& packages,
+                                            const BinaryPackageWriteInfo& request) const
         {
-            if (run_nuget_commandline(context, push_cmd(nupkg_path, src)))
+            auto nuspec_path = request.package_dir.native() + ".nuspec";
+            auto& nuspec_contents = request.nuspec.value_or_exit(VCPKG_LINE_INFO);
+            std::error_code ec;
+            fs.write_contents(nuspec_path, nuspec_contents, ec);
+            if (ec)
+            {
+                context.report_error(
+                    format_filesystem_call_error(ec, "write_contents", {nuspec_path, nuspec_contents}));
+                context.report(DiagnosticLine{DiagKind::Note, msg::format(msgWhilePackingNuGetPackage)});
+                return nullopt;
+            }
+
+            auto pack_result = pack(context, nuspec_path, packages);
+            fs.remove(nuspec_path, IgnoreErrors{});
+            if (!pack_result)
+            {
+                return nullopt;
+            }
+
+            return packages / make_feedref(request, m_nuget_prefix).nupkg_filename();
+        }
+
+        bool push(DiagnosticContext& context,
+                  const Path& nupkg_path,
+                  const NuGetSource& src,
+                  long timeout,
+                  bool interactive) const
+        {
+            if (run_nuget_commandline(context, push_cmd(nupkg_path, src, timeout, interactive), interactive))
             {
                 return true;
             }
@@ -477,7 +492,7 @@ namespace
         }
         bool pack(DiagnosticContext& context, const Path& nuspec_path, const Path& out_dir) const
         {
-            if (run_nuget_commandline(context, pack_cmd(nuspec_path, out_dir)))
+            if (run_nuget_commandline(context, pack_cmd(nuspec_path, out_dir), false))
             {
                 return true;
             }
@@ -488,23 +503,30 @@ namespace
         bool install(DiagnosticContext& context,
                      StringView packages_config,
                      const Path& out_dir,
-                     const NuGetSource& src) const
+                     const NuGetSource& src,
+                     bool interactive,
+                     bool use_nuget_cache) const
         {
-            return run_nuget_commandline(context, install_cmd(packages_config, out_dir, src));
+            return run_nuget_commandline(
+                context, install_cmd(packages_config, out_dir, src, interactive, use_nuget_cache), interactive);
         }
 
     private:
-        Command subcommand(StringLiteral sub) const
+        Command subcommand(StringLiteral sub, bool interactive) const
         {
             auto cmd = m_cmd;
             cmd.string_arg(sub).string_arg("-ForceEnglishOutput").string_arg("-Verbosity").string_arg("detailed");
-            if (!m_interactive) cmd.string_arg("-NonInteractive");
+            if (!interactive) cmd.string_arg("-NonInteractive");
             return cmd;
         }
 
-        Command install_cmd(StringView packages_config, const Path& out_dir, const NuGetSource& src) const
+        Command install_cmd(StringView packages_config,
+                            const Path& out_dir,
+                            const NuGetSource& src,
+                            bool interactive,
+                            bool use_nuget_cache) const
         {
-            auto cmd = subcommand("install");
+            auto cmd = subcommand("install", interactive);
             cmd.string_arg(packages_config)
                 .string_arg("-OutputDirectory")
                 .string_arg(out_dir)
@@ -512,33 +534,33 @@ namespace
                 .string_arg("-PreRelease")
                 .string_arg("-PackageSaveMode")
                 .string_arg("nupkg");
-            if (!m_use_nuget_cache) cmd.string_arg("-DirectDownload").string_arg("-NoHttpCache");
+            if (!use_nuget_cache) cmd.string_arg("-DirectDownload").string_arg("-NoHttpCache");
             cmd.string_arg(src.option).string_arg(src.value);
             return cmd;
         }
 
         Command pack_cmd(const Path& nuspec_path, const Path& out_dir) const
         {
-            return subcommand("pack")
+            return subcommand("pack", false)
                 .string_arg(nuspec_path)
                 .string_arg("-OutputDirectory")
                 .string_arg(out_dir)
                 .string_arg("-NoDefaultExcludes");
         }
 
-        Command push_cmd(const Path& nupkg_path, const NuGetSource& src) const
+        Command push_cmd(const Path& nupkg_path, const NuGetSource& src, long timeout, bool interactive) const
         {
-            return subcommand("push")
+            return subcommand("push", interactive)
                 .string_arg(nupkg_path)
                 .string_arg("-Timeout")
-                .string_arg(m_timeout)
+                .string_arg(std::to_string(timeout))
                 .string_arg(src.option)
                 .string_arg(src.value);
         }
 
-        bool run_nuget_commandline(DiagnosticContext& context, const Command& cmd) const
+        bool run_nuget_commandline(DiagnosticContext& context, const Command& cmd, bool interactive) const
         {
-            if (m_interactive)
+            if (interactive)
             {
                 // note that this must cmd_execute not cmd_execute_and_capture_output because we need
                 // our console, stdin, stdout, and stderr to be inherited directly by the interactive
@@ -617,67 +639,118 @@ namespace
         }
 
         Command m_cmd;
-        std::string m_timeout;
-        bool m_interactive;
-        bool m_use_nuget_cache;
+        std::string m_nuget_prefix;
     };
 
 }
 
 namespace vcpkg
 {
-    struct NugetPackagePacker
+    struct BinaryPackageArchivers::Impl
     {
-        NugetPackagePacker(const NuGetTool& tool, StringView nuget_prefix)
-            : m_tool(tool), m_nuget_prefix(nuget_prefix.to_string())
-        {
-        }
-
-        Optional<Path> pack(DiagnosticContext& context,
-                            const Filesystem& fs,
-                            const Path& packages,
-                            const BinaryPackageWriteInfo& request) const
-        {
-            auto nuspec_path = request.package_dir.native() + ".nuspec";
-            auto& nuspec_contents = request.nuspec.value_or_exit(VCPKG_LINE_INFO);
-            std::error_code ec;
-            fs.write_contents(nuspec_path, nuspec_contents, ec);
-            if (ec)
-            {
-                context.report_error(
-                    format_filesystem_call_error(ec, "write_contents", {nuspec_path, nuspec_contents}));
-                context.report(DiagnosticLine{DiagKind::Note, msg::format(msgWhilePackingNuGetPackage)});
-                return nullopt;
-            }
-
-            auto pack_result = m_tool.pack(context, nuspec_path, packages);
-            fs.remove(nuspec_path, IgnoreErrors{});
-            if (!pack_result)
-            {
-                return nullopt;
-            }
-
-            return packages / make_feedref(request, m_nuget_prefix).nupkg_filename();
-        }
-
-    private:
-        NuGetTool m_tool;
-        std::string m_nuget_prefix;
+        Optional<ZipPackageArchiver> zip;
+        Optional<NuGetTool> nupkg;
     };
+
+    BinaryPackageArchivers::BinaryPackageArchivers() : m_impl(std::make_unique<Impl>()) { }
+
+    BinaryPackageArchivers::~BinaryPackageArchivers() = default;
+
+    bool BinaryPackageArchivers::ensure_zip(DiagnosticContext& context, const Filesystem& fs, const ToolCache& tools)
+    {
+        if (m_impl->zip) return true;
+#if defined(_WIN32)
+        const auto seven_zip = tools.get_tool_path(context, fs, Tools::SEVEN_ZIP);
+        if (!seven_zip) return false;
+        m_impl->zip.emplace(*seven_zip);
+#else
+        (void)context;
+        (void)fs;
+        (void)tools;
+        m_impl->zip.emplace();
+#endif
+        return true;
+    }
+
+    void BinaryPackageArchivers::ensure_nupkg(const Path& nuget_tool,
+                                              const Optional<Path>& mono_tool,
+                                              StringView nuget_prefix)
+    {
+        if (m_impl->nupkg) return;
+#if defined(_WIN32)
+        (void)mono_tool;
+        NuGetToolTools tools{nuget_tool};
+#else
+        NuGetToolTools tools{nuget_tool, mono_tool.value_or_exit(VCPKG_LINE_INFO)};
+#endif
+        m_impl->nupkg.emplace(std::move(tools), nuget_prefix);
+    }
+
+    const NuGetTool& BinaryPackageArchivers::nuget_tool() const { return m_impl->nupkg.value_or_exit(VCPKG_LINE_INFO); }
+
+    bool BinaryPackageArchivers::has(CacheArchiveFormat format) const noexcept
+    {
+        switch (format)
+        {
+            case CacheArchiveFormat::Zip: return m_impl->zip.has_value();
+            case CacheArchiveFormat::NuPkg: return m_impl->nupkg.has_value();
+            case CacheArchiveFormat::None: return false;
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
+
+    Optional<Path> BinaryPackageArchivers::compress(DiagnosticContext& context,
+                                                    const Filesystem& fs,
+                                                    const Path& packages,
+                                                    CacheArchiveFormat format,
+                                                    const BinaryPackageWriteInfo& package) const
+    {
+        switch (format)
+        {
+            case CacheArchiveFormat::Zip:
+                if (auto archiver = m_impl->zip.get()) return archiver->compress(context, fs, packages, package);
+                return nullopt;
+            case CacheArchiveFormat::NuPkg:
+                if (auto tool = m_impl->nupkg.get()) return tool->make_package_archive(context, fs, packages, package);
+                return nullopt;
+            case CacheArchiveFormat::None:
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
+
+    bool BinaryPackageArchivers::decompress(DiagnosticContext& context,
+                                            const Filesystem& fs,
+                                            CacheArchiveFormat format,
+                                            const BinaryPackageReadInfo& package,
+                                            const Path& archive) const
+    {
+        switch (format)
+        {
+            case CacheArchiveFormat::Zip:
+                if (auto archiver = m_impl->zip.get()) return archiver->decompress(context, fs, package, archive);
+                return false;
+            case CacheArchiveFormat::NuPkg:
+                // NuGet fetches produce unpacked output, so vcpkg never decompresses nupkgs itself.
+                return false;
+            case CacheArchiveFormat::None:
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
 }
 
 namespace
 {
     struct NugetBinaryProvider : IBinaryProvider
     {
-        NugetBinaryProvider(const NuGetTool& tool, StringView nuget_prefix, NuGetSource src)
-            : m_cmd(tool), m_nuget_prefix(nuget_prefix.to_string()), m_src(std::move(src))
+        NugetBinaryProvider(NuGetSource src, long timeout, bool interactive, bool use_nuget_cache)
+            : m_src(std::move(src)), m_timeout(timeout), m_interactive(interactive), m_use_nuget_cache(use_nuget_cache)
         {
         }
 
-        NuGetTool m_cmd;
-        std::string m_nuget_prefix;
         NuGetSource m_src;
+        long m_timeout;
+        bool m_interactive;
+        bool m_use_nuget_cache;
 
         static std::string generate_packages_config(View<FeedReference> refs)
         {
@@ -714,42 +787,35 @@ namespace
 
         void fetch(DiagnosticContext& context,
                    const Filesystem& fs,
-                   const ZipTool*,
                    const Path& packages,
-                   View<const InstallPlanAction*> actions,
-                   Span<RestoreResult> out_status) const override
+                   const BinaryPackageArchivers& archivers,
+                   Span<BinaryPackageArchiveRequest*> requests) const override
         {
+            const auto& nuget_tool = archivers.nuget_tool();
             auto packages_config = packages / "packages.config";
-            auto refs =
-                Util::fmap(actions, [this](const InstallPlanAction* p) { return make_nugetref(*p, m_nuget_prefix); });
+            auto refs = Util::fmap(requests, [&nuget_tool](const BinaryPackageArchiveRequest* request) {
+                return make_feedref(request->package(), nuget_tool.nuget_prefix());
+            });
             WarningDiagnosticContext wdc{context};
             if (!fs.write_contents(wdc, packages_config, generate_packages_config(refs)))
             {
                 return;
             }
 
-            (void)m_cmd.install(wdc, packages_config, packages, m_src);
-            for (size_t i = 0; i < actions.size(); ++i)
+            (void)nuget_tool.install(wdc, packages_config, packages, m_src, m_interactive, m_use_nuget_cache);
+            for (size_t i = 0; i < requests.size(); ++i)
             {
-                // nuget.exe provides the nupkg file and the unpacked folder
+                // nuget.exe provides the unpacked folder and may also provide the nupkg file.
                 const auto nupkg_path = packages / refs[i].id / refs[i].id + ".nupkg";
                 if (fs.exists(nupkg_path, IgnoreErrors{}))
                 {
                     (void)fs.remove(wdc, nupkg_path);
-                    const auto nuget_dir = actions[i]->spec.dir();
-                    if (nuget_dir == refs[i].id)
-                    {
-                        out_status[i] = RestoreResult::restored;
-                    }
-                    else
-                    {
-                        const auto path_from = packages / refs[i].id;
-                        const auto path_to = packages / nuget_dir;
-                        if (fs.rename(wdc, path_from, path_to))
-                        {
-                            out_status[i] = RestoreResult::restored;
-                        }
-                    }
+                }
+
+                auto unpacked_path = packages / refs[i].id;
+                if (fs.exists(unpacked_path, IgnoreErrors{}))
+                {
+                    requests[i]->provide_unpacked(std::move(unpacked_path));
                 }
             }
         }
@@ -758,16 +824,20 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
+                          const Path& packages,
+                          const BinaryPackageArchivers& archivers,
+                          BinaryPackageArchiveRequest& request,
+                          AllowArchiveMove) override
         {
-            const auto& nupkg_path = request.nupkg_path.value_or_exit(VCPKG_LINE_INFO);
+            auto nupkg_path = request.get_or_create(context, packages, archivers, CacheArchiveFormat::NuPkg);
+            if (!nupkg_path) return false;
+
             const auto vendor = m_src.option == "-ConfigFile" ? "NuGet config" : "NuGet";
             context.statusln(msg::format(msgUploadingBinariesToVendor,
-                                         msg::spec = request.display_name,
+                                         msg::spec = request.package().display_name,
                                          msg::vendor = vendor,
                                          msg::path = m_src.value));
-            return m_cmd.push(context, nupkg_path, m_src);
+            return archivers.nuget_tool().push(context, *nupkg_path, m_src, m_timeout, m_interactive);
         }
     };
 
@@ -784,7 +854,7 @@ namespace
         virtual bool upload_file(DiagnosticContext& context, StringView object, const Path& archive) const = 0;
     };
 
-    struct ObjectStorageBinaryProvider : ZipReadBinaryProvider
+    struct ObjectStorageBinaryProvider : IBinaryProvider
     {
         ObjectStorageBinaryProvider(std::string&& prefix, std::shared_ptr<const IObjectStorageTool> tool)
             : m_prefix(std::move(prefix)), m_tool(std::move(tool))
@@ -796,24 +866,24 @@ namespace
             return Strings::concat(prefix, abi, ".zip");
         }
 
-        void acquire_zips(DiagnosticContext& context,
-                          const Filesystem&,
-                          const Path&,
-                          View<const InstallPlanAction*> actions,
-                          Span<Optional<ZipResource>> out_zip_paths) const override
+        void fetch(DiagnosticContext& context,
+                   const Filesystem&,
+                   const Path&,
+                   const BinaryPackageArchivers&,
+                   Span<BinaryPackageArchiveRequest*> requests) const override
         {
-            for (size_t idx = 0; idx < actions.size(); ++idx)
+            for (auto request : requests)
             {
-                auto&& action = *actions[idx];
-                const auto& abi = action.package_abi_or_exit(VCPKG_LINE_INFO);
-                auto tmp = make_temp_archive_path(action.package_dir, abi);
+                const auto& package = request->package();
+                const auto& abi = package.package_abi;
+                auto tmp = request->temp_archive_path(CacheArchiveFormat::Zip);
                 WarningDiagnosticContext wdc{context};
                 auto res = m_tool->download_file(wdc, make_object_path(m_prefix, abi), tmp);
                 if (auto cache_result = res.get())
                 {
                     if (*cache_result == RestoreResult::restored)
                     {
-                        out_zip_paths[idx].emplace(std::move(tmp), RemoveWhen::always);
+                        request->provide_temporary_archive(CacheArchiveFormat::Zip, std::move(tmp));
                     }
                 }
             }
@@ -849,23 +919,24 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
+                          const Path& packages,
+                          const BinaryPackageArchivers& archivers,
+                          BinaryPackageArchiveRequest& request,
+                          AllowArchiveMove) override
         {
-            if (auto zip_path = request.zip_path.get())
-            {
-                WarningDiagnosticContext wdc{context};
-                return m_tool->upload_file(wdc, make_object_path(m_prefix, request.package_abi), *zip_path);
-            }
-
-            return false;
+            auto zip_path = request.get_or_create(context, packages, archivers, CacheArchiveFormat::Zip);
+            if (!zip_path) return false;
+            WarningDiagnosticContext wdc{context};
+            return m_tool->upload_file(wdc, make_object_path(m_prefix, request.package().package_abi), *zip_path);
         }
+
+        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
 
         std::string m_prefix;
         std::shared_ptr<const IObjectStorageTool> m_tool;
     };
 
-    struct AzCopyBinaryProvider : ZipReadBinaryProvider
+    struct AzCopyBinaryProvider : IBinaryProvider
     {
         AzCopyBinaryProvider(AzCopyUrl&& az_url, const Path& tool) : m_url(std::move(az_url)), m_tool(tool) { }
 
@@ -915,19 +986,18 @@ namespace
             return abis;
         }
 
-        void acquire_zips(DiagnosticContext& context,
-                          const Filesystem& fs,
-                          const Path& packages,
-                          View<const InstallPlanAction*> actions,
-                          Span<Optional<ZipResource>> out_zip_paths) const override
+        void fetch(DiagnosticContext& context,
+                   const Filesystem& fs,
+                   const Path& packages,
+                   const BinaryPackageArchivers&,
+                   Span<BinaryPackageArchiveRequest*> requests) const override
         {
             WarningDiagnosticContext wdc{context};
             std::vector<std::string> abis;
             std::map<std::string, size_t> abi_index_map;
-            for (size_t idx = 0; idx < actions.size(); ++idx)
+            for (size_t idx = 0; idx < requests.size(); ++idx)
             {
-                auto&& action = *actions[idx];
-                const auto& abi = action.package_abi_or_exit(VCPKG_LINE_INFO);
+                const auto& abi = requests[idx]->package().package_abi;
                 abis.push_back(abi);
                 abi_index_map[abi] = idx;
             }
@@ -968,7 +1038,7 @@ namespace
                     auto it = abi_index_map.find(filename);
                     if (it != abi_index_map.end())
                     {
-                        out_zip_paths[it->second].emplace(std::move(file), RemoveWhen::always);
+                        requests[it->second]->provide_temporary_archive(CacheArchiveFormat::Zip, std::move(file));
                     }
                 }
             }
@@ -1007,13 +1077,18 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
+                          const Path& packages,
+                          const BinaryPackageArchivers& archivers,
+                          BinaryPackageArchiveRequest& request,
+                          AllowArchiveMove) override
         {
-            const auto& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
+            auto zip_path = request.get_or_create(context, packages, archivers, CacheArchiveFormat::Zip);
+            if (!zip_path) return false;
             WarningDiagnosticContext wdc{context};
-            return upload_file(wdc, m_url.make_object_path(request.package_abi), zip_path);
+            return upload_file(wdc, m_url.make_object_path(request.package().package_abi), *zip_path);
         }
+
+        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
 
         bool upload_file(DiagnosticContext& context, StringView url, const Path& archive) const
         {
@@ -1304,7 +1379,7 @@ namespace
         Path az_cli;
     };
 
-    struct AzureUpkgBinaryProvider : ZipReadBinaryProvider
+    struct AzureUpkgBinaryProvider : IBinaryProvider
     {
         AzureUpkgBinaryProvider(const Path& azcli_path, AzureUpkgSource&& source)
             : m_azure_tool(azcli_path), m_source(std::move(source))
@@ -1325,27 +1400,26 @@ namespace
             return msg::format(msgRestoredPackagesFromAZUPKG, msg::count = count, msg::elapsed = ElapsedTime(elapsed));
         }
 
-        void acquire_zips(DiagnosticContext& context,
-                          const Filesystem& fs,
-                          const Path& packages,
-                          View<const InstallPlanAction*> actions,
-                          Span<Optional<ZipResource>> out_zips) const override
+        void fetch(DiagnosticContext& context,
+                   const Filesystem& fs,
+                   const Path& packages,
+                   const BinaryPackageArchivers&,
+                   Span<BinaryPackageArchiveRequest*> requests) const override
         {
             WarningDiagnosticContext wdc{context};
-            for (size_t i = 0; i < actions.size(); ++i)
+            for (auto request : requests)
             {
-                const auto& action = *actions[i];
-                const auto info = BinaryPackageReadInfo{action};
+                const auto& info = request->package();
                 const auto ref = make_feedref(info, "");
 
                 Path temp_dir = packages / fmt::format("upkg_download_{}", info.package_abi);
                 Path temp_zip_path = temp_dir / fmt::format("{}.zip", ref.id);
-                Path final_zip_path = make_temp_archive_path(info.package_dir, info.package_abi);
+                Path final_zip_path = request->temp_archive_path(CacheArchiveFormat::Zip);
 
                 const auto result = m_azure_tool.download(wdc, m_source, ref.id, ref.version, temp_dir);
                 if (result && fs.exists(temp_zip_path, IgnoreErrors{}) && fs.rename(wdc, temp_zip_path, final_zip_path))
                 {
-                    out_zips[i].emplace(std::move(final_zip_path), RemoveWhen::always);
+                    request->provide_temporary_archive(CacheArchiveFormat::Zip, std::move(final_zip_path));
                 }
 
                 if (fs.exists(temp_dir, IgnoreErrors{}))
@@ -1357,16 +1431,21 @@ namespace
 
         bool push_success(DiagnosticContext& context,
                           const Filesystem&,
-                          const Path&,
-                          const BinaryPackageWriteInfo& request) override
+                          const Path& packages,
+                          const BinaryPackageArchivers& archivers,
+                          BinaryPackageArchiveRequest& request,
+                          AllowArchiveMove) override
         {
-            auto ref = make_feedref(request, "");
+            auto ref = make_feedref(request.package(), "");
             std::string package_description = "Cached package for " + ref.id;
 
-            const Path& zip_path = request.zip_path.value_or_exit(VCPKG_LINE_INFO);
+            auto zip_path = request.get_or_create(context, packages, archivers, CacheArchiveFormat::Zip);
+            if (!zip_path) return false;
             WarningDiagnosticContext wdc{context};
-            return m_azure_tool.publish(wdc, m_source, ref.id, ref.version, zip_path, package_description);
+            return m_azure_tool.publish(wdc, m_source, ref.id, ref.version, *zip_path, package_description);
         }
+
+        CacheArchiveFormat archive_format() const override { return CacheArchiveFormat::Zip; }
 
     private:
         AzureUpkgTool m_azure_tool;
@@ -1490,6 +1569,161 @@ namespace
 
 namespace vcpkg
 {
+    BinaryPackageArchiveRequest::BinaryPackageArchiveRequest(const Filesystem& fs, BinaryPackageWriteInfo&& package)
+        : m_fs(fs), m_package(std::move(package))
+    {
+    }
+
+    BinaryPackageArchiveRequest::~BinaryPackageArchiveRequest()
+    {
+        remove_temporary_archive(m_zip);
+        remove_temporary_archive(m_nupkg);
+        remove_temporary_archive(m_unpacked);
+    }
+
+    Path BinaryPackageArchiveRequest::temp_archive_path(CacheArchiveFormat format) const
+    {
+        switch (format)
+        {
+            case CacheArchiveFormat::Zip: return make_temp_archive_path(m_package.package_dir, m_package.package_abi);
+            case CacheArchiveFormat::NuPkg: return m_package.package_dir.native() + ".nupkg";
+            case CacheArchiveFormat::None:
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
+
+    Optional<BinaryPackageArchiveRequest::Archive>& BinaryPackageArchiveRequest::archive_slot(CacheArchiveFormat format)
+    {
+        switch (format)
+        {
+            case CacheArchiveFormat::Zip: return m_zip;
+            case CacheArchiveFormat::NuPkg: return m_nupkg;
+            case CacheArchiveFormat::None:
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
+
+    void BinaryPackageArchiveRequest::remove_temporary_archive(Optional<Archive>& archive) noexcept
+    {
+        if (auto value = archive.get())
+        {
+            if (value->temporary)
+            {
+                m_fs.remove_all(value->path, IgnoreErrors{});
+            }
+        }
+    }
+
+    void BinaryPackageArchiveRequest::provide_archive(CacheArchiveFormat format, Path&& path, bool temporary)
+    {
+        auto& slot = archive_slot(format);
+        remove_temporary_archive(slot);
+        slot.emplace(Archive{std::move(path), temporary});
+    }
+
+    void BinaryPackageArchiveRequest::provide_temporary_archive(CacheArchiveFormat format, Path&& path)
+    {
+        provide_archive(format, std::move(path), true);
+    }
+
+    void BinaryPackageArchiveRequest::reference_archive(CacheArchiveFormat format, Path&& path)
+    {
+        provide_archive(format, std::move(path), false);
+    }
+
+    void BinaryPackageArchiveRequest::provide_unpacked(Path&& path)
+    {
+        if (auto unpacked = m_unpacked.get())
+        {
+            if (unpacked->temporary)
+            {
+                m_fs.remove_all(unpacked->path, IgnoreErrors{});
+            }
+        }
+        m_unpacked.emplace(Archive{std::move(path), true});
+    }
+
+    std::uint64_t BinaryPackageArchiveRequest::archive_size(CacheArchiveFormat format) const noexcept
+    {
+        const Optional<Archive>* archive;
+        switch (format)
+        {
+            case CacheArchiveFormat::Zip: archive = &m_zip; break;
+            case CacheArchiveFormat::NuPkg: archive = &m_nupkg; break;
+            case CacheArchiveFormat::None: return 0;
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+
+        const auto value = archive->get();
+        if (!value) return 0;
+
+        std::error_code ec;
+        const auto result = m_fs.file_size(value->path, ec);
+        return ec ? 0 : result;
+    }
+
+    RestoreResult BinaryPackageArchiveRequest::restore(DiagnosticContext& context,
+                                                       const BinaryPackageArchivers& archivers,
+                                                       CacheArchiveFormat format)
+    {
+        if (m_restored)
+        {
+            return RestoreResult::restored;
+        }
+
+        if (auto unpacked = m_unpacked.get())
+        {
+            if (unpacked->path != m_package.package_dir)
+            {
+                if (!m_fs.remove_all(context, m_package.package_dir) ||
+                    !m_fs.rename(context, unpacked->path, m_package.package_dir))
+                {
+                    return RestoreResult::unavailable;
+                }
+            }
+
+            unpacked->temporary = false;
+            m_unpacked.clear();
+            m_restored = true;
+            return RestoreResult::restored;
+        }
+
+        auto archive = archive_slot(format).get();
+        if (!archive || !archivers.decompress(context, m_fs, format, m_package, archive->path))
+        {
+            return RestoreResult::unavailable;
+        }
+
+        m_restored = true;
+        if (Debug::g_debugging)
+        {
+            context.report(DiagnosticLine{
+                DiagKind::Note, archive->path, msg::format(msgExtractedInto, msg::path = m_package.package_dir)});
+        }
+        return RestoreResult::restored;
+    }
+
+    const Path* BinaryPackageArchiveRequest::get_or_create(DiagnosticContext& context,
+                                                           const Path& packages,
+                                                           const BinaryPackageArchivers& archivers,
+                                                           CacheArchiveFormat format)
+    {
+        auto& slot = archive_slot(format);
+        if (auto archive = slot.get())
+        {
+            return &archive->path;
+        }
+
+        auto path = archivers.compress(context, m_fs, packages, format, m_package);
+        if (auto value = path.get())
+        {
+            slot.emplace(Archive{std::move(*value), true});
+            return &slot.get()->path;
+        }
+
+        return nullptr;
+    }
+
     FeedReference::FeedReference(std::string id, std::string version) : id(std::move(id)), version(std::move(version))
     {
     }
@@ -1612,15 +1846,25 @@ namespace vcpkg
 
     void ReadOnlyBinaryCache::fetch(DiagnosticContext& context, View<InstallPlanAction> actions)
     {
-        std::vector<const InstallPlanAction*> action_ptrs;
-        std::vector<RestoreResult> restores;
+        std::vector<std::unique_ptr<BinaryPackageArchiveRequest>> archive_requests(actions.size());
+        for (size_t i = 0; i < actions.size(); ++i)
+        {
+            if (actions[i].package_abi())
+            {
+                archive_requests[i] =
+                    std::make_unique<BinaryPackageArchiveRequest>(m_fs, BinaryPackageWriteInfo{actions[i]});
+            }
+        }
+
+        std::vector<BinaryPackageArchiveRequest*> request_ptrs;
         std::vector<CacheStatus*> statuses;
+        // Unpack each provider's results before querying the next provider. Besides avoiding speculative downloads,
+        // this lets an unpack failure (for example, a corrupt archive) fall through to the next provider.
         for (auto&& entry : m_config.entries)
         {
             if (entry.access != CacheAccessControl::Read && entry.access != CacheAccessControl::ReadWrite) continue;
             auto* provider = entry.provider.get();
-            action_ptrs.clear();
-            restores.clear();
+            request_ptrs.clear();
             statuses.clear();
             for (size_t i = 0; i < actions.size(); ++i)
             {
@@ -1629,19 +1873,47 @@ namespace vcpkg
                     CacheStatus& status = m_status[*abi];
                     if (status.should_attempt_restore(provider))
                     {
-                        action_ptrs.push_back(&actions[i]);
-                        restores.push_back(RestoreResult::unavailable);
+                        request_ptrs.push_back(archive_requests[i].get());
                         statuses.push_back(&status);
                     }
                 }
             }
-            if (action_ptrs.empty()) continue;
+            if (request_ptrs.empty()) continue;
 
             ElapsedTimer timer;
-            provider->fetch(context, m_fs, &m_zip_tool, m_packages, action_ptrs, restores);
-            size_t num_restored = 0;
-            for (size_t i = 0; i < restores.size(); ++i)
+            provider->fetch(context, m_fs, m_packages, m_archivers, request_ptrs);
+
+            // Providers fetch their batch first; each fetched archive can then be unpacked independently.
+            // Buffer diagnostics per job because the shared output sink is not written from the worker threads.
+            const auto format = provider->archive_format();
+            std::vector<size_t> sorted_by_size;
+            std::vector<std::uint64_t> archive_sizes;
+            std::vector<FullyBufferedDiagnosticContext> diagnostics(request_ptrs.size());
+            std::vector<RestoreResult> restores(request_ptrs.size(), RestoreResult::unavailable);
+            sorted_by_size.reserve(request_ptrs.size());
+            archive_sizes.reserve(request_ptrs.size());
+            for (size_t i = 0; i < request_ptrs.size(); ++i)
             {
+                sorted_by_size.push_back(i);
+                archive_sizes.push_back(request_ptrs[i]->archive_size(format));
+            }
+            // Start larger archives first so they schedule better (they "pack" better into the available CPUs, in the
+            // bin packing sense not the archive packing sense)
+            std::sort(sorted_by_size.begin(), sorted_by_size.end(), [&](size_t lhs, size_t rhs) {
+                return archive_sizes[lhs] > archive_sizes[rhs];
+            });
+            // Each job has a distinct request, package directory, and diagnostic buffer. Archiver configuration is
+            // immutable by this point, and cache statuses are updated only after the parallel work completes.
+            parallel_for_each(sorted_by_size, [&](size_t index) {
+                WarningDiagnosticContext wdc{diagnostics[index]};
+                restores[index] = request_ptrs[index]->restore(wdc, m_archivers, format);
+            });
+
+            // Replay diagnostics and update cache status serially in the original request order.
+            size_t num_restored = 0;
+            for (size_t i = 0; i < request_ptrs.size(); ++i)
+            {
+                diagnostics[i].print_to(out_sink);
                 if (restores[i] == RestoreResult::unavailable)
                 {
                     statuses[i]->mark_unavailable(provider);
@@ -1868,7 +2140,7 @@ namespace vcpkg
                 {
                     case BinaryCacheProviderKind::Files:
                     {
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         m_config.entries.push_back({provider.access,
                                                     std::make_unique<FilesBinaryProvider>(
                                                         Path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)})});
@@ -1878,40 +2150,24 @@ namespace vcpkg
                     {
                         auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
                         if (!maybe_nuget_tools.has_value()) return false;
-                        NuGetTool nuget_tool(std::move(*maybe_nuget_tools.get()),
-                                             parsed->nuget_timeout,
-                                             parsed->nuget_interactive,
-                                             args.use_nuget_cache.value_or(false));
-                        if (provider.access != CacheAccessControl::Read && !m_nuget_package_packer)
-                        {
-                            m_nuget_package_packer =
-                                std::make_unique<NugetPackagePacker>(nuget_tool, m_config.nuget_prefix);
-                        }
-                        const auto& source = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
-                        m_config.entries.push_back(
-                            {provider.access,
-                             std::make_unique<NugetBinaryProvider>(
-                                 nuget_tool, m_config.nuget_prefix, nuget_sources_arg({&source, 1}))});
-                        break;
-                    }
-                    case BinaryCacheProviderKind::NuGetConfig:
-                    {
-                        auto maybe_nuget_tools = get_nuget_tool_tools(context, fs, tools);
-                        if (!maybe_nuget_tools.has_value()) return false;
-                        NuGetTool nuget_tool(std::move(*maybe_nuget_tools.get()),
-                                             parsed->nuget_timeout,
-                                             parsed->nuget_interactive,
-                                             args.use_nuget_cache.value_or(false));
-                        if (provider.access != CacheAccessControl::Read && !m_nuget_package_packer)
-                        {
-                            m_nuget_package_packer =
-                                std::make_unique<NugetPackagePacker>(nuget_tool, m_config.nuget_prefix);
-                        }
-                        Path config_path{provider.arg1.value_or_exit(VCPKG_LINE_INFO)};
-                        m_config.entries.push_back(
-                            {provider.access,
-                             std::make_unique<NugetBinaryProvider>(
-                                 nuget_tool, m_config.nuget_prefix, nuget_configfile_arg(config_path))});
+                        m_archivers.ensure_nupkg(maybe_nuget_tools.get()->nuget_tool,
+#ifdef _WIN32
+                                                 nullopt,
+#else
+                                                 maybe_nuget_tools.get()->mono_tool,
+#endif
+                                                 m_config.nuget_prefix);
+                        m_config.entries.push_back({
+                            provider.access,
+                            std::make_unique<NugetBinaryProvider>(
+                                NuGetSource{
+                                    provider.arg1.value_or_exit(VCPKG_LINE_INFO),
+                                    provider.arg2.value_or_exit(VCPKG_LINE_INFO),
+                                },
+                                parsed->nuget_timeout,
+                                parsed->nuget_interactive,
+                                args.use_nuget_cache.value_or(false)),
+                        });
                         break;
                     }
                     case BinaryCacheProviderKind::Http:
@@ -1922,14 +2178,14 @@ namespace vcpkg
                             url_template.headers.push_back(*header);
                         }
 
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         m_config.entries.push_back(
                             {provider.access, std::make_unique<HttpBinaryProvider>(std::move(url_template), secrets)});
                         break;
                     }
                     case BinaryCacheProviderKind::AzBlob:
                     {
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
                                          provider.arg2.value_or_exit(VCPKG_LINE_INFO)};
                         UrlTemplate url_template{az_url.make_object_path("{sha}")};
@@ -1944,7 +2200,7 @@ namespace vcpkg
                     case BinaryCacheProviderKind::AzCopy:
                     case BinaryCacheProviderKind::AzCopySas:
                     {
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         auto azcopy_tool = tools.get_tool_path(context, fs, Tools::AZCOPY);
                         if (!azcopy_tool) return false;
                         AzCopyUrl az_url{provider.arg1.value_or_exit(VCPKG_LINE_INFO), provider.arg2.value_or("")};
@@ -1954,7 +2210,7 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::GCS:
                     {
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         auto gcs_tool_path = tools.get_tool_path(context, fs, Tools::GSUTIL);
                         if (!gcs_tool_path) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
@@ -1966,7 +2222,7 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::AWS:
                     {
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         auto aws_tool_path = tools.get_tool_path(context, fs, Tools::AWSCLI);
                         if (!aws_tool_path) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
@@ -1979,7 +2235,7 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::COS:
                     {
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         auto cos_tool_path = tools.get_tool_path(context, fs, Tools::COSCLI);
                         if (!cos_tool_path) return false;
                         auto prefix = provider.arg1.value_or_exit(VCPKG_LINE_INFO);
@@ -1991,7 +2247,7 @@ namespace vcpkg
                     }
                     case BinaryCacheProviderKind::AzUniversal:
                     {
-                        if (!m_zip_tool.setup(context, fs, tools)) return false;
+                        if (!m_archivers.ensure_zip(context, fs, tools)) return false;
                         auto azcli_tool = tools.get_tool_path(context, fs, Tools::AZCLI);
                         if (!azcli_tool) return false;
                         AzureUpkgSource source{provider.arg1.value_or_exit(VCPKG_LINE_INFO),
@@ -2008,10 +2264,6 @@ namespace vcpkg
             }
         }
 
-        m_needs_zip_file = Util::any_of(m_config.entries, [](const BinaryProviders::Entry& e) {
-            return (e.access == CacheAccessControl::Write || e.access == CacheAccessControl::ReadWrite) &&
-                   e.provider->archive_format() == CacheArchiveFormat::Zip;
-        });
         return true;
     }
     BinaryCache::BinaryCache(const Filesystem& fs, Path packages)
@@ -2054,15 +2306,10 @@ namespace vcpkg
                 ElapsedTimer timer;
                 BinaryPackageWriteInfo request{action};
 
-                if (m_nuget_package_packer)
+                if (m_archivers.has(CacheArchiveFormat::NuPkg))
                 {
                     request.nuspec =
                         generate_nuspec(request.package_dir, action, m_config.nuget_prefix, m_config.nuget_repo);
-                }
-
-                if (write_provider_count == 1)
-                {
-                    request.unique_write_provider = true;
                 }
 
                 m_synchronizer.add_submitted();
@@ -2104,59 +2351,60 @@ namespace vcpkg
         std::vector<ActionToPush> my_tasks;
         PrintingDiagnosticContext pdc{m_bg_msg_sink};
         WarningDiagnosticContext wdc{pdc};
+        size_t last_zip_destination = SIZE_MAX;
+        size_t last_nupkg_destination = SIZE_MAX;
+        for (size_t entry_index = 0; entry_index < m_config.entries.size(); ++entry_index)
+        {
+            const auto& entry = m_config.entries[entry_index];
+            if (entry.access == CacheAccessControl::Read) continue;
+            switch (entry.provider->archive_format())
+            {
+                case CacheArchiveFormat::Zip: last_zip_destination = entry_index; break;
+                case CacheArchiveFormat::NuPkg: last_nupkg_destination = entry_index; break;
+                case CacheArchiveFormat::None: break;
+                default: Checks::unreachable(VCPKG_LINE_INFO);
+            }
+        }
+
         while (m_actions_to_push.get_work(my_tasks))
         {
             for (auto& action_to_push : my_tasks)
             {
+                BinaryPackageArchiveRequest request{m_fs, std::move(action_to_push.request)};
                 ElapsedTimer timer;
-                if (m_needs_zip_file)
-                {
-                    Path zip_path = action_to_push.request.package_dir + ".zip";
-                    if (m_zip_tool.compress_directory_to_zip(pdc, m_fs, action_to_push.request.package_dir, zip_path))
-                    {
-                        action_to_push.request.zip_path = std::move(zip_path);
-                    }
-                }
-
-                if (m_nuget_package_packer)
-                {
-                    action_to_push.request.nupkg_path =
-                        m_nuget_package_packer->pack(pdc, m_fs, m_packages, action_to_push.request);
-                }
-
                 size_t num_destinations = 0;
-                for (auto&& entry : m_config.entries)
+                for (size_t entry_index = 0; entry_index < m_config.entries.size(); ++entry_index)
                 {
+                    auto&& entry = m_config.entries[entry_index];
                     if (entry.access == CacheAccessControl::Read) continue;
                     const auto archive_format = entry.provider->archive_format();
-                    const bool archive_available =
-                        archive_format == CacheArchiveFormat::None ||
-                        (archive_format == CacheArchiveFormat::Zip && action_to_push.request.zip_path.has_value()) ||
-                        (archive_format == CacheArchiveFormat::NuPkg && action_to_push.request.nupkg_path.has_value());
-                    if (archive_available)
+                    AllowArchiveMove allow_archive_move;
+                    switch (archive_format)
                     {
-                        num_destinations += entry.provider->push_success(pdc, m_fs, m_packages, action_to_push.request);
+                        case CacheArchiveFormat::Zip:
+                            allow_archive_move =
+                                last_zip_destination == entry_index ? AllowArchiveMove::Yes : AllowArchiveMove::No;
+                            break;
+                        case CacheArchiveFormat::NuPkg:
+                            allow_archive_move =
+                                last_nupkg_destination == entry_index ? AllowArchiveMove::Yes : AllowArchiveMove::No;
+                            break;
+                        case CacheArchiveFormat::None: allow_archive_move = AllowArchiveMove::No; break;
+                        default: Checks::unreachable(VCPKG_LINE_INFO);
                     }
-                }
 
-                if (action_to_push.request.nupkg_path)
-                {
-                    (void)m_fs.remove(wdc, *action_to_push.request.nupkg_path.get());
-                }
-
-                if (action_to_push.request.zip_path)
-                {
-                    (void)m_fs.remove(wdc, *action_to_push.request.zip_path.get());
+                    num_destinations +=
+                        entry.provider->push_success(pdc, m_fs, m_packages, m_archivers, request, allow_archive_move);
                 }
 
                 if (action_to_push.clean_after_push == CleanPackages::Yes)
                 {
-                    (void)m_fs.remove_all(wdc, action_to_push.request.package_dir);
+                    (void)m_fs.remove_all(wdc, request.package().package_dir);
                 }
 
                 auto sync_state = m_synchronizer.fetch_add_completed();
                 auto message = msg::format(msgSubmittingBinaryCacheComplete,
-                                           msg::spec = action_to_push.request.display_name,
+                                           msg::spec = request.package().display_name,
                                            msg::count = num_destinations,
                                            msg::elapsed = timer.elapsed());
                 if (sync_state.submission_complete)
@@ -2496,7 +2744,6 @@ namespace vcpkg
             case BinaryCacheProviderKind::None: return "none";
             case BinaryCacheProviderKind::Files: return "files";
             case BinaryCacheProviderKind::NuGet: return "nuget";
-            case BinaryCacheProviderKind::NuGetConfig: return "nugetconfig";
             case BinaryCacheProviderKind::Http: return "http";
             case BinaryCacheProviderKind::AzBlob: return "x-azblob";
             case BinaryCacheProviderKind::AzCopy: return "x-azcopy";
@@ -2605,7 +2852,8 @@ namespace vcpkg
                                              BinaryCacheParsedConfigs& result,
                                              BinaryCacheProviderKind provider_kind,
                                              StringLiteral binary_source,
-                                             StringLiteral telemetry_tag)
+                                             StringLiteral telemetry_tag,
+                                             StringLiteral argument_name)
     {
         // match <provider>,<absolute path>[,<rw>]
         if (matched_terminal != ',')
@@ -2637,7 +2885,15 @@ namespace vcpkg
             return false;
         }
 
-        result.providers.push_back({provider_kind, *access, std::move(as_path).native(), nullopt, nullopt});
+        if (argument_name.empty())
+        {
+            result.providers.push_back({provider_kind, *access, std::move(as_path).native(), nullopt, nullopt});
+        }
+        else
+        {
+            result.providers.push_back(
+                {provider_kind, *access, argument_name.to_string(), std::move(as_path).native(), nullopt});
+        }
         result.telemetry_tags.insert(telemetry_tag);
         return true;
     }
@@ -2871,8 +3127,15 @@ namespace vcpkg
 
             if (kind->text() == "files")
             {
-                if (!parse_absolute_path_provider(
-                        context, e, matched_terminal, *kind, result, BinaryCacheProviderKind::Files, "files", "files"))
+                if (!parse_absolute_path_provider(context,
+                                                  e,
+                                                  matched_terminal,
+                                                  *kind,
+                                                  result,
+                                                  BinaryCacheProviderKind::Files,
+                                                  "files",
+                                                  "files",
+                                                  ""))
                 {
                     return false;
                 }
@@ -2887,9 +3150,10 @@ namespace vcpkg
                                                   matched_terminal,
                                                   *kind,
                                                   result,
-                                                  BinaryCacheProviderKind::NuGetConfig,
+                                                  BinaryCacheProviderKind::NuGet,
                                                   "nugetconfig",
-                                                  "nuget"))
+                                                  "nuget",
+                                                  "-ConfigFile"))
                 {
                     return false;
                 }
@@ -2923,7 +3187,7 @@ namespace vcpkg
                 }
 
                 result.providers.push_back(
-                    {BinaryCacheProviderKind::NuGet, *access, source->move_text(), nullopt, nullopt});
+                    {BinaryCacheProviderKind::NuGet, *access, "-Source", source->move_text(), nullopt});
                 result.telemetry_tags.insert("nuget");
                 continue;
             }

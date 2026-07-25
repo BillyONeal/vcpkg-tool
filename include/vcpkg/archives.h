@@ -4,7 +4,6 @@
 #include <vcpkg/base/fwd/files.h>
 #include <vcpkg/base/fwd/message_sinks.h>
 #include <vcpkg/base/fwd/span.h>
-#include <vcpkg/base/fwd/system.process.h>
 
 #include <vcpkg/fwd/tools.h>
 #include <vcpkg/fwd/vcpkgpaths.h>
@@ -53,22 +52,4 @@ namespace vcpkg
                                           const Path& archive,
                                           const Path& to_path);
 #endif
-
-    struct ZipTool
-    {
-        bool setup(DiagnosticContext& context, const Filesystem& fs, const ToolCache& tools);
-
-        // Compress the source directory into the destination file.
-        bool compress_directory_to_zip(DiagnosticContext& context,
-                                       const Filesystem& fs,
-                                       const Path& source,
-                                       const Path& destination) const;
-
-        Command decompress_zip_archive_cmd(const Path& dst, const Path& archive_path) const;
-
-    private:
-#if defined _WIN32
-        Optional<Path> seven_zip;
-#endif
-    };
 }

@@ -98,8 +98,11 @@ if(-Not $IsLinux -and -Not $IsMacOS) {
     Require-FileExists "$installRoot/$Triplet/include/hello-2.h"
     Require-FileNotExists "$buildtreesRoot/vcpkg-hello-world-1/src"
     Require-FileExists "$buildtreesRoot/vcpkg-hello-world-2/src"
+    if ((Get-ChildItem $NuGetRoot2 -Filter '*.nupkg' | Measure-Object).Count -ne 1) {
+        throw "In '$CurrentTest': did not create exactly 1 NuGet package in the readwrite source"
+    }
     if ((Get-ChildItem $NuGetRoot -Filter '*.nupkg' | Measure-Object).Count -ne 1) {
-        throw "In '$CurrentTest': did not create exactly 1 NuGet package"
+        throw "In '$CurrentTest': did not create exactly 1 NuGet package in the first destination"
     }
     if ((Get-ChildItem $NuGetRoot3 -Filter '*.nupkg' | Measure-Object).Count -ne 1) {
         throw "In '$CurrentTest': did not create exactly 1 NuGet package in the second destination"
