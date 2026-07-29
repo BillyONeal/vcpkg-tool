@@ -1592,35 +1592,6 @@ namespace vcpkg
         }
     }
 
-    Optional<BinaryPackageArchiveRequest::Archive>& BinaryPackageArchiveRequest::archive_slot(CacheArchiveFormat format)
-    {
-        switch (format)
-        {
-            case CacheArchiveFormat::Zip: return m_zip;
-            case CacheArchiveFormat::NuPkg: return m_nupkg;
-            case CacheArchiveFormat::None:
-            default: Checks::unreachable(VCPKG_LINE_INFO);
-        }
-    }
-
-    void BinaryPackageArchiveRequest::remove_temporary_archive(Optional<Archive>& archive) noexcept
-    {
-        if (auto value = archive.get())
-        {
-            if (value->temporary)
-            {
-                m_fs.remove_all(value->path, IgnoreErrors{});
-            }
-        }
-    }
-
-    void BinaryPackageArchiveRequest::provide_archive(CacheArchiveFormat format, Path&& path, bool temporary)
-    {
-        auto& slot = archive_slot(format);
-        remove_temporary_archive(slot);
-        slot.emplace(Archive{std::move(path), temporary});
-    }
-
     void BinaryPackageArchiveRequest::provide_temporary_archive(CacheArchiveFormat format, Path&& path)
     {
         provide_archive(format, std::move(path), true);
@@ -1722,6 +1693,35 @@ namespace vcpkg
         }
 
         return nullptr;
+    }
+
+    Optional<BinaryPackageArchiveRequest::Archive>& BinaryPackageArchiveRequest::archive_slot(CacheArchiveFormat format)
+    {
+        switch (format)
+        {
+            case CacheArchiveFormat::Zip: return m_zip;
+            case CacheArchiveFormat::NuPkg: return m_nupkg;
+            case CacheArchiveFormat::None:
+            default: Checks::unreachable(VCPKG_LINE_INFO);
+        }
+    }
+
+    void BinaryPackageArchiveRequest::provide_archive(CacheArchiveFormat format, Path&& path, bool temporary)
+    {
+        auto& slot = archive_slot(format);
+        remove_temporary_archive(slot);
+        slot.emplace(Archive{std::move(path), temporary});
+    }
+
+    void BinaryPackageArchiveRequest::remove_temporary_archive(Optional<Archive>& archive) noexcept
+    {
+        if (auto value = archive.get())
+        {
+            if (value->temporary)
+            {
+                m_fs.remove_all(value->path, IgnoreErrors{});
+            }
+        }
     }
 
     FeedReference::FeedReference(std::string id, std::string version) : id(std::move(id)), version(std::move(version))
@@ -1944,14 +1944,6 @@ namespace vcpkg
         m_config.entries.push_back({access, std::move(provider)});
     }
 
-    void ReadOnlyBinaryCache::mark_all_unrestored()
-    {
-        for (auto& entry : m_status)
-        {
-            entry.second.mark_unrestored();
-        }
-    }
-
     std::vector<CacheAvailability> ReadOnlyBinaryCache::precheck(DiagnosticContext& context,
                                                                  View<const InstallPlanAction*> actions)
     {
@@ -1999,6 +1991,14 @@ namespace vcpkg
         return Util::fmap(statuses, [](CacheStatus* s) {
             return s->get_available_provider() ? CacheAvailability::available : CacheAvailability::unavailable;
         });
+    }
+
+    void ReadOnlyBinaryCache::mark_all_unrestored()
+    {
+        for (auto& entry : m_status)
+        {
+            entry.second.mark_unrestored();
+        }
     }
 
     void BinaryCacheSynchronizer::add_submitted() noexcept
