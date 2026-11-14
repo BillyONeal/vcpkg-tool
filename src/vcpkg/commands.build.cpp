@@ -1084,6 +1084,7 @@ namespace vcpkg
         const auto& package_dir = action.package_dir;
 
         const auto json_path = package_dir / FileShare / action.spec.name() / FileVcpkgSpdxJson;
+        const auto json3_path = package_dir / FileShare / action.spec.name() / FileVcpkgSpdx3Json;
         const auto resource_path = package_dir / FileShare / action.spec.name() / FileVcpkgSpdxResourcesJson;
         Json::Object resource_document;
         std::error_code resource_ec;
@@ -1109,7 +1110,13 @@ namespace vcpkg
                 package_hashes.reserve(relative_package_files->size());
                 for (auto& file : *relative_package_files)
                 {
-                    auto maybe_hash = Hash::get_file_hash(fs, package_dir / file, Hash::Algorithm::Sha256);
+                    const auto absolute_path = package_dir / file;
+                    if (absolute_path == json_path || absolute_path == json3_path)
+                    {
+                        continue;
+                    }
+
+                    auto maybe_hash = Hash::get_file_hash(fs, absolute_path, Hash::Algorithm::Sha256);
                     if (auto hash = maybe_hash.get())
                     {
                         package_files.push_back(std::move(file));
@@ -1118,6 +1125,14 @@ namespace vcpkg
                 }
             }
         } // destroy maybe_relative_package_files
+        const auto spdx3 = create_spdx3_sbom(action,
+                                             abi.relative_port_files,
+                                             abi.relative_port_hashes,
+                                             package_files,
+                                             package_hashes,
+                                             now,
+                                             Strings::concat("https://spdx.org/spdxdocs/", generate_random_UUID()),
+                                             resource_document);
         fs.write_contents_and_dirs(json_path,
                                    create_spdx_sbom(action,
                                                     abi.relative_port_files,
@@ -1128,6 +1143,7 @@ namespace vcpkg
                                                     doc_ns,
                                                     std::move(resource_document)),
                                    VCPKG_LINE_INFO);
+        fs.write_contents_and_dirs(json3_path, spdx3, VCPKG_LINE_INFO);
     }
 
     static ExtendedBuildResult do_build_package(const VcpkgCmdArguments& args,
@@ -1509,7 +1525,7 @@ namespace vcpkg
 
         abi_tag_entries.emplace_back(AbiTagPortsDotCMake, paths.get_ports_cmake_hash().to_string());
         abi_tag_entries.emplace_back(AbiTagPostBuildChecks, "2");
-        abi_tag_entries.emplace_back(AbiTagSbomInfo, "1");
+        abi_tag_entries.emplace_back(AbiTagSbomInfo, "2");
         InternalFeatureSet sorted_feature_list = action.feature_list;
         // Check that no "default" feature is present. Default features must be resolved before attempting to calculate
         // a package ABI, so the "default" should not have made it here.

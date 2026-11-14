@@ -71,6 +71,7 @@ namespace vcpkg
         // /<triplet>/share/<name>/vcpkg_abi_info.txt is the file hashed to form a package ABI
         // /<triplet>/share/<name>/vcpkg.spdx.json stores information about what should be included in an SBOM for
         // that package
+        // /<triplet>/share/<name>/vcpkg.spdx3.json contains the SPDX 3.0.1 JSON-LD companion.
         // /<triplet>/share/<name>/vcpkg-port-config.cmake is included automatically in ports that directly depend on
         // <name>
         Path share_dir(const PackageSpec& p) const { return triplet_dir(p.triplet()) / FileShare / p.name(); }

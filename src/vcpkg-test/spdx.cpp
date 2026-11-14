@@ -5,6 +5,370 @@
 
 using namespace vcpkg;
 
+static const Json::Object& spdx3_element(const Json::Object& doc, StringView id)
+{
+    for (const auto& value : doc["@graph"].array(VCPKG_LINE_INFO))
+    {
+        const auto& object = value.object(VCPKG_LINE_INFO);
+        const auto element_id = object.get("spdxId");
+        if (element_id && element_id->string(VCPKG_LINE_INFO) == id) return object;
+    }
+    FAIL("Missing SPDX 3 element: " << id);
+    Checks::unreachable(VCPKG_LINE_INFO);
+}
+
+static const Json::Object& spdx3_relationship(const Json::Object& doc, StringView from, StringView type)
+{
+    for (const auto& value : doc["@graph"].array(VCPKG_LINE_INFO))
+    {
+        const auto& object = value.object(VCPKG_LINE_INFO);
+        if (object["type"].string(VCPKG_LINE_INFO) == "Relationship" &&
+            object["from"].string(VCPKG_LINE_INFO) == from &&
+            object["relationshipType"].string(VCPKG_LINE_INFO) == type)
+        {
+            return object;
+        }
+    }
+    FAIL("Missing SPDX 3 relationship: " << from << " " << type);
+    Checks::unreachable(VCPKG_LINE_INFO);
+}
+
+static Json::Object spdx3_annotations(const Json::Object& doc, StringView subject)
+{
+    Json::Object result;
+    for (const auto& value : doc["@graph"].array(VCPKG_LINE_INFO))
+    {
+        const auto& object = value.object(VCPKG_LINE_INFO);
+        if (object["type"].string(VCPKG_LINE_INFO) == "Annotation" &&
+            object["subject"].string(VCPKG_LINE_INFO) == subject)
+        {
+            auto fields =
+                Json::parse_object(object["statement"].string(VCPKG_LINE_INFO), "test").value(VCPKG_LINE_INFO);
+            for (const auto& field : fields)
+                result.insert(field.first, field.second);
+        }
+    }
+    return result;
+}
+
+TEST_CASE ("spdx3 preserves package, file, and relationship information", "[spdx]")
+{
+    PackagesDirAssigner packages_dir_assigner{"test_packages_root"};
+    SourceControlFileAndLocation scfl;
+    scfl.source_control_file = Test::make_control_file("zlib", "");
+    scfl.spdx_location = "git+https://example.org/registry@tree";
+    scfl.spdx_repository_url = "https://example.org/registry";
+    scfl.git_tree = std::string(40, 'a');
+    auto& core = *scfl.source_control_file->core_paragraph;
+    core.version = Version{"1.0", 5};
+    core.summary = {"summary", "second line"};
+    core.description = {"description", "second line"};
+    core.homepage = "https://example.org/zlib";
+    core.license = parse_spdx_license_expression_required("MIT OR Apache-2.0");
+    InstallPlanAction action({"zlib", Test::ARM_UWP},
+                             scfl,
+                             packages_dir_assigner,
+                             RequestType::USER_REQUESTED,
+                             UseHeadVersion::No,
+                             Editable::No,
+                             {},
+                             {},
+                             {});
+    action.abi_info = AbiInfo{};
+    action.abi_info.get()->package_abi = "ABIHASH";
+    const std::vector<Path> port_paths{"vcpkg.json", "patches/fix.diff"};
+    const std::vector<Path> binary_paths{"include/zlib.h"};
+    const std::vector<std::string> port_hashes{std::string(64, 'a'), std::string(64, 'b')};
+    const std::vector<std::string> binary_hashes{std::string(64, 'c')};
+    const auto old = Json::parse_object(create_spdx_sbom(action,
+                                                         port_paths,
+                                                         port_hashes,
+                                                         binary_paths,
+                                                         binary_hashes,
+                                                         "2026-11-13T20:41:35Z",
+                                                         "https://example.org/spdx2",
+                                                         {}),
+                                        "test")
+                         .value(VCPKG_LINE_INFO);
+    const auto doc = Json::parse_object(create_spdx3_sbom(action,
+                                                          port_paths,
+                                                          port_hashes,
+                                                          binary_paths,
+                                                          binary_hashes,
+                                                          "2026-11-13T20:41:35Z",
+                                                          "https://example.org/spdx3",
+                                                          {}),
+                                        "test")
+                         .value(VCPKG_LINE_INFO);
+    const auto& document = spdx3_element(doc, "https://example.org/spdx3#SPDXRef-DOCUMENT");
+    CHECK(document["name"] == old["name"]);
+    CHECK(
+        spdx3_element(doc, document["dataLicense"].string(VCPKG_LINE_INFO))["simplelicensing_licenseExpression"].string(
+            VCPKG_LINE_INFO) == "CC0-1.0");
+    const auto& creation = doc["@graph"].array(VCPKG_LINE_INFO)[0].object(VCPKG_LINE_INFO);
+    CHECK(creation["specVersion"].string(VCPKG_LINE_INFO) == "3.0.1");
+    CHECK(creation["created"] == old["creationInfo"].object(VCPKG_LINE_INFO)["created"]);
+    const auto& tool = spdx3_element(doc, creation["createdUsing"].array(VCPKG_LINE_INFO)[0].string(VCPKG_LINE_INFO));
+    CHECK(Strings::concat("Tool: ", tool["name"].string(VCPKG_LINE_INFO)) ==
+          old["creationInfo"].object(VCPKG_LINE_INFO)["creators"].array(VCPKG_LINE_INFO)[0].string(VCPKG_LINE_INFO));
+
+    for (const auto& value : old["packages"].array(VCPKG_LINE_INFO))
+    {
+        const auto& package = value.object(VCPKG_LINE_INFO);
+        const auto id = Strings::concat("https://example.org/spdx3#", package["SPDXID"].string(VCPKG_LINE_INFO));
+        const auto& translated = spdx3_element(doc, id);
+        for (const auto& mapping : {std::pair<StringView, StringView>{"name", "name"},
+                                    {"versionInfo", "software_packageVersion"},
+                                    {"homepage", "software_homePage"},
+                                    {"summary", "summary"},
+                                    {"description", "description"},
+                                    {"comment", "comment"},
+                                    {"copyrightText", "software_copyrightText"}})
+        {
+            if (const auto original = package.get(mapping.first))
+            {
+                CHECK(*original == translated[mapping.second]);
+            }
+        }
+        const auto& license = spdx3_relationship(doc, id, "hasConcludedLicense");
+        const auto& expression = spdx3_element(doc, license["to"].array(VCPKG_LINE_INFO)[0].string(VCPKG_LINE_INFO));
+        CHECK(expression["simplelicensing_licenseExpression"] == package["licenseConcluded"]);
+        CHECK(spdx3_relationship(doc, id, "hasDeclaredLicense")["to"].array(VCPKG_LINE_INFO)[0].string(
+                  VCPKG_LINE_INFO) == "expandedlicensing_NoAssertionLicense");
+    }
+    const auto& port = spdx3_element(doc, "https://example.org/spdx3#SPDXRef-port");
+    CHECK(port["software_downloadLocation"].string(VCPKG_LINE_INFO) == scfl.spdx_location);
+    CHECK(port["software_packageUrl"].string(VCPKG_LINE_INFO) == make_vcpkg_purl(action));
+    CHECK(port["software_contentIdentifier"]
+              .array(VCPKG_LINE_INFO)[0]
+              .object(VCPKG_LINE_INFO)["software_contentIdentifierValue"]
+              .string(VCPKG_LINE_INFO) == "gitoid:tree:sha1:" + scfl.git_tree);
+    CHECK(spdx3_annotations(doc, "https://example.org/spdx3#SPDXRef-binary")["downloadLocation"].string(
+              VCPKG_LINE_INFO) == "NONE");
+    for (const auto& value : old["files"].array(VCPKG_LINE_INFO))
+    {
+        const auto& file = value.object(VCPKG_LINE_INFO);
+        const auto id = Strings::concat("https://example.org/spdx3#", file["SPDXID"].string(VCPKG_LINE_INFO));
+        const auto& translated = spdx3_element(doc, id);
+        CHECK(translated["name"] == file["fileName"]);
+        CHECK(translated["software_copyrightText"] == file["copyrightText"]);
+        const auto& hash = translated["verifiedUsing"].array(VCPKG_LINE_INFO)[0].object(VCPKG_LINE_INFO);
+        CHECK(hash["algorithm"].string(VCPKG_LINE_INFO) == "sha256");
+        CHECK(hash["hashValue"] ==
+              file["checksums"].array(VCPKG_LINE_INFO)[0].object(VCPKG_LINE_INFO)["checksumValue"]);
+        CHECK(spdx3_relationship(doc, id, "hasConcludedLicense")["to"].array(VCPKG_LINE_INFO)[0].string(
+                  VCPKG_LINE_INFO) == "expandedlicensing_NoAssertionLicense");
+    }
+    for (const auto& value : old["relationships"].array(VCPKG_LINE_INFO))
+    {
+        const auto& relationship = value.object(VCPKG_LINE_INFO);
+        auto from =
+            Strings::concat("https://example.org/spdx3#", relationship["spdxElementId"].string(VCPKG_LINE_INFO));
+        auto to =
+            Strings::concat("https://example.org/spdx3#", relationship["relatedSpdxElement"].string(VCPKG_LINE_INFO));
+        const auto type = relationship["relationshipType"].string(VCPKG_LINE_INFO);
+        StringView translated_type = "contains";
+        if (type == "GENERATES") translated_type = "generates";
+        if (type == "DEPENDENCY_MANIFEST_OF")
+        {
+            translated_type = "hasDependencyManifest";
+            std::swap(from, to);
+        }
+        bool found = false;
+        for (const auto& entry : doc["@graph"].array(VCPKG_LINE_INFO))
+        {
+            const auto& object = entry.object(VCPKG_LINE_INFO);
+            if (object["type"].string(VCPKG_LINE_INFO) == "Relationship" &&
+                object["from"].string(VCPKG_LINE_INFO) == from &&
+                object["relationshipType"].string(VCPKG_LINE_INFO) == translated_type &&
+                object["to"].array(VCPKG_LINE_INFO)[0].string(VCPKG_LINE_INFO) == to)
+                found = true;
+        }
+        CHECK(found);
+    }
+}
+
+TEST_CASE ("spdx3 preserves unknown licenses and selected feature licenses", "[spdx]")
+{
+    PackagesDirAssigner packages_dir_assigner{"test_packages_root"};
+    SourceControlFileAndLocation scfl;
+    scfl.source_control_file = Test::make_control_file("zlib", "", {{"selected", ""}});
+    auto& core = *scfl.source_control_file->core_paragraph;
+    InstallPlanAction action({"zlib", Test::ARM_UWP},
+                             scfl,
+                             packages_dir_assigner,
+                             RequestType::USER_REQUESTED,
+                             UseHeadVersion::No,
+                             Editable::No,
+                             {},
+                             {},
+                             {});
+    bool has_known_license = false;
+    bool has_unknown_license = true;
+    std::vector<std::string> known_licenses{"MIT"};
+    bool preserves_expression = false;
+    SECTION ("undeclared")
+    {
+    }
+    SECTION ("explicit null")
+    {
+        core.license = ParsedSpdxLicenseDeclaration{NullTag{}};
+        preserves_expression = true;
+    }
+    SECTION ("custom license without available text")
+    {
+        core.license = parse_spdx_license_expression_required("LicenseRef-custom");
+        preserves_expression = true;
+    }
+    SECTION ("custom license combined with a known license")
+    {
+        core.license = parse_spdx_license_expression_required("MIT AND LicenseRef-custom");
+        has_known_license = true;
+        preserves_expression = true;
+    }
+    SECTION ("choice of custom or known license")
+    {
+        core.license = parse_spdx_license_expression_required("MIT OR LicenseRef-custom");
+        preserves_expression = true;
+    }
+    SECTION ("selected feature adds known license with exception")
+    {
+        core.license = parse_spdx_license_expression_required("MIT");
+        scfl.source_control_file->feature_paragraphs[0]->license =
+            parse_spdx_license_expression_required("GPL-2.0-only WITH Classpath-exception-2.0");
+        action.feature_list = {"core", "selected"};
+        has_known_license = true;
+        has_unknown_license = false;
+        known_licenses.insert(known_licenses.begin(), "GPL-2.0-only WITH Classpath-exception-2.0");
+    }
+    SECTION ("selected feature adds unknown license")
+    {
+        core.license = parse_spdx_license_expression_required("MIT");
+        scfl.source_control_file->feature_paragraphs[0]->license = ParsedSpdxLicenseDeclaration{NullTag{}};
+        action.feature_list = {"core", "selected"};
+        has_known_license = true;
+        preserves_expression = true;
+    }
+    const auto doc =
+        Json::parse_object(
+            create_spdx3_sbom(action, {}, {}, {}, {}, "2026-11-13T20:41:35Z", "https://example.org/spdx3", {}), "test")
+            .value(VCPKG_LINE_INFO);
+    const auto& port = spdx3_element(doc, "https://example.org/spdx3#SPDXRef-port");
+    CHECK_FALSE(port.contains("software_homePage"));
+    CHECK_FALSE(port.contains("description"));
+    CHECK(spdx3_annotations(doc, "https://example.org/spdx3#SPDXRef-port")["downloadLocation"].string(
+              VCPKG_LINE_INFO) == "NOASSERTION");
+    const auto& relationship =
+        spdx3_relationship(doc, "https://example.org/spdx3#SPDXRef-binary", "hasConcludedLicense");
+    const auto target = relationship["to"].array(VCPKG_LINE_INFO)[0].string(VCPKG_LINE_INFO);
+    if (has_known_license)
+    {
+        const auto& conjunction = spdx3_element(doc, target);
+        CHECK(conjunction["type"].string(VCPKG_LINE_INFO) == "expandedlicensing_ConjunctiveLicenseSet");
+        const auto& members = conjunction["expandedlicensing_member"].array(VCPKG_LINE_INFO);
+        REQUIRE(members.size() == 2);
+        std::vector<std::string> observed_licenses;
+        bool observed_unknown_license = false;
+        for (const auto& member : members)
+        {
+            const auto id = member.string(VCPKG_LINE_INFO);
+            if (id != "expandedlicensing_NoAssertionLicense")
+            {
+                observed_licenses.push_back(
+                    spdx3_element(doc, id)["simplelicensing_licenseExpression"].string(VCPKG_LINE_INFO).to_string());
+            }
+            else
+            {
+                observed_unknown_license = true;
+            }
+        }
+        std::sort(observed_licenses.begin(), observed_licenses.end());
+        CHECK(observed_licenses == known_licenses);
+        CHECK(observed_unknown_license == has_unknown_license);
+    }
+    else
+    {
+        CHECK(target == "expandedlicensing_NoAssertionLicense");
+    }
+    const auto annotations = spdx3_annotations(doc, relationship["spdxId"].string(VCPKG_LINE_INFO));
+    if (preserves_expression)
+    {
+        CHECK(annotations["licenseExpression"].string(VCPKG_LINE_INFO) == calculate_spdx_license(action));
+    }
+    else
+    {
+        CHECK(annotations.is_empty());
+    }
+}
+
+TEST_CASE ("spdx3 preserves downloaded resources and additional resource metadata", "[spdx]")
+{
+    PackagesDirAssigner packages_dir_assigner{"test_packages_root"};
+    SourceControlFileAndLocation scfl;
+    scfl.source_control_file = Test::make_control_file("zlib", "");
+    InstallPlanAction action({"zlib", Test::ARM_UWP},
+                             scfl,
+                             packages_dir_assigner,
+                             RequestType::USER_REQUESTED,
+                             UseHeadVersion::No,
+                             Editable::No,
+                             {},
+                             {},
+                             {});
+    auto resources = Json::parse_object(R"json({"packages":[{
+        "SPDXID":"SPDXRef-resource-0", "name":"source archive", "downloadLocation":"https://example.org/source.tar.gz",
+        "packageFileName":"source.tar.gz", "licenseConcluded":"NOASSERTION", "licenseDeclared":"NOASSERTION",
+        "copyrightText":"NOASSERTION", "checksums":[{"algorithm":"SHA512","checksumValue":"abcd"}],
+        "extra":{"nested":["must survive",42]}
+    }]})json",
+                                        "test")
+                         .value(VCPKG_LINE_INFO);
+    auto& resource = resources["packages"].array(VCPKG_LINE_INFO)[0].object(VCPKG_LINE_INFO);
+    bool has_filename = true;
+    bool has_hash = true;
+    SECTION ("archive with hash")
+    {
+    }
+    SECTION ("archive without hash")
+    {
+        resource.remove("checksums");
+        has_hash = false;
+    }
+    SECTION ("hash without archive filename")
+    {
+        resource.remove("packageFileName");
+        has_filename = false;
+    }
+    const auto doc =
+        Json::parse_object(
+            create_spdx3_sbom(action, {}, {}, {}, {}, "2026-11-13T20:41:35Z", "https://example.org/spdx3", resources),
+            "test")
+            .value(VCPKG_LINE_INFO);
+    const auto& translated = spdx3_element(doc, "https://example.org/spdx3#SPDXRef-resource-0");
+    CHECK(translated["name"] == resource["name"]);
+    CHECK(translated["software_downloadLocation"] == resource["downloadLocation"]);
+    CHECK(translated["software_copyrightText"] == resource["copyrightText"]);
+    CHECK(spdx3_annotations(doc, "https://example.org/spdx3#SPDXRef-resource-0")["extra"] == resource["extra"]);
+    const Json::Object* hash_owner = &translated;
+    if (has_filename)
+    {
+        const auto& relationship =
+            spdx3_relationship(doc, "https://example.org/spdx3#SPDXRef-resource-0", "hasDistributionArtifact");
+        hash_owner = &spdx3_element(doc, relationship["to"].array(VCPKG_LINE_INFO)[0].string(VCPKG_LINE_INFO));
+        CHECK((*hash_owner)["name"] == resource["packageFileName"]);
+    }
+    if (has_hash)
+    {
+        const auto& hash = (*hash_owner)["verifiedUsing"].array(VCPKG_LINE_INFO)[0].object(VCPKG_LINE_INFO);
+        CHECK(hash["algorithm"].string(VCPKG_LINE_INFO) == "sha512");
+        CHECK(hash["hashValue"].string(VCPKG_LINE_INFO) == "abcd");
+    }
+    else
+    {
+        CHECK_FALSE(hash_owner->contains("verifiedUsing"));
+    }
+}
+
 TEST_CASE ("spdx maximum serialization", "[spdx]")
 {
     PackagesDirAssigner packages_dir_assigner{"test_packages_root"};

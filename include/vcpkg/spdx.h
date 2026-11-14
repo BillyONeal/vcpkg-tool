@@ -33,6 +33,19 @@ namespace vcpkg
                                  std::string document_namespace,
                                  Json::Object&& resource_doc);
 
+    /// Generate an SPDX 3.0.1 JSON-LD companion using the same inputs as create_spdx_sbom.
+    /// document_namespace must be a universally unique, fragment-free URI distinct from the SPDX 2.3 namespace.
+    /// License information comes from the manifest, not a license scan. Unresolved custom license expressions and
+    /// resource properties without a native mapping are retained in JSON annotations.
+    std::string create_spdx3_sbom(const InstallPlanAction& action,
+                                  View<Path> relative_paths,
+                                  View<std::string> hashes,
+                                  View<Path> relative_package_files,
+                                  View<std::string> package_hashes,
+                                  StringView created_time,
+                                  StringView document_namespace,
+                                  const Json::Object& resource_doc);
+
     std::string calculate_spdx_license(const InstallPlanAction& action);
 
     Optional<std::string> read_spdx_license_text(StringView text, StringView origin);
